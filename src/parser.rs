@@ -4,12 +4,6 @@ pub trait Peek {
     fn peek(self, token: &Lex<'_>) -> bool;
 }
 
-// impl<'a> Peek for Lex<'a> {
-//     fn peek(self, token: &Lex<'_>) -> bool {
-//         &self == token
-//     }
-// }
-
 impl<F> Peek for F
 where
     F: for<'any> FnOnce(&Lex<'any>) -> bool,

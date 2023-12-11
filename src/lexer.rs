@@ -13,15 +13,29 @@ pub enum Number {
     Uint(u64),
 }
 
+pub enum Lit<'a> {
+    Str(lit::Str<'a>),
+    Int(lit::Int),
+    Bool(lit::Bool),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Lex<'src> {
-    Bool(bool),
-    Num(Number),
-    Str(&'src str),
     Ident(&'src str),
     Delim(ast::Delim),
     Punct(ast::Punct),
     Token(ast::Token),
+}
+
+pub(self) mod lit {
+    pub struct Str<'a>(&'a str);
+
+    pub enum Int {
+        FLoat(f64),
+        Int(u64),
+    }
+
+    pub struct Bool(bool);
 }
 
 pub mod ast {
@@ -52,21 +66,19 @@ pub mod ast {
             )*
 
             $(
-                impl Peek for $name {
-                    fn peek(self, token: &super::Lex<'_>) -> bool {
-                        if let super::Lex::$space(inner) = token {
-                            matches!(inner, $space::$name)
-                        } else {
-                            false
-                        }
+                #[derive(Clone, PartialEq)]
+                pub struct $name {
+                    _priv: (),
+                }
+
+                #[allow(non_snake_case)]
+                pub fn $name(lex: &super::Lex<'_>) -> bool {
+                    if let super::Lex::$space(inner) = lex {
+                        matches!(inner, $space::$name)
+                    } else {
+                        false
                     }
                 }
-            )*
-
-            $(
-                #[derive(Clone, PartialEq)]
-                pub struct $name;
-
                 impl fmt::Debug for $name {
                     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                         f.write_str(stringify!($name))
