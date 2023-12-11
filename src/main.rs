@@ -1,16 +1,8 @@
-mod ast;
-mod lexer;
-mod parser;
+pub mod ast;
+pub mod lexer;
+pub mod parse;
 
-pub use lexer::{lexer, Lex, Number, Span};
-
-use inkwell::{
-    context::Context,
-    targets::{
-        CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
-    },
-    OptimizationLevel,
-};
+pub use lexer::{Lex, Span};
 
 fn main() {}
 
