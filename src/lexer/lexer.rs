@@ -1,5 +1,6 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
+    crate::parse,
     chumsky::{extra, prelude::*, text, IterParser, Parser},
     std::mem,
 };
@@ -86,4 +87,16 @@ fn lex_test() {
     println!("{}", buf.peek(ast::Let));
     println!("{:?}", buf.next_lex());
     println!("{}", buf.peek(ast::Let));
+
+    let lex = buf.step(|step| {
+        step.next_lex();
+        step.next_lex();
+        step.next_lex();
+        step.next_lex();
+        // x = Some(step);
+        Ok(())
+        // Err::<Lex, _>(parse::Error { message: "".to_string(), span: Span::new(0, 0) })
+    });
+    println!("{:?}", lex);
+    println!("{:?}", buf.current());
 }

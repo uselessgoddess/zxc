@@ -1,6 +1,10 @@
 use {
     crate::{lexer::Token, Lex, Span},
-    std::{mem, mem::MaybeUninit},
+    std::{
+        marker::PhantomData,
+        mem::{self, MaybeUninit},
+        slice,
+    },
 };
 
 pub enum Sealed {}
@@ -14,9 +18,10 @@ impl<T: Token, F: FnOnce(Sealed) -> T> Peek for F {
     type Token = T;
 }
 
+#[derive(Debug)]
 pub struct Error {
-    message: String,
-    span: Span,
+    pub message: String,
+    pub span: Span,
 }
 
 impl Error {
@@ -28,24 +33,54 @@ impl Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub trait Parse: Sized {
-    fn parse(input: &mut ParseStream<'_>) -> Result<Self>;
+    fn parse(input: &mut ParseStream<'_, '_>) -> Result<Self>;
 }
 
-pub struct ParseStream<'a> {
-    tokens: &'a mut [MaybeUninit<Lex<'a>>],
+#[rustfmt::skip]
+mod hint {
+    pub unsafe fn outlive<'ex, T: ?Sized>(ptr: *const T) -> &'ex T { &*ptr }
+    pub unsafe fn outlive_mut<'ex, T: ?Sized>(ptr: *mut T) -> &'ex mut T { &mut *ptr }
+}
+
+pub struct ParseStream<'lex, 'place: 'lex> {
+    step: unsafe fn(&MaybeUninit<Lex<'lex>>) -> Lex<'lex>,
+    tokens: &'place mut [MaybeUninit<Lex<'lex>>],
     cursor: usize,
 }
 
-impl<'a> ParseStream<'a> {
-    pub fn new(tokens: &'a mut [Lex<'a>]) -> Self {
+impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
+    pub fn new(tokens: &'place mut [Lex<'lex>]) -> Self {
         // Safety: safe because works as coercion `Lex` -> `MaybeUninit<Lex>`
         // https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#impl-MaybeUninit%3C%5BT;+N%5D%3E
-        unsafe { Self { tokens: mem::transmute(tokens), cursor: 0 } }
+        unsafe {
+            Self { step: MaybeUninit::assume_init_read, tokens: mem::transmute(tokens), cursor: 0 }
+        }
     }
 
-    pub fn current(&self) -> Option<&Lex<'a>> {
+    pub fn step<F, P>(&mut self, parse: F) -> Result<P>
+    where
+        F: FnOnce(&mut ParseStream<'lex, 'place>) -> Result<P>,
+    {
+        let mut rest = unsafe {
+            ParseStream {
+                step: |lex| MaybeUninit::assume_init_ref(lex).clone(),
+                tokens: hint::outlive_mut(self.tokens),
+                cursor: self.cursor,
+            }
+        };
+
+        let parsed = parse(&mut rest)?;
+        self.cursor = rest.cursor;
+        Ok(parsed)
+    }
+
+    pub fn current(&self) -> Option<&'place Lex<'lex>> {
         // Safety: we unitialize after `next_lex`
-        unsafe { self.tokens.get(self.cursor).map(|cell| MaybeUninit::assume_init_ref(cell)) }
+        unsafe {
+            self.tokens
+                .get(self.cursor)
+                .map(|cell| hint::outlive(MaybeUninit::assume_init_ref(cell)))
+        }
     }
 
     pub fn peek<P: Peek>(&self, peek: P) -> bool {
@@ -57,7 +92,7 @@ impl<'a> ParseStream<'a> {
         P::parse(self)
     }
 
-    pub(crate) fn next_lex(&mut self) -> Option<Lex<'a>> {
+    pub(crate) fn next_lex(&mut self) -> Option<Lex<'lex>> {
         if self.cursor == self.tokens.len() {
             None
         } else {
@@ -65,7 +100,7 @@ impl<'a> ParseStream<'a> {
             // Safety: unitialize after step next
             unsafe {
                 let cell = self.tokens.get(self.cursor - 1)?;
-                Some(MaybeUninit::assume_init_read(cell))
+                Some((self.step)(cell))
             }
         }
     }

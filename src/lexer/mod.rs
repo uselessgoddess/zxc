@@ -132,6 +132,16 @@ pub struct Ident<'a> {
     pub span: Span,
 }
 
+impl Token for Ident<'_> {
+    fn peek(lex: &Lex<'_>) -> bool {
+        matches!(lex, Lex::Ident(_))
+    }
+
+    fn display() -> &'static str {
+        "identifier"
+    }
+}
+
 impl<'a> Ident<'a> {
     pub unsafe fn new_unchecked(ident: &'a str, span: Span) -> Self {
         Self { ident, span }
@@ -166,14 +176,8 @@ pub struct LitBool {
     pub span: Span,
 }
 
-impl Token for Ident<'_> {
-    fn peek(lex: &Lex<'_>) -> bool {
-        matches!(lex, Lex::Ident(_))
-    }
-
-    fn display() -> &'static str {
-        "identifier"
-    }
-}
-
+use crate::{
+    parse,
+    parse::{Parse, ParseStream},
+};
 pub use lexer::lexer;
