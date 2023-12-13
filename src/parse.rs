@@ -1,9 +1,9 @@
 use {
     crate::{lexer::Token, Lex, Span},
     std::{
-        marker::PhantomData,
+        error,
+        fmt::{self, Formatter},
         mem::{self, MaybeUninit},
-        slice,
     },
 };
 
@@ -19,21 +19,41 @@ impl<T: Token, F: FnOnce(Sealed) -> T> Peek for F {
 }
 
 #[derive(Debug)]
+pub enum ErrorKind {
+    Eof,
+    Expect(&'static str),
+    Expected { expected: Vec<&'static str>, found: &'static str },
+    Custom(String),
+}
+
+#[derive(Debug)]
 pub struct Error {
-    pub message: String,
+    pub repr: String,
     pub span: Span,
 }
 
 impl Error {
-    pub fn new(message: String, span: Span) -> Self {
-        Self { message, span }
+    pub fn new(repr: String, span: Span) -> Self {
+        Self { repr, span }
+    }
+
+    pub fn eof(span: Span) -> Self {
+        Self::new("end of input".to_string(), span)
     }
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.repr)
+    }
+}
+
+impl error::Error for Error {}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub trait Parse: Sized {
-    fn parse(input: &mut ParseStream<'_, '_>) -> Result<Self>;
+pub trait Parse<'lex>: Sized {
+    fn parse(input: &mut ParseStream<'_, 'lex>) -> Result<Self>;
 }
 
 #[rustfmt::skip]
@@ -43,18 +63,18 @@ mod hint {
 }
 
 pub struct ParseStream<'lex, 'place: 'lex> {
-    step: unsafe fn(&MaybeUninit<Lex<'lex>>) -> Lex<'lex>,
-    tokens: &'place mut [MaybeUninit<Lex<'lex>>],
+    step: unsafe fn(&MaybeUninit<(Lex<'lex>, Span)>) -> (Lex<'lex>, Span),
+    tokens: &'place mut [MaybeUninit<(Lex<'lex>, Span)>],
     cursor: usize,
+    span: Span,
 }
 
 impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
-    pub fn new(tokens: &'place mut [Lex<'lex>]) -> Self {
+    pub fn new(tokens: &'place mut [(Lex<'lex>, Span)]) -> Self {
         // Safety: safe because works as coercion `Lex` -> `MaybeUninit<Lex>`
         // https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#impl-MaybeUninit%3C%5BT;+N%5D%3E
-        unsafe {
-            Self { step: MaybeUninit::assume_init_read, tokens: mem::transmute(tokens), cursor: 0 }
-        }
+        let tokens = unsafe { mem::transmute(tokens) };
+        Self { step: MaybeUninit::assume_init_read, tokens, cursor: 0, span: Span::splat(0) }
     }
 
     pub fn step<F, P>(&mut self, parse: F) -> Result<P>
@@ -66,6 +86,7 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
                 step: |lex| MaybeUninit::assume_init_ref(lex).clone(),
                 tokens: hint::outlive_mut(self.tokens),
                 cursor: self.cursor,
+                span: self.span,
             }
         };
 
@@ -74,7 +95,15 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         Ok(parsed)
     }
 
-    pub fn current(&self) -> Option<&'place Lex<'lex>> {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn error(&self, message: impl fmt::Display) -> Error {
+        Error::new(message.to_string(), self.span())
+    }
+
+    pub fn current(&self) -> Option<&'place (Lex<'lex>, Span)> {
         // Safety: we unitialize after `next_lex`
         unsafe {
             self.tokens
@@ -85,22 +114,22 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
 
     pub fn peek<P: Peek>(&self, peek: P) -> bool {
         let _ = peek;
-        if let Some(lex) = self.current() { P::Token::peek(lex) } else { false }
+        if let Some((lex, _)) = self.current() { P::Token::peek(lex) } else { false }
     }
 
-    pub fn parse<P: Parse>(&mut self) -> Result<P> {
+    pub fn parse<P: Parse<'lex>>(&mut self) -> Result<P> {
         P::parse(self)
     }
 
-    pub(crate) fn next_lex(&mut self) -> Option<Lex<'lex>> {
+    pub(crate) fn next_lex(&mut self) -> Result<(Lex<'lex>, Span)> {
         if self.cursor == self.tokens.len() {
-            None
+            Err(Error::eof(self.span))
         } else {
             self.cursor += 1;
             // Safety: unitialize after step next
             unsafe {
-                let cell = self.tokens.get(self.cursor - 1)?;
-                Some((self.step)(cell))
+                let cell = self.tokens.get(self.cursor - 1).unwrap_or_else(|| todo!());
+                Ok((self.step)(cell)).inspect(|(_, span)| self.span = *span)
             }
         }
     }

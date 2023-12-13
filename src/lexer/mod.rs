@@ -1,4 +1,5 @@
 mod lexer;
+mod token;
 
 use chumsky::prelude::SimpleSpan;
 
@@ -45,6 +46,16 @@ pub mod ast {
                     unreachable!()
                 }
 
+                impl Parse<'_> for $name {
+                    fn parse(input: &mut ParseStream<'_, '_>) -> parse::Result<Self> {
+                        input.step(|step| match step.next_lex()? {
+                            (Lex::$space($space::$name(lex)), _) => Ok(lex),
+                            _ => Err(step.error(format_args!("expected `{}`", $token))),
+                        })
+                    }
+                }
+
+
                 impl super::Token for $name {
                     fn peek(lex: &Lex<'_>) -> bool {
                         if let Lex::$space(inner) = lex {
@@ -69,7 +80,7 @@ pub mod ast {
     }
 
     use {
-        super::{Lex, Span},
+        super::{parse, Lex, Parse, ParseStream, Span},
         std::fmt,
     };
 
@@ -91,6 +102,8 @@ pub mod ast {
         }
 
         Delim(char) {
+            ';' => Semi
+            ',' => Comma
             '{' => Brace1
             '}' => Brace2
             '[' => Bracket1
@@ -152,6 +165,15 @@ impl<'a> Ident<'a> {
     }
 }
 
+impl<'lex> Parse<'lex> for Ident<'lex> {
+    fn parse(input: &mut ParseStream<'_, 'lex>) -> parse::Result<Self> {
+        input.step(|step| match step.next_lex()? {
+            (Lex::Ident(ident), _) => Ok(ident),
+            _ => Err(step.error("expected identifier")),
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LitStr<'a> {
     pub lit: &'a str,
@@ -176,8 +198,35 @@ pub struct LitBool {
     pub span: Span,
 }
 
+macro_rules! impl_parse {
+    ($($name:ty => { $($pat:tt)* } in $err:literal)*) => {$(
+        impl Parse<'_> for $name {
+            fn parse(input: &mut ParseStream<'_, '_>) -> parse::Result<Self> {
+                input.step(|step| match step.next_lex()? {
+                    $($pat)*,
+                    _ => Err(step.error($err)),
+                })
+            }
+        }
+    )*};
+}
+
+impl_parse! {
+    LitFloat    => { (Lex::Lit(Lit::Float(lex)), _) => Ok(lex) } in "expected float literal"
+    LitInt      => { (Lex::Lit(Lit::Int(  lex)), _) => Ok(lex) } in "expected integer literal"
+    LitBool     => { (Lex::Lit(Lit::Bool( lex)), _) => Ok(lex) } in "expected bool literal"
+}
+
+impl<'lex> Parse<'lex> for LitStr<'lex> {
+    fn parse(input: &mut ParseStream<'_, 'lex>) -> parse::Result<Self> {
+        input.step(|step| match step.next_lex()? {
+            (Lex::Lit(Lit::Str(str)), _) => Ok(str),
+            _ => Err(step.error("expected identifier")),
+        })
+    }
+}
+
 use crate::{
     parse,
     parse::{Parse, ParseStream},
 };
-pub use lexer::lexer;

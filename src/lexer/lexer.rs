@@ -1,12 +1,12 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
-    crate::parse,
+    crate::Token,
     chumsky::{extra, prelude::*, text, IterParser, Parser},
     std::mem,
 };
 
 pub fn lexer<'src>()
--> impl Parser<'src, &'src str, Vec<Lex<'src>>, extra::Err<Rich<'src, char, Span>>> {
+-> impl Parser<'src, &'src str, Vec<(Lex<'src>, Span)>, extra::Err<Rich<'src, char, Span>>> {
     let num = text::int(10)
         .then(
             just('.')
@@ -15,12 +15,12 @@ pub fn lexer<'src>()
                 .to_slice()
                 .from_str()
                 .unwrapped()
-                .map_with(|num, e| Lex::Lit(Lit::Int(LitInt { lit: num, span: e.span() }))),
+                .map_with(|num, e| Lex::Lit(Lit::Float(LitFloat { lit: num, span: e.span() }))),
         )
         .to_slice()
         .from_str()
         .unwrapped()
-        .map_with(|num, e| Lex::Lit(Lit::Float(LitFloat { lit: num, span: e.span() })));
+        .map_with(|num, e| Lex::Lit(Lit::Int(LitInt { lit: num, span: e.span() })));
 
     // A parser for strings
     let str_ = just('"')
@@ -63,7 +63,7 @@ pub fn lexer<'src>()
     let comment = just("//").then(any().and_is(just('\n').not()).repeated()).padded();
 
     token
-        // .map_with(|tok, e| (tok, e.span()))
+        .map_with(|tok, e| (tok, e.span()))
         .padded_by(comment.repeated())
         .padded()
         // If we encounter an error, skip and attempt to lex the next character as a token instead
@@ -78,8 +78,9 @@ fn lex_test() {
 
     println!("{}", mem::size_of::<Lex>());
 
-    let src = "let x = 12 + null == le + 12.0001";
-    let mut parsed = lexer().parse(src).unwrap();
+    // let src = "let x = 12 + null == le + 12.0001;";
+    let src = "let x = 12 + null == le + 12.0001;";
+    let mut parsed = lexer().parse(src).into_result().unwrap();
     println!("{:#?}", parsed);
 
     let mut buf = ParseStream::new(&mut parsed[..]);
@@ -89,14 +90,54 @@ fn lex_test() {
     println!("{}", buf.peek(ast::Let));
 
     let lex = buf.step(|step| {
-        step.next_lex();
-        step.next_lex();
-        step.next_lex();
-        step.next_lex();
+        step.next_lex()?;
+        step.next_lex()?;
+        step.next_lex()?;
+        step.next_lex()?;
         // x = Some(step);
         Ok(())
         // Err::<Lex, _>(parse::Error { message: "".to_string(), span: Span::new(0, 0) })
     });
     println!("{:?}", lex);
     println!("{:?}", buf.current());
+}
+
+#[test]
+fn parse() {
+    use crate::parse::ParseStream;
+
+    let src = "let x = 12;";
+    let mut parsed = lexer().parse(src).into_result().unwrap();
+    println!("{:#?}", parsed);
+
+    let mut buf = ParseStream::new(&mut parsed[..]);
+
+    let err = buf
+        .step(|step| {
+            let _let: ast::Let = step.parse()?;
+            let ident: Ident = step.parse()?;
+            let eq: ast::Eq = step.parse()?;
+            let float: LitInt = step.parse()?;
+            let semi: ast::Semi = step.parse()?;
+            Ok((_let, ident, eq, float, semi))
+        })
+        .unwrap_err();
+
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+
+    Report::build(ReportKind::Error, (), err.span.start)
+        .with_message("E0228")
+        .with_label(
+            Label::new(err.span.into_range()).with_message(err.to_string()).with_color(Color::Red),
+        )
+        .finish()
+        .print(Source::from(&src))
+        .unwrap()
+}
+
+#[test]
+#[should_panic]
+fn token() {
+    let token = Token![let];
+    let _: Token![let] = panic!();
 }

@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 inkwell = { version = "0.2.0", features = ["llvm16-0"] }
 chumsky = { version = "1.0.0-alpha.6" }
+ariadne = { version = "0.3.0" }
