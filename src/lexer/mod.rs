@@ -1,7 +1,7 @@
 mod lexer;
 mod token;
 
-use chumsky::prelude::SimpleSpan;
+use {chumsky::prelude::SimpleSpan, std::borrow::Cow};
 
 pub trait Token {
     fn peek(lex: &Lex<'_>) -> bool;
@@ -46,8 +46,8 @@ pub mod ast {
                     unreachable!()
                 }
 
-                impl Parse<'_> for $name {
-                    fn parse(input: &mut ParseStream<'_, '_>) -> parse::Result<Self> {
+                impl<'lex> Parse<'lex> for $name {
+                    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
                         input.step(|step| match step.next_lex()? {
                             (Lex::$space($space::$name(lex)), _) => Ok(lex),
                             _ => Err(step.error(format_args!("expected `{}`", $token))),
@@ -108,8 +108,8 @@ pub mod ast {
             '}' => Brace2
             '[' => Bracket1
             ']' => Bracket2
-            '(' => Parenthesis1
-            ')' => Parenthesis2
+            '(' => Paren1
+            ')' => Paren2
         }
     }
 }
@@ -122,12 +122,14 @@ pub enum Number {
     Uint(u64),
 }
 
-#[derive(Clone, Debug)]
-pub enum Lit<'a> {
-    Str(LitStr<'a>),
-    Int(LitInt),
-    Float(LitFloat),
-    Bool(LitBool),
+ast_enum_of_structs! {
+    #[derive(Clone, Debug)]
+    pub enum Lit<'a> {
+        Str(LitStr<'a>),
+        Int(LitInt),
+        Float(LitFloat),
+        Bool(LitBool),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -166,7 +168,7 @@ impl<'a> Ident<'a> {
 }
 
 impl<'lex> Parse<'lex> for Ident<'lex> {
-    fn parse(input: &mut ParseStream<'_, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Ident(ident), _) => Ok(ident),
             _ => Err(step.error("expected identifier")),
@@ -176,7 +178,7 @@ impl<'lex> Parse<'lex> for Ident<'lex> {
 
 #[derive(Clone, Debug)]
 pub struct LitStr<'a> {
-    pub lit: &'a str,
+    pub lit: Cow<'a, str>,
     pub span: Span,
 }
 
@@ -200,8 +202,8 @@ pub struct LitBool {
 
 macro_rules! impl_parse {
     ($($name:ty => { $($pat:tt)* } in $err:literal)*) => {$(
-        impl Parse<'_> for $name {
-            fn parse(input: &mut ParseStream<'_, '_>) -> parse::Result<Self> {
+        impl<'lex> Parse<'lex> for $name {
+            fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
                 input.step(|step| match step.next_lex()? {
                     $($pat)*,
                     _ => Err(step.error($err)),
@@ -218,10 +220,10 @@ impl_parse! {
 }
 
 impl<'lex> Parse<'lex> for LitStr<'lex> {
-    fn parse(input: &mut ParseStream<'_, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Lit(Lit::Str(str)), _) => Ok(str),
-            _ => Err(step.error("expected identifier")),
+            _ => Err(step.error("expected string literal")),
         })
     }
 }
@@ -230,3 +232,4 @@ use crate::{
     parse,
     parse::{Parse, ParseStream},
 };
+pub use lexer::lexer;

@@ -2,32 +2,27 @@ use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
     crate::Token,
     chumsky::{extra, prelude::*, text, IterParser, Parser},
-    std::mem,
+    std::{borrow::Cow, mem},
 };
 
 pub fn lexer<'src>()
 -> impl Parser<'src, &'src str, Vec<(Lex<'src>, Span)>, extra::Err<Rich<'src, char, Span>>> {
-    let num = text::int(10)
-        .then(
-            just('.')
-                .then(text::digits(10))
-                .or_not()
-                .to_slice()
-                .from_str()
-                .unwrapped()
-                .map_with(|num, e| Lex::Lit(Lit::Float(LitFloat { lit: num, span: e.span() }))),
-        )
-        .to_slice()
-        .from_str()
-        .unwrapped()
-        .map_with(|num, e| Lex::Lit(Lit::Int(LitInt { lit: num, span: e.span() })));
+    let num = text::digits(10).then(just('.').then(text::digits(10)).or_not()).to_slice().map_with(
+        |num: &str, e| {
+            let span = e.span();
+            if let Ok(lit) = num.parse::<u64>() {
+                Lex::Lit(Lit::Int(LitInt { lit, span }))
+            } else {
+                Lex::Lit(Lit::Float(LitFloat { lit: num.parse::<f64>().unwrap(), span }))
+            }
+        },
+    );
 
     // A parser for strings
-    let str_ = just('"')
-        .ignore_then(none_of('"').repeated())
-        .then_ignore(just('"'))
-        .to_slice()
-        .map_with(|str, e| Lex::Lit(Lit::Str(LitStr { lit: str, span: e.span() })));
+    let str_ =
+        just('"').ignore_then(none_of('"').repeated()).then_ignore(just('"')).to_slice().map_with(
+            |str, e| Lex::Lit(Lit::Str(LitStr { lit: Cow::Borrowed(str), span: e.span() })),
+        );
 
     // A parser for operators
     let punct = one_of("+*-/!=")
@@ -117,7 +112,7 @@ fn parse() {
             let _let: ast::Let = step.parse()?;
             let ident: Ident = step.parse()?;
             let eq: ast::Eq = step.parse()?;
-            let float: LitInt = step.parse()?;
+            let float: LitFloat = step.parse()?;
             let semi: ast::Semi = step.parse()?;
             Ok((_let, ident, eq, float, semi))
         })
@@ -138,6 +133,6 @@ fn parse() {
 #[test]
 #[should_panic]
 fn token() {
-    let token = Token![let];
+    let _ = Token![let];
     let _: Token![let] = panic!();
 }
