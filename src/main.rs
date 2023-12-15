@@ -1,3 +1,4 @@
+#[macro_use]
 pub mod ast;
 pub mod lexer;
 pub mod parse;
