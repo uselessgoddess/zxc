@@ -1,3 +1,5 @@
+#![allow(clippy::unit_arg, clippy::let_unit_value)]
+
 #[macro_use]
 pub mod ast;
 pub mod lexer;

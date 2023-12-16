@@ -1,26 +1,28 @@
-macro_rules! parenthesized {
-    ($content:ident in $input:expr) => {{
-        let (parens, buf) = $crate::parse::ParseStream::parse_delimited::<
-            $crate::lexer::ast::Paren1,
-            $crate::lexer::ast::Paren2,
-        >($input)?;
+macro_rules! delimited {
+    ($content:ident($lt:ty, $rt:ty) in $input:expr) => {{
+        let (parens, buf) = $crate::parse::ParseStream::parse_delimited::<$lt, $rt>($input)?;
         $content = buf;
         parens
     }};
 }
 
-use crate::parse;
+macro_rules! parenthesized {
+    ($content:ident in $input:expr) => {
+        delimited!($content($crate::lexer::ast::Paren1, $crate::lexer::ast::Paren2) in $input);
+    };
+}
+
+use {
+    crate::{
+        lexer::{ast, Lit},
+        parse::{self, ParseStream},
+        Lex, Token,
+    },
+    chumsky::Parser,
+};
 
 #[test]
 fn parens() -> parse::Result<()> {
-    use {
-        crate::{
-            lexer::{ast, Lit},
-            parse::ParseStream,
-        },
-        chumsky::Parser,
-    };
-
     let src = "((1 + 2) + (3 + 4))";
     let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
     let mut input = ParseStream::new(&mut parsed[..]);
@@ -51,6 +53,23 @@ fn parens() -> parse::Result<()> {
 
     let mut second = paren(&mut content)?;
     inner(&mut second);
+
+    Ok(())
+}
+
+#[test]
+fn delimited() -> parse::Result<()> {
+    let src = "|a, b|";
+
+    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let mut input = ParseStream::new(&mut parsed[..]);
+
+    let mut content;
+    delimited!(content(Token![|], Token![|]) in &mut input);
+
+    while let Ok(lex) = content.parse::<Lex>() {
+        println!("{lex:?}");
+    }
 
     Ok(())
 }

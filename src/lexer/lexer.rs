@@ -25,7 +25,7 @@ pub fn lexer<'src>()
         );
 
     // A parser for operators
-    let punct = one_of("+*-/!=")
+    let punct = one_of("+*-/!=|") // TODO: make extendable
         .repeated()
         .at_least(1)
         .to_slice()

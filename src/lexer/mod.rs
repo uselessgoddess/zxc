@@ -95,10 +95,13 @@ pub mod ast {
             "-" => Minus
             "*" => Mul
             "/" => Div
-            "=" => Eq
-            "!" => Not
 
+            "=" => Eq
             "==" => EqEq
+            "!=" => NotEq
+
+            "|" => Or
+            "||" => OrOr
         }
 
         Delim(char) {
@@ -139,6 +142,12 @@ pub enum Lex<'src> {
     Delim(ast::Delim),
     Punct(ast::Punct),
     Token(ast::Token),
+}
+
+impl<'lex> Parse<'lex> for Lex<'lex> {
+    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+        input.next_lex().map(|(lex, _)| lex)
+    }
 }
 
 #[derive(Clone, Debug)]

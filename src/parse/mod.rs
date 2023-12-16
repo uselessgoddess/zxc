@@ -171,10 +171,10 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
 
         let mut balance: usize = 1;
         loop {
-            if self.peek_raw::<Lt>() {
-                balance += 1;
-            } else if self.peek_raw::<Rt>() {
+            if self.peek_raw::<Rt>() {
                 balance -= 1;
+            } else if self.peek_raw::<Lt>() {
+                balance += 1;
             }
 
             if balance == 0 {
