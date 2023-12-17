@@ -1,7 +1,8 @@
 #[macro_export]
 macro_rules! delimited {
     ($content:ident($lt:ty, $rt:ty) in $input:expr) => {{
-        let (parens, buf) = $crate::parse::ParseStream::parse_delimited::<$lt, $rt>($input)?;
+        let (parens, buf) =
+            $crate::parse::ParseStream::parse_delimited::<$lt, $rt>($input).unwrap();
         $content = buf;
         parens
     }};
@@ -61,14 +62,16 @@ pub mod lookahead {
     use std::cmp;
 
     pub fn predict_span<'lex>(input: &mut ParseStream<'lex, 'lex>) -> Span {
-        let Ok(mut span) = input.next_lex_soft() else { return Span::splat(0) };
+        input.fork(|fork| {
+            let Ok(mut span) = fork.next_lex_soft() else { return Span::splat(0) };
 
-        while let Ok(Span { start, end, .. }) = input.next_lex_soft() {
-            span.start = cmp::min(span.start, start);
-            span.end = cmp::max(span.start, end);
-        }
+            while let Ok(Span { start, end, .. }) = fork.next_lex_soft() {
+                span.start = cmp::min(span.start, start);
+                span.end = cmp::max(span.start, end);
+            }
 
-        span
+            span
+        })
     }
 }
 

@@ -248,7 +248,7 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
 
         let lt: Lt = self.parse()?;
 
-        let mut balance: usize = 1;
+        let mut balance: isize = 1;
         loop {
             if self.peek_raw::<Rt>() {
                 balance -= 1;
