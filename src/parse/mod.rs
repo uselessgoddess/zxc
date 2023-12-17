@@ -1,4 +1,4 @@
-mod delim;
+pub(crate) mod delim;
 mod expr;
 
 use {
@@ -6,6 +6,7 @@ use {
     std::{
         error,
         fmt::{self, Formatter},
+        marker::PhantomData,
         mem::{self, MaybeUninit},
     },
 };
@@ -24,8 +25,8 @@ impl<T: Token, F: FnOnce(PhantomPeek) -> T + Copy> Peek for F {
 macro_rules! define_token {
     { $($pat:pat_param in $ty:ident $(<$($lifetimes:lifetime),+>)? => $display:literal)* } => {$(
         impl$(<$($lifetimes),+>)? Token for $ty$(<$($lifetimes),+>)? {
-            fn peek(lex: &Lex<'_>) -> bool {
-                matches!(lex, $pat)
+            fn peek<'b>(input: &ParseStream<'b, 'b>) -> bool {
+                matches!(input.predict(), Some(($pat, _)))
             }
 
             fn display() -> &'static str {
@@ -81,6 +82,12 @@ pub trait Parse<'lex>: Sized + 'lex {
     fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self>;
 }
 
+impl<'lex, T: Parse<'lex>> Parse<'lex> for Box<T> {
+    fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self> {
+        input.parse().map(Box::new)
+    }
+}
+
 #[rustfmt::skip]
 mod hint {
     pub unsafe fn outlive<'ex, T: ?Sized>(ptr: *const T) -> &'ex T { &*ptr }
@@ -95,9 +102,12 @@ unsafe fn clone_walker<'lex>(lex: &MaybeUninit<(Lex<'lex>, Span)>) -> (Lex<'lex>
 
 pub struct ParseStream<'lex, 'place: 'lex> {
     walker: Walker<'lex>,
-    tokens: &'place mut [MaybeUninit<(Lex<'lex>, Span)>],
+    tokens: *mut [MaybeUninit<(Lex<'lex>, Span)>],
     cursor: usize,
     span: Span,
+
+    // _marker: PhantomData<&'place [Lex<'lex>]>, // seems to `tokens`
+    _marker: PhantomData<&'place [Lex<'lex>]>,
 }
 
 impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
@@ -105,7 +115,23 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         // Safety: safe because works as coercion `Lex` -> `MaybeUninit<Lex>`
         // https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#impl-MaybeUninit%3C%5BT;+N%5D%3E
         let tokens = unsafe { mem::transmute(tokens) };
-        Self { walker: MaybeUninit::assume_init_read, tokens, cursor: 0, span: Span::splat(0) }
+        Self {
+            walker: MaybeUninit::assume_init_read,
+            tokens,
+            cursor: 0,
+            span: Span::splat(0),
+            _marker: PhantomData,
+        }
+    }
+
+    fn tokens(&self) -> &'place [MaybeUninit<(Lex<'lex>, Span)>] {
+        // Safety: TODO
+        unsafe { &*self.tokens }
+    }
+
+    fn tokens_mut(&mut self) -> &'place mut [MaybeUninit<(Lex<'lex>, Span)>] {
+        // Safety: TODO
+        unsafe { &mut *self.tokens }
     }
 
     pub fn step<F, P>(&mut self, parse: F) -> Result<P>
@@ -115,9 +141,10 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         let mut rest = unsafe {
             ParseStream {
                 walker: clone_walker,
-                tokens: hint::outlive_mut(self.tokens),
+                tokens: self.tokens,
                 cursor: self.cursor,
                 span: self.span,
+                _marker: PhantomData,
             }
         };
 
@@ -126,14 +153,31 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         Ok(parsed)
     }
 
+    pub fn fork<F, R>(&self, parse: F) -> R
+    where
+        F: FnOnce(&mut ParseStream<'lex, 'place>) -> R,
+    {
+        let mut rest = unsafe {
+            let &ParseStream { tokens, cursor, span, .. } = self;
+            ParseStream { walker: clone_walker, tokens, cursor, span, _marker: PhantomData }
+        };
+
+        // TODO: `step` without propagation
+        parse(&mut rest)
+    }
+
     pub fn error(&self, message: impl fmt::Display) -> Error {
-        Error::new(self.span, message.to_string())
+        Error::new(self.span, message.to_string()) // TODO: add checks for EOF
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cursor >= self.tokens().len()
     }
 
     pub fn predict(&self) -> Option<&'place (Lex<'lex>, Span)> {
         // Safety: we unitialize after `next_lex`
         unsafe {
-            self.tokens
+            self.tokens()
                 .get(self.cursor)
                 .map(|cell| hint::outlive(MaybeUninit::assume_init_ref(cell)))
         }
@@ -145,38 +189,46 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
     }
 
     pub fn peek_raw<T: Token>(&self) -> bool {
-        if let Some((lex, _)) = self.predict() { T::peek(lex) } else { false }
+        T::peek(self)
     }
 
     pub fn parse<P: Parse<'lex>>(&mut self) -> Result<P> {
         P::parse(self)
     }
 
-    pub fn lookahead(&mut self) -> Lookahead<'lex, 'place> {
-        Lookahead { scope: self.span, peek: self.predict().map(|(lex, _)| lex), peeks: Vec::new() }
+    pub fn custom<T>(
+        &mut self,
+        parser: fn(&mut ParseStream<'lex, 'lex>) -> Result<T>,
+    ) -> Result<T> {
+        parser(self)
+    }
+
+    pub fn lookahead<'ahead>(&'ahead mut self) -> Lookahead<'ahead, 'lex, 'place> {
+        Lookahead { parent: self, peeks: Vec::new() }
     }
 
     fn next_lex_impl(&mut self, walker: Walker<'lex>) -> Result<(Lex<'lex>, Span)> {
-        if self.cursor == self.tokens.len() {
+        if self.cursor == self.tokens().len() {
             Err(Error::eof(self.span))
         } else {
             self.cursor += 1;
             // Safety: unitialize after step next
             unsafe {
-                let cell = self.tokens.get(self.cursor - 1).unwrap_or_else(|| todo!());
+                let cell = self.tokens_mut().get(self.cursor - 1).unwrap_or_else(|| todo!());
                 Ok(walker(cell)).inspect(|(_, span)| self.span = *span)
             }
         }
     }
 
-    pub(crate) fn next_lex_soft(&mut self) -> Result<()> {
+    pub(crate) fn next_lex_soft(&mut self) -> Result<Span> {
         unsafe {
-            if self.cursor == self.tokens.len() {
+            if self.cursor == self.tokens().len() {
                 Err(Error::eof(self.span))
             } else {
-                let (_, span) = self.tokens[self.cursor].assume_init_ref();
+                let (_, span) = self.tokens_mut()[self.cursor].assume_init_ref();
                 self.span = *span;
-                Ok(self.cursor += 1)
+                self.cursor += 1;
+                Ok(self.span)
             }
         }
     }
@@ -214,29 +266,33 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
 
         // Safety: TODO
         let tokens = unsafe {
-            let (delimited, new) = hint::outlive_mut(self).tokens.split_at_mut(self.cursor);
+            let (delimited, new) = self.tokens_mut().split_at_mut(self.cursor);
             self.tokens = new;
             &mut delimited[anchor + 1..self.cursor - 1]
         };
         self.cursor = 0;
 
-        Ok(((lt, rt), ParseStream { walker: self.walker, tokens, cursor: 0, span: self.span }))
+        Ok((
+            (lt, rt),
+            ParseStream {
+                walker: self.walker,
+                tokens,
+                cursor: 0,
+                span: self.span,
+                _marker: PhantomData,
+            },
+        ))
     }
 }
 
-pub struct Lookahead<'lex, 'place: 'lex> {
-    scope: Span,
-    peek: Option<&'place Lex<'lex>>,
+pub struct Lookahead<'parent, 'lex, 'place: 'lex> {
+    parent: &'parent mut ParseStream<'lex, 'place>,
     peeks: Vec<&'static str>,
 }
 
-impl<'lex, 'place: 'lex> Lookahead<'lex, 'place> {
+impl<'parent, 'lex, 'place: 'lex> Lookahead<'parent, 'lex, 'place> {
     pub fn peek<P: Peek>(&mut self, peek: P) -> bool {
-        let _ = peek;
-
-        if let Some(lex) = self.peek
-            && P::Token::peek(lex)
-        {
+        if self.parent.peek(peek) {
             true
         } else {
             self.peeks.push(P::Token::display());
@@ -245,17 +301,20 @@ impl<'lex, 'place: 'lex> Lookahead<'lex, 'place> {
     }
 
     pub fn error(self) -> Error {
+        let input = self.parent;
         match self.peeks[..] {
             [] => {
-                if self.peek.is_none() {
-                    Error::eof(self.scope)
+                if input.is_empty() {
+                    Error::eof(input.span)
                 } else {
-                    Error::new(self.scope, "unexpected token")
+                    input.error("unexpected token")
                 }
             }
-            [expected] => Error::new(self.scope, format!("expected {expected}")),
-            [a, b] => Error::new(self.scope, format!("expected {a} or {b}")),
-            ref peeks => Error::new(self.scope, format!("expected one of: {}", peeks.join(", "))),
+            [expected] => input.error(format!("expected {expected}")),
+            [a, b] => input.error(format!("expected {a} or {b}")),
+            ref peeks => input.error(format!("expected one of: {}", peeks.join(", "))),
         }
     }
 }
+
+pub use delim::{lookahead, DelimSpan};

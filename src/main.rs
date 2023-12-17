@@ -4,9 +4,17 @@
 #[macro_use]
 pub mod ast;
 pub mod lexer;
+#[macro_use]
 pub mod parse;
 
 pub use lexer::{Lex, Span};
+
+// TODO: move from `ast` into this
+pub mod token {
+    use super::parse;
+
+    pub use parse::delim::{Brace, Bracket, Paren};
+}
 
 fn main() {}
 

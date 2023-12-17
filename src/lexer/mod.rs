@@ -4,7 +4,7 @@ mod token;
 use {chumsky::prelude::SimpleSpan, std::borrow::Cow};
 
 pub trait Token {
-    fn peek(lex: &Lex<'_>) -> bool;
+    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool;
     fn display() -> &'static str;
 }
 
@@ -47,7 +47,7 @@ pub mod ast {
                 }
 
                 impl<'lex> Parse<'lex> for $name {
-                    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
+                    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
                         input.step(|step| match step.next_lex()? {
                             (Lex::$space($space::$name(lex)), _) => Ok(lex),
                             _ => Err(step.error(format_args!("expected `{}`", $token))),
@@ -57,8 +57,8 @@ pub mod ast {
 
 
                 impl super::Token for $name {
-                    fn peek(lex: &Lex<'_>) -> bool {
-                        if let Lex::$space(inner) = lex {
+                    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool {
+                        if let Some((Lex::$space(inner), _)) = input.predict() {
                             matches!(inner, $space::$name(_))
                         } else {
                             false
@@ -168,7 +168,7 @@ impl<'a> Ident<'a> {
 }
 
 impl<'lex> Parse<'lex> for Ident<'lex> {
-    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Ident(ident), _) => Ok(ident),
             _ => Err(step.error("expected identifier")),
@@ -203,7 +203,7 @@ pub struct LitBool {
 macro_rules! impl_parse {
     ($($name:ty => { $($pat:tt)* } in $err:literal)*) => {$(
         impl<'lex> Parse<'lex> for $name {
-            fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
+            fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
                 input.step(|step| match step.next_lex()? {
                     $($pat)*,
                     _ => Err(step.error($err)),
@@ -225,7 +225,7 @@ define_token! {
 }
 
 impl<'lex> Parse<'lex> for LitStr<'lex> {
-    fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Lit(Lit::Str(str)), _) => Ok(str),
             _ => Err(step.error("expected string literal")),

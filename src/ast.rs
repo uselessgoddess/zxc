@@ -78,7 +78,7 @@ use crate::{
 };
 
 impl<'lex> Parse<'lex> for Lit<'lex> {
-    fn parse(input: &mut ParseStream<'lex, '_>) -> Result<Self> {
+    fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self> {
         input.step(|step| {
             if let (Lex::Lit(lit), _) = step.next_lex()? {
                 Ok(lit)
