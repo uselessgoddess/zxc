@@ -1,3 +1,4 @@
+#![feature(let_chains)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
 #[macro_use]

@@ -93,8 +93,8 @@ pub mod ast {
         Punct(&str) {
             "+" => Plus
             "-" => Minus
-            "*" => Mul
-            "/" => Div
+            "/" => Slash
+            "*" => Star
 
             "=" => Eq
             "==" => EqEq

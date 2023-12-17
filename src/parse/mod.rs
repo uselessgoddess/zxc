@@ -1,4 +1,5 @@
 mod delim;
+mod expr;
 
 use {
     crate::{lexer::Token, Lex, Span},
@@ -28,19 +29,19 @@ pub enum ErrorKind {
     Custom(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub repr: String,
     pub span: Span,
 }
 
 impl Error {
-    pub fn new(repr: String, span: Span) -> Self {
-        Self { repr, span }
+    pub fn new(span: Span, repr: impl fmt::Display) -> Self {
+        Self { repr: repr.to_string(), span }
     }
 
     pub fn eof(span: Span) -> Self {
-        Self::new("end of input".to_string(), span)
+        Self::new(span, "end of input")
     }
 }
 
@@ -104,10 +105,10 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
     }
 
     pub fn error(&self, message: impl fmt::Display) -> Error {
-        Error::new(message.to_string(), self.span)
+        Error::new(self.span, message.to_string())
     }
 
-    pub fn current(&self) -> Option<&'place (Lex<'lex>, Span)> {
+    pub fn predict(&self) -> Option<&'place (Lex<'lex>, Span)> {
         // Safety: we unitialize after `next_lex`
         unsafe {
             self.tokens
@@ -122,11 +123,15 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
     }
 
     pub fn peek_raw<T: Token>(&self) -> bool {
-        if let Some((lex, _)) = self.current() { T::peek(lex) } else { false }
+        if let Some((lex, _)) = self.predict() { T::peek(lex) } else { false }
     }
 
     pub fn parse<P: Parse<'lex>>(&mut self) -> Result<P> {
         P::parse(self)
+    }
+
+    pub fn lookahead(&mut self) -> Lookahead<'lex, 'place> {
+        Lookahead { scope: self.span, peek: self.predict().map(|(lex, _)| lex), peeks: Vec::new() }
     }
 
     fn next_lex_impl(&mut self, walker: Walker<'lex>) -> Result<(Lex<'lex>, Span)> {
@@ -194,5 +199,41 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         self.cursor = 0;
 
         Ok(((lt, rt), ParseStream { walker: self.walker, tokens, cursor: 0, span: self.span }))
+    }
+}
+
+pub struct Lookahead<'lex, 'place: 'lex> {
+    scope: Span,
+    peek: Option<&'place Lex<'lex>>,
+    peeks: Vec<&'static str>,
+}
+
+impl<'lex, 'place: 'lex> Lookahead<'lex, 'place> {
+    pub fn peek<P: Peek>(&mut self, peek: P) -> bool {
+        let _ = peek;
+
+        if let Some(lex) = self.peek
+            && P::Token::peek(lex)
+        {
+            true
+        } else {
+            self.peeks.push(P::Token::display());
+            false
+        }
+    }
+
+    pub fn error(self) -> Error {
+        match self.peeks[..] {
+            [] => {
+                if self.peek.is_none() {
+                    Error::eof(self.scope)
+                } else {
+                    Error::new(self.scope, "unexpected token")
+                }
+            }
+            [expected] => Error::new(self.scope, format!("expected {expected}")),
+            [a, b] => Error::new(self.scope, format!("expected {a} or {b}")),
+            ref peeks => Error::new(self.scope, format!("expected one of: {}", peeks.join(", "))),
+        }
     }
 }

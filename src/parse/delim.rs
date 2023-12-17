@@ -73,3 +73,18 @@ fn delimited() -> parse::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn lookahead() {
+    // TODO: extract into function
+    let src = "|";
+
+    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let mut input = ParseStream::new(&mut parsed[..]);
+
+    let mut lookahead = input.lookahead();
+    lookahead.peek(Token![+]);
+    lookahead.peek(Token![-]);
+
+    println!("{}", lookahead.error());
+}

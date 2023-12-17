@@ -94,7 +94,7 @@ fn lex_test() {
         // Err::<Lex, _>(parse::Error { message: "".to_string(), span: Span::new(0, 0) })
     });
     println!("{:?}", lex);
-    println!("{:?}", buf.current());
+    println!("{:?}", buf.predict());
 }
 
 #[test]
