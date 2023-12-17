@@ -42,8 +42,8 @@ pub mod ast {
                 }
 
                 #[allow(non_snake_case, dead_code)]
-                pub fn $name(_: crate::parse::Sealed) -> $name {
-                    unreachable!()
+                pub fn $name(peek: crate::parse::PhantomPeek) -> $name {
+                    match peek {}
                 }
 
                 impl<'lex> Parse<'lex> for $name {
@@ -100,6 +100,7 @@ pub mod ast {
             "==" => EqEq
             "!=" => NotEq
 
+            "!" => Not
             "|" => Or
             "||" => OrOr
         }
@@ -154,16 +155,6 @@ impl<'lex> Parse<'lex> for Lex<'lex> {
 pub struct Ident<'a> {
     ident: &'a str,
     pub span: Span,
-}
-
-impl Token for Ident<'_> {
-    fn peek(lex: &Lex<'_>) -> bool {
-        matches!(lex, Lex::Ident(_))
-    }
-
-    fn display() -> &'static str {
-        "identifier"
-    }
 }
 
 impl<'a> Ident<'a> {
@@ -228,6 +219,11 @@ impl_parse! {
     LitBool     => { (Lex::Lit(Lit::Bool( lex)), _) => Ok(lex) } in "expected bool literal"
 }
 
+define_token! {
+    Lex::Ident(_) in Ident<'a> => "identifier"
+    Lex::Lit(_) in Lit<'a> => "literal"
+}
+
 impl<'lex> Parse<'lex> for LitStr<'lex> {
     fn parse(input: &mut ParseStream<'lex, '_>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
@@ -239,6 +235,6 @@ impl<'lex> Parse<'lex> for LitStr<'lex> {
 
 use crate::{
     parse,
-    parse::{Parse, ParseStream},
+    parse::{define_token, Parse, ParseStream},
 };
 pub use lexer::lexer;

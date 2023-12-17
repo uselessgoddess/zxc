@@ -10,16 +10,38 @@ use {
     },
 };
 
-pub enum Sealed {}
+pub enum PhantomPeek {}
 
 pub trait Peek: Copy {
     type Token: Token;
 }
 
 // TODO(doc): Add notes about this
-impl<T: Token, F: FnOnce(Sealed) -> T + Copy> Peek for F {
+impl<T: Token, F: FnOnce(PhantomPeek) -> T + Copy> Peek for F {
     type Token = T;
 }
+
+macro_rules! define_token {
+    { $($pat:pat_param in $ty:ident $(<$($lifetimes:lifetime),+>)? => $display:literal)* } => {$(
+        impl$(<$($lifetimes),+>)? Token for $ty$(<$($lifetimes),+>)? {
+            fn peek(lex: &Lex<'_>) -> bool {
+                matches!(lex, $pat)
+            }
+
+            fn display() -> &'static str {
+                $display
+            }
+        }
+
+        #[allow(non_snake_case)]
+        pub fn $ty $(<$($lifetimes),+>)?(peek: $crate::parse::PhantomPeek)
+            -> $ty$(<$($lifetimes),+>)? {
+            match peek {}
+        }
+    )*};
+}
+
+pub(crate) use define_token;
 
 #[derive(Debug)]
 pub enum ErrorKind {
