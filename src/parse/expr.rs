@@ -5,7 +5,7 @@ use crate::{
         Ident, Lit,
     },
     parenthesized,
-    parse::{self, Parse, ParseStream},
+    parse::{self, Parse, ParseBuffer},
     token, Lex, Span, Token,
 };
 
@@ -20,7 +20,7 @@ pub enum BinOp {
 }
 
 impl<'lex> Parse<'lex> for BinOp {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         let (Lex::Punct(punct), _) = input.next_lex()? else {
             return Err(input.error("expected binary operator"));
         };
@@ -43,7 +43,7 @@ pub enum UnOp {
 }
 
 impl<'lex> Parse<'lex> for UnOp {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         // TODO: add lookahead implementation to `BinOp`
         let mut lookahead = input.lookahead();
         if lookahead.peek(Token![!]) {
@@ -86,29 +86,29 @@ pub struct Unary<'a> {
 }
 
 impl<'lex> Parse<'lex> for Expr<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         todo!()
     }
 }
 
 impl<'lex> Parse<'lex> for Paren<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         todo!()
     }
 }
 
 impl<'lex> Parse<'lex> for Unary<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         todo!()
     }
 }
 
-fn expr_paren<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Paren<'lex>> {
+fn expr_paren<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Paren<'lex>> {
     let mut content;
     Ok(Paren { paren: parenthesized!(content in input), expr: content.parse()? })
 }
 
-fn unary_expr<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Expr<'lex>> {
+fn unary_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     if input.peek(Token![!]) || input.peek(Token![-]) {
         Ok(Expr::Unary(Unary { op: input.parse()?, expr: Box::new(unary_expr(input)?) }))
     } else {
@@ -116,7 +116,7 @@ fn unary_expr<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Expr<'
     }
 }
 
-fn trailer_expr<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Expr<'lex>> {
+fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     let e = atom_expr(input)?;
 
     loop {
@@ -128,7 +128,7 @@ fn trailer_expr<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Expr
     Ok(e)
 }
 
-fn atom_expr<'lex>(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Expr<'lex>> {
+fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     if input.peek(Lit) {
         input.parse().map(Expr::Lit)
     } else if input.peek(token::Paren) {

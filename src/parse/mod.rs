@@ -8,6 +8,8 @@ use {
         fmt::{self, Formatter},
         marker::PhantomData,
         mem::{self, MaybeUninit},
+        ops::{Range, RangeInclusive},
+        ptr::{self, NonNull},
     },
 };
 
@@ -25,7 +27,7 @@ impl<T: Token, F: FnOnce(PhantomPeek) -> T + Copy> Peek for F {
 macro_rules! define_token {
     { $($pat:pat_param in $ty:ident $(<$($lifetimes:lifetime),+>)? => $display:literal)* } => {$(
         impl$(<$($lifetimes),+>)? Token for $ty$(<$($lifetimes),+>)? {
-            fn peek<'b>(input: &ParseStream<'b, 'b>) -> bool {
+            fn peek<'b>(input: &ParseBuffer<'b>) -> bool {
                 matches!(input.predict(), Some(($pat, _)))
             }
 
@@ -79,11 +81,11 @@ impl error::Error for Error {}
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub trait Parse<'lex>: Sized + 'lex {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self>;
+    fn parse(input: &mut ParseBuffer<'lex>) -> Result<Self>;
 }
 
 impl<'lex, T: Parse<'lex>> Parse<'lex> for Box<T> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> Result<Self> {
         input.parse().map(Box::new)
     }
 }
@@ -100,70 +102,82 @@ unsafe fn clone_walker<'lex>(lex: &MaybeUninit<(Lex<'lex>, Span)>) -> (Lex<'lex>
     MaybeUninit::assume_init_ref(lex).clone()
 }
 
-pub struct ParseStream<'lex, 'place: 'lex> {
+pub struct ParseBuffer<'lex> {
+    owner: bool,
+    tokens: NonNull<[MaybeUninit<(Lex<'lex>, Span)>]>,
     walker: Walker<'lex>,
-    tokens: *mut [MaybeUninit<(Lex<'lex>, Span)>],
     cursor: usize,
     span: Span,
-
-    // _marker: PhantomData<&'place [Lex<'lex>]>, // seems to `tokens`
-    _marker: PhantomData<&'place [Lex<'lex>]>,
 }
 
-impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
-    pub fn new(tokens: &'place mut [(Lex<'lex>, Span)]) -> Self {
-        // Safety: safe because works as coercion `Lex` -> `MaybeUninit<Lex>`
-        // https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#impl-MaybeUninit%3C%5BT;+N%5D%3E
-        let tokens = unsafe { mem::transmute(tokens) };
-        Self {
-            walker: MaybeUninit::assume_init_read,
-            tokens,
-            cursor: 0,
-            span: Span::splat(0),
-            _marker: PhantomData,
+pub struct Advance<'stream, 'lex>(&'stream mut ParseBuffer<'lex>);
+
+impl Advance<'_, '_> {
+    fn to(&mut self, fork: &mut ParseBuffer) {
+        fn in_scope<T>(scope: NonNull<[T]>, ptr: NonNull<[T]>) -> bool {
+            fn as_range<T>(slice: *const [T]) -> RangeInclusive<*const T> {
+                let start = slice as *const T;
+                start..=unsafe { start.add(slice.len()) }
+            }
+
+            let scope = as_range(scope.as_ptr());
+            let ptr = as_range(ptr.as_ptr());
+
+            scope.contains(&ptr.start()) && scope.contains(&ptr.end())
         }
+
+        if !in_scope(self.0.tokens, fork.tokens) {
+            panic!("Fork was not derived from the advancing parse stream");
+        }
+
+        self.0.cursor = fork.cursor;
+    }
+}
+
+impl<'lex> ParseBuffer<'lex> {
+    // TODO: accept `Box<[..]>`
+    pub fn new(tokens: Vec<(Lex<'lex>, Span)>) -> Self {
+        // Safety: safe because works as coercion `Lex` -> `MaybeUninit<Lex>`
+        let slice = Box::leak(tokens.into_boxed_slice());
+
+        let walker = MaybeUninit::assume_init_read;
+        let tokens = unsafe {
+            NonNull::slice_from_raw_parts(
+                NonNull::new_unchecked(slice.as_mut_ptr().cast()),
+                slice.len(),
+            )
+        };
+        Self { owner: true, tokens, walker, cursor: 0, span: Span::splat(0) }
     }
 
-    fn tokens(&self) -> &'place [MaybeUninit<(Lex<'lex>, Span)>] {
-        // Safety: TODO
-        unsafe { &*self.tokens }
-    }
-
-    fn tokens_mut(&mut self) -> &'place mut [MaybeUninit<(Lex<'lex>, Span)>] {
-        // Safety: TODO
-        unsafe { &mut *self.tokens }
+    unsafe fn make_clone<'a: 'b, 'b>(&ParseBuffer { tokens, cursor, span, .. }: &Self) -> Self {
+        ParseBuffer { owner: false, walker: clone_walker, tokens, cursor, span }
     }
 
     pub fn step<F, P>(&mut self, parse: F) -> Result<P>
     where
-        F: FnOnce(&mut ParseStream<'lex, 'place>) -> Result<P>,
+        F: FnOnce(&mut ParseBuffer<'lex>) -> Result<P>,
     {
-        let mut rest = unsafe {
-            ParseStream {
-                walker: clone_walker,
-                tokens: self.tokens,
-                cursor: self.cursor,
-                span: self.span,
-                _marker: PhantomData,
-            }
-        };
+        let mut rest = unsafe { Self::make_clone(self) };
 
         let parsed = parse(&mut rest)?;
         self.cursor = rest.cursor;
         Ok(parsed)
     }
 
-    pub fn fork<F, R>(&self, parse: F) -> R
+    pub fn fork<F, R>(&mut self, parse: F) -> R
     where
-        F: FnOnce(&mut ParseStream<'lex, 'place>) -> R,
+        F: FnOnce(&mut ParseBuffer<'lex>, Advance<'_, '_>) -> R,
     {
-        let mut rest = unsafe {
-            let &ParseStream { tokens, cursor, span, .. } = self;
-            ParseStream { walker: clone_walker, tokens, cursor, span, _marker: PhantomData }
-        };
+        parse(&mut unsafe { Self::make_clone(self) }, Advance(self))
+    }
 
-        // TODO: `step` without propagation
-        parse(&mut rest)
+    // TODO: maybe store `cursor` in the `Cell`
+    pub fn scan<F, R>(&self, parse: F) -> R
+    where
+        F: FnOnce(&mut ParseBuffer<'lex>) -> R,
+    {
+        parse(&mut unsafe { Self::make_clone(self) })
     }
 
     pub fn error(&self, message: impl fmt::Display) -> Error {
@@ -171,15 +185,20 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.cursor >= self.tokens().len()
+        self.cursor >= self.tokens.len()
     }
 
-    pub fn predict(&self) -> Option<&'place (Lex<'lex>, Span)> {
+    pub fn predict(&self) -> Option<&(Lex<'lex>, Span)> {
         // Safety: we unitialize after `next_lex`
-        unsafe {
-            self.tokens()
-                .get(self.cursor)
-                .map(|cell| hint::outlive(MaybeUninit::assume_init_ref(cell)))
+
+        if self.is_empty() {
+            None
+        } else {
+            unsafe {
+                Some(MaybeUninit::assume_init_ref(
+                    self.tokens.get_unchecked_mut(self.cursor).as_ref(),
+                ))
+            }
         }
     }
 
@@ -196,36 +215,33 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
         P::parse(self)
     }
 
-    pub fn custom<T>(
-        &mut self,
-        parser: fn(&mut ParseStream<'lex, 'lex>) -> Result<T>,
-    ) -> Result<T> {
+    pub fn custom<T>(&mut self, parser: fn(&mut ParseBuffer<'lex>) -> Result<T>) -> Result<T> {
         parser(self)
     }
 
-    pub fn lookahead<'ahead>(&'ahead mut self) -> Lookahead<'ahead, 'lex, 'place> {
+    pub fn lookahead<'ahead>(&'ahead mut self) -> Lookahead<'ahead, 'lex> {
         Lookahead { parent: self, peeks: Vec::new() }
     }
 
     fn next_lex_impl(&mut self, walker: Walker<'lex>) -> Result<(Lex<'lex>, Span)> {
-        if self.cursor == self.tokens().len() {
+        if self.cursor == self.tokens.len() {
             Err(Error::eof(self.span))
         } else {
             self.cursor += 1;
             // Safety: unitialize after step next
-            unsafe {
-                let cell = self.tokens_mut().get(self.cursor - 1).unwrap_or_else(|| todo!());
-                Ok(walker(cell)).inspect(|(_, span)| self.span = *span)
-            }
+            Ok(unsafe { walker(self.tokens.get_unchecked_mut(self.cursor - 1).as_mut()) })
+                .inspect(|(_, span)| self.span = *span)
         }
     }
 
-    pub(crate) fn next_lex_soft(&mut self) -> Result<Span> {
+    pub fn skip_next(&mut self) -> Result<Span> {
         unsafe {
-            if self.cursor == self.tokens().len() {
+            if self.cursor == self.tokens.len() {
                 Err(Error::eof(self.span))
             } else {
-                let (_, span) = self.tokens_mut()[self.cursor].assume_init_ref();
+                let (_, span) = MaybeUninit::assume_init_ref(
+                    self.tokens.get_unchecked_mut(self.cursor).as_ref(),
+                );
                 self.span = *span;
                 self.cursor += 1;
                 Ok(self.span)
@@ -243,7 +259,7 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
 
     pub(crate) fn parse_delimited<Lt: Token + Parse<'lex>, Rt: Token + Parse<'lex>>(
         &mut self,
-    ) -> Result<((Lt, Rt), ParseStream<'lex, 'place>)> {
+    ) -> Result<((Lt, Rt), ParseBuffer<'lex>)> {
         let anchor = self.cursor;
 
         let lt: Lt = self.parse()?;
@@ -259,38 +275,46 @@ impl<'lex, 'place: 'lex> ParseStream<'lex, 'place> {
             if balance == 0 {
                 break;
             }
-            let _ = self.next_lex_soft()?;
+            self.skip_next()?;
         }
 
         let rt: Rt = self.parse()?;
 
-        // Safety: TODO
-        let tokens = unsafe {
-            let (delimited, new) = self.tokens_mut().split_at_mut(self.cursor);
-            self.tokens = new;
-            &mut delimited[anchor + 1..self.cursor - 1]
-        };
-        self.cursor = 0;
-
+        let tokens = NonNull::slice_from_raw_parts(self.tokens.as_non_null_ptr(), self.cursor - 1);
         Ok((
             (lt, rt),
-            ParseStream {
-                walker: self.walker,
+            ParseBuffer {
+                owner: false,
                 tokens,
-                cursor: 0,
+                walker: self.walker,
+                cursor: anchor + 1,
                 span: self.span,
-                _marker: PhantomData,
             },
         ))
     }
 }
 
-pub struct Lookahead<'parent, 'lex, 'place: 'lex> {
-    parent: &'parent mut ParseStream<'lex, 'place>,
+impl Drop for ParseBuffer<'_> {
+    fn drop(&mut self) {
+        if !self.owner {
+            return;
+        }
+
+        unsafe {
+            let mut slice = Box::from_raw(self.tokens.as_ptr());
+            for lex in &mut slice[self.cursor..] {
+                MaybeUninit::assume_init_drop(lex)
+            }
+        }
+    }
+}
+
+pub struct Lookahead<'parent, 'lex> {
+    parent: &'parent mut ParseBuffer<'lex>,
     peeks: Vec<&'static str>,
 }
 
-impl<'parent, 'lex, 'place: 'lex> Lookahead<'parent, 'lex, 'place> {
+impl<'parent, 'lex> Lookahead<'parent, 'lex> {
     pub fn peek<P: Peek>(&mut self, peek: P) -> bool {
         if self.parent.peek(peek) {
             true

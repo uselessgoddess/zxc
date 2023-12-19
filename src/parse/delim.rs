@@ -2,7 +2,7 @@
 macro_rules! delimited {
     ($content:ident($lt:ty, $rt:ty) in $input:expr) => {{
         let (parens, buf) =
-            $crate::parse::ParseStream::parse_delimited::<$lt, $rt>($input).unwrap();
+            $crate::parse::ParseBuffer::parse_delimited::<$lt, $rt>($input).unwrap();
         $content = buf;
         parens
     }};
@@ -44,32 +44,32 @@ macro_rules! bracketed {
 
 pub mod lookahead {
     use crate::{
-        parse::{Parse, ParseStream, Peek},
+        parse::{Parse, ParseBuffer, Peek},
         Span,
     };
 
     pub fn is_delimiter<'lex, Lt: Peek, Rt: Peek>(
-        input: &ParseStream<'lex, 'lex>,
+        input: &ParseBuffer<'lex>,
         (_, _): (Lt, Rt),
     ) -> bool
     where
         Lt::Token: Parse<'lex>,
         Rt::Token: Parse<'lex>,
     {
-        input.fork(|fork| fork.parse_delimited::<Lt::Token, Rt::Token>().is_ok())
+        input.scan(|scan| scan.parse_delimited::<Lt::Token, Rt::Token>().is_ok())
     }
 
     use std::cmp;
 
-    pub fn predict_span<'lex>(input: &mut ParseStream<'lex, 'lex>) -> Span {
-        input.fork(|fork| {
-            let Ok(mut span) = fork.next_lex_soft() else { return Span::splat(0) };
-
-            while let Ok(Span { start, end, .. }) = fork.next_lex_soft() {
+    pub fn predict_span(input: &mut ParseBuffer) -> Span {
+        input.fork(|fork, _| {
+            let Ok(mut span) = fork.skip_next() else {
+                return Span::splat(0);
+            };
+            while let Ok(Span { start, end, .. }) = fork.skip_next() {
                 span.start = cmp::min(span.start, start);
                 span.end = cmp::max(span.start, end);
             }
-
             span
         })
     }
@@ -107,7 +107,7 @@ macro_rules! define_delimiters {
 }
 
 impl Token for Paren {
-    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool {
+    fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Paren1, Paren2))
     }
 
@@ -117,7 +117,7 @@ impl Token for Paren {
 }
 
 impl Token for Brace {
-    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool {
+    fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Brace1, Brace2))
     }
 
@@ -127,7 +127,7 @@ impl Token for Brace {
 }
 
 impl Token for Bracket {
-    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool {
+    fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Bracket1, Bracket2))
     }
 
@@ -150,7 +150,7 @@ define_delimiters! {
 use {
     crate::{
         lexer::{ast, Lit, Token},
-        parse::{self, ParseStream},
+        parse::{self, ParseBuffer},
         token, Lex, Span, Token,
     },
     chumsky::Parser,
@@ -160,11 +160,9 @@ use {
 fn parens() -> parse::Result<()> {
     let src = "((1 + 2) + (3 + 4))";
     let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
-    let mut input = ParseStream::new(&mut parsed[..]);
+    let mut input = ParseBuffer::new(parsed);
 
-    pub(crate) fn paren<'lex, 'place: 'lex>(
-        content: &mut ParseStream<'lex, 'place>,
-    ) -> parse::Result<ParseStream<'lex, 'place>> {
+    pub(crate) fn paren<'lex>(content: &mut ParseBuffer<'lex>) -> parse::Result<ParseBuffer<'lex>> {
         let mut paren;
         parenthesized!(paren in content);
         Ok(paren)
@@ -173,7 +171,7 @@ fn parens() -> parse::Result<()> {
     let mut content;
     parenthesized!(content in &mut input);
 
-    let inner = |input: &mut ParseStream| {
+    let inner = |input: &mut ParseBuffer| {
         let a: Lit = input.parse().unwrap();
         let plus: ast::Plus = input.parse().unwrap();
         let b: Lit = input.parse().unwrap();
@@ -196,8 +194,8 @@ fn parens() -> parse::Result<()> {
 fn delimited() -> parse::Result<()> {
     let src = "|a, b|";
 
-    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
-    let mut input = ParseStream::new(&mut parsed[..]);
+    let parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let mut input = ParseBuffer::new(parsed);
 
     let mut content;
     delimited!(content(Token![|], Token![|]) in &mut input);
@@ -209,26 +207,26 @@ fn delimited() -> parse::Result<()> {
     Ok(())
 }
 
+#[rustfmt::skip]
 macro_rules! lex_it {
-    ($src:literal in $ident:ident) => {
-        let mut __parsed = crate::lexer::lexer().parse($src).into_result().unwrap();
-        let mut $ident = ParseStream::new(&mut __parsed[..]);
-    };
+    ($src:literal) => {{ 
+        ParseBuffer::new(crate::lexer::lexer().parse($src).into_result().unwrap()) 
+    }};
 }
 
 #[test]
 fn peek_paren() -> parse::Result<()> {
-    lex_it!("(a, b)" in input);
+    let input = lex_it!("(a, b)");
     assert!(input.peek(token::Paren));
 
     {
-        lex_it!("[a, b]" in input);
+        let input = lex_it!("[a, b]");
         assert!(!input.peek(token::Paren));
 
-        lex_it!("(a, b" in input);
+        let input = lex_it!("(a, b");
         assert!(!input.peek(token::Paren));
 
-        lex_it!("a, b)" in input);
+        let input = lex_it!("a, b)");
         assert!(!input.peek(token::Paren));
     }
 
@@ -240,12 +238,35 @@ fn lookahead() {
     // TODO: extract into function
     let src = "|";
 
-    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
-    let mut input = ParseStream::new(&mut parsed[..]);
+    let parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let mut input = ParseBuffer::new(parsed);
 
     let mut lookahead = input.lookahead();
     lookahead.peek(Token![+]);
     lookahead.peek(Token![-]);
 
     println!("{}", lookahead.error());
+}
+
+#[test]
+fn fork() {
+    let mut input = lex_it!("(123.321)");
+
+    let do_parse = if input.peek(token::Paren) {
+        input.fork(|fork, mut advance| {
+            let mut content;
+            parenthesized!(content in fork);
+            if content.parse::<Lit>().is_ok() && content.is_empty() {
+                advance.to(fork);
+                true
+            } else {
+                false
+            }
+        })
+    } else {
+        false
+    };
+
+    assert!(do_parse);
+    assert!(input.is_empty());
 }

@@ -69,16 +69,16 @@ pub fn lexer<'src>()
 
 #[test]
 fn lex_test() {
-    use crate::parse::ParseStream;
+    use crate::parse::ParseBuffer;
 
     println!("{}", mem::size_of::<Lex>());
 
     // let src = "let x = 12 + null == le + 12.0001;";
     let src = "let x = 12 + null == le + 12.0001;";
-    let mut parsed = lexer().parse(src).into_result().unwrap();
+    let parsed = lexer().parse(src).into_result().unwrap();
     println!("{:#?}", parsed);
 
-    let mut buf = ParseStream::new(&mut parsed[..]);
+    let mut buf = ParseBuffer::new(parsed);
 
     println!("{}", buf.peek(ast::Let));
     println!("{:?}", buf.next_lex());
@@ -99,13 +99,13 @@ fn lex_test() {
 
 #[test]
 fn parse() {
-    use crate::parse::ParseStream;
+    use crate::parse::ParseBuffer;
 
     let src = "let x = 12;";
-    let mut parsed = lexer().parse(src).into_result().unwrap();
+    let parsed = lexer().parse(src).into_result().unwrap();
     println!("{:#?}", parsed);
 
-    let mut buf = ParseStream::new(&mut parsed[..]);
+    let mut buf = ParseBuffer::new(parsed);
 
     let err = buf
         .step(|step| {

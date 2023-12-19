@@ -1,4 +1,4 @@
-#![feature(let_chains)]
+#![feature(let_chains, slice_ptr_len, slice_ptr_get, vec_into_raw_parts)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
 #[macro_use]

@@ -4,7 +4,7 @@ mod token;
 use {chumsky::prelude::SimpleSpan, std::borrow::Cow};
 
 pub trait Token {
-    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool;
+    fn peek(input: &ParseBuffer) -> bool;
     fn display() -> &'static str;
 }
 
@@ -47,7 +47,7 @@ pub mod ast {
                 }
 
                 impl<'lex> Parse<'lex> for $name {
-                    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+                    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
                         input.step(|step| match step.next_lex()? {
                             (Lex::$space($space::$name(lex)), _) => Ok(lex),
                             _ => Err(step.error(format_args!("expected `{}`", $token))),
@@ -57,7 +57,7 @@ pub mod ast {
 
 
                 impl super::Token for $name {
-                    fn peek<'a>(input: &ParseStream<'a, 'a>) -> bool {
+                    fn peek(input: &ParseBuffer) -> bool {
                         if let Some((Lex::$space(inner), _)) = input.predict() {
                             matches!(inner, $space::$name(_))
                         } else {
@@ -80,7 +80,7 @@ pub mod ast {
     }
 
     use {
-        super::{parse, Lex, Parse, ParseStream, Span},
+        super::{parse, Lex, Parse, ParseBuffer, Span},
         std::fmt,
     };
 
@@ -146,7 +146,7 @@ pub enum Lex<'src> {
 }
 
 impl<'lex> Parse<'lex> for Lex<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         input.next_lex().map(|(lex, _)| lex)
     }
 }
@@ -168,7 +168,7 @@ impl<'a> Ident<'a> {
 }
 
 impl<'lex> Parse<'lex> for Ident<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Ident(ident), _) => Ok(ident),
             _ => Err(step.error("expected identifier")),
@@ -203,7 +203,7 @@ pub struct LitBool {
 macro_rules! impl_parse {
     ($($name:ty => { $($pat:tt)* } in $err:literal)*) => {$(
         impl<'lex> Parse<'lex> for $name {
-            fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+            fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
                 input.step(|step| match step.next_lex()? {
                     $($pat)*,
                     _ => Err(step.error($err)),
@@ -225,7 +225,7 @@ define_token! {
 }
 
 impl<'lex> Parse<'lex> for LitStr<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> parse::Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         input.step(|step| match step.next_lex()? {
             (Lex::Lit(Lit::Str(str)), _) => Ok(str),
             _ => Err(step.error("expected string literal")),
@@ -235,6 +235,6 @@ impl<'lex> Parse<'lex> for LitStr<'lex> {
 
 use crate::{
     parse,
-    parse::{define_token, Parse, ParseStream},
+    parse::{define_token, Parse, ParseBuffer},
 };
 pub use lexer::lexer;

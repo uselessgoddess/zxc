@@ -73,12 +73,12 @@ macro_rules! ast_enum_from_struct {
 
 use crate::{
     lexer::Lit,
-    parse::{Parse, ParseStream, Result},
+    parse::{Parse, ParseBuffer, Result},
     Lex,
 };
 
 impl<'lex> Parse<'lex> for Lit<'lex> {
-    fn parse(input: &mut ParseStream<'lex, 'lex>) -> Result<Self> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> Result<Self> {
         input.step(|step| {
             if let (Lex::Lit(lit), _) = step.next_lex()? {
                 Ok(lit)
@@ -94,8 +94,8 @@ fn parse_lit() {
     use chumsky::Parser;
 
     let src = "false \"hello\" 123 0.45";
-    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
-    let mut buf = ParseStream::new(&mut parsed[..]);
+    let parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let mut buf = ParseBuffer::new(parsed);
 
     for _ in 0..4 {
         let lit: Lit = buf.parse().unwrap();
