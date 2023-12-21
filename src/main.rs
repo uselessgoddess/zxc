@@ -6,6 +6,7 @@ pub mod ast;
 pub mod lexer;
 #[macro_use]
 pub mod parse;
+mod codegen;
 
 pub use lexer::{Lex, Span};
 

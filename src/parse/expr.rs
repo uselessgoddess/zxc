@@ -2,7 +2,8 @@ use crate::{
     lexer::{Ident, Lit},
     parenthesized,
     parse::{self, Parse, ParseBuffer},
-    token, Token,
+    token::{self},
+    Token,
 };
 
 #[derive(PartialOrd, PartialEq)]
@@ -232,6 +233,65 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     } else {
         Err(input.error("unsupported expression"))
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum Stmt<'lex> {
+    Expr(Expr<'lex>, Option<Token![;]>),
+}
+
+impl<'lex> Parse<'lex> for Stmt<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        parse_stmt(input)
+    }
+}
+
+fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Stmt<'lex>> {
+    let expr: Expr = input.parse()?;
+    let semi: Option<Token![;]> = input.parse()?;
+
+    if semi.is_some() {
+        Ok(Stmt::Expr(expr, semi))
+    } else if !requires_terminator(&expr) {
+        Ok(Stmt::Expr(expr, None))
+    } else {
+        Err(input.error("expected semicolon"))
+    }
+}
+
+pub struct Block<'lex> {
+    pub brace: token::Brace,
+    pub stmts: Vec<Stmt<'lex>>,
+}
+
+impl Block<'_> {
+    pub fn parse_within<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Vec<Stmt<'lex>>> {
+        let mut stmts = Vec::new();
+        loop {
+            // while let semi @ Some(_) = input.parse()? {
+            //     stmts.push(Stmt::Expr(Expr::Verbatim(TokenStream::new()), semi));
+            // }
+            if input.is_empty() {
+                break;
+            }
+            let stmt = parse_stmt(input)?;
+            let requires_semicolon = match &stmt {
+                Stmt::Expr(stmt, None) => requires_terminator(stmt),
+                _ => false,
+            };
+            stmts.push(stmt);
+            if input.is_empty() {
+                break;
+            } else if requires_semicolon {
+                return Err(input.error("unexpected token, expected `;`"));
+            }
+        }
+        Ok(stmts)
+    }
+}
+
+fn requires_terminator<T>(_: &T) -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
 pub(crate) mod delim;
 mod expr;
 
+pub use expr::*;
+
 use {
     crate::{lexer::Token, Lex, Span},
     std::{
@@ -86,6 +88,12 @@ pub trait Parse<'lex>: Sized + 'lex {
 impl<'lex, T: Parse<'lex>> Parse<'lex> for Box<T> {
     fn parse(input: &mut ParseBuffer<'lex>) -> Result<Self> {
         input.parse().map(Box::new)
+    }
+}
+
+impl<'lex, T: Parse<'lex> + Token> Parse<'lex> for Option<T> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> Result<Self> {
+        Ok(if T::peek(input) { Some(input.parse()?) } else { None })
     }
 }
 
