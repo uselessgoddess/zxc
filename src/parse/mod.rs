@@ -6,10 +6,9 @@ use {
     std::{
         error,
         fmt::{self, Formatter},
-        marker::PhantomData,
-        mem::{self, MaybeUninit},
-        ops::{Range, RangeInclusive},
-        ptr::{self, NonNull},
+        mem::MaybeUninit,
+        ops::RangeInclusive,
+        ptr::NonNull,
     },
 };
 
@@ -27,7 +26,7 @@ impl<T: Token, F: FnOnce(PhantomPeek) -> T + Copy> Peek for F {
 macro_rules! define_token {
     { $($pat:pat_param in $ty:ident $(<$($lifetimes:lifetime),+>)? => $display:literal)* } => {$(
         impl$(<$($lifetimes),+>)? Token for $ty$(<$($lifetimes),+>)? {
-            fn peek<'b>(input: &ParseBuffer<'b>) -> bool {
+            fn peek(input: &ParseBuffer) -> bool {
                 matches!(input.predict(), Some(($pat, _)))
             }
 
@@ -90,12 +89,6 @@ impl<'lex, T: Parse<'lex>> Parse<'lex> for Box<T> {
     }
 }
 
-#[rustfmt::skip]
-mod hint {
-    pub unsafe fn outlive<'ex, T: ?Sized>(ptr: *const T) -> &'ex T { &*ptr }
-    pub unsafe fn outlive_mut<'ex, T: ?Sized>(ptr: *mut T) -> &'ex mut T { &mut *ptr }
-}
-
 type Walker<'lex> = unsafe fn(&MaybeUninit<(Lex<'lex>, Span)>) -> (Lex<'lex>, Span);
 
 unsafe fn clone_walker<'lex>(lex: &MaybeUninit<(Lex<'lex>, Span)>) -> (Lex<'lex>, Span) {
@@ -123,7 +116,7 @@ impl Advance<'_, '_> {
             let scope = as_range(scope.as_ptr());
             let ptr = as_range(ptr.as_ptr());
 
-            scope.contains(&ptr.start()) && scope.contains(&ptr.end())
+            scope.contains(ptr.start()) && scope.contains(ptr.end())
         }
 
         if !in_scope(self.0.tokens, fork.tokens) {
@@ -181,7 +174,7 @@ impl<'lex> ParseBuffer<'lex> {
     }
 
     pub fn error(&self, message: impl fmt::Display) -> Error {
-        Error::new(self.span, message.to_string()) // TODO: add checks for EOF
+        Error::new(self.span(), message.to_string()) // TODO: add checks for EOF
     }
 
     pub fn is_empty(&self) -> bool {
@@ -200,6 +193,10 @@ impl<'lex> ParseBuffer<'lex> {
                 ))
             }
         }
+    }
+
+    pub fn span(&self) -> Span {
+        if let Some((_, span)) = self.predict() { *span } else { self.span }
     }
 
     pub fn peek<P: Peek>(&self, peek: P) -> bool {
@@ -224,7 +221,7 @@ impl<'lex> ParseBuffer<'lex> {
     }
 
     fn next_lex_impl(&mut self, walker: Walker<'lex>) -> Result<(Lex<'lex>, Span)> {
-        if self.cursor == self.tokens.len() {
+        if self.is_empty() {
             Err(Error::eof(self.span))
         } else {
             self.cursor += 1;
@@ -236,7 +233,7 @@ impl<'lex> ParseBuffer<'lex> {
 
     pub fn skip_next(&mut self) -> Result<Span> {
         unsafe {
-            if self.cursor == self.tokens.len() {
+            if self.is_empty() {
                 Err(Error::eof(self.span))
             } else {
                 let (_, span) = MaybeUninit::assume_init_ref(
@@ -253,6 +250,7 @@ impl<'lex> ParseBuffer<'lex> {
         self.next_lex_impl(self.walker)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn next_lex_clone(&mut self) -> Result<(Lex<'lex>, Span)> {
         self.next_lex_impl(clone_walker)
     }

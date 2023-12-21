@@ -16,6 +16,19 @@ pub mod token {
     pub use parse::delim::{Brace, Bracket, Paren};
 }
 
+#[cfg(test)]
+mod util {
+    #[rustfmt::skip]
+    macro_rules! lex_it {
+        ($src:literal) => {{ 
+            use chumsky::Parser;
+            ParseBuffer::new(crate::lexer::lexer().parse($src).into_result().unwrap()) 
+        }};
+    }
+
+    pub(crate) use lex_it;
+}
+
 fn main() {}
 
 #[cfg(non)]

@@ -62,7 +62,7 @@ pub mod lookahead {
     use std::cmp;
 
     pub fn predict_span(input: &mut ParseBuffer) -> Span {
-        input.fork(|fork, _| {
+        input.scan(|fork| {
             let Ok(mut span) = fork.skip_next() else {
                 return Span::splat(0);
             };
@@ -147,11 +147,13 @@ define_delimiters! {
     Paren1..Paren2       pub struct Paren
 }
 
+use crate::{lexer::Token, parse::ParseBuffer, Span};
+
+#[cfg(test)]
 use {
     crate::{
-        lexer::{ast, Lit, Token},
-        parse::{self, ParseBuffer},
-        token, Lex, Span, Token,
+        lexer::{ast, Lit},
+        parse, token, Lex,
     },
     chumsky::Parser,
 };
@@ -159,7 +161,7 @@ use {
 #[test]
 fn parens() -> parse::Result<()> {
     let src = "((1 + 2) + (3 + 4))";
-    let mut parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
+    let parsed = crate::lexer::lexer().parse(src).into_result().unwrap();
     let mut input = ParseBuffer::new(parsed);
 
     pub(crate) fn paren<'lex>(content: &mut ParseBuffer<'lex>) -> parse::Result<ParseBuffer<'lex>> {
@@ -207,12 +209,8 @@ fn delimited() -> parse::Result<()> {
     Ok(())
 }
 
-#[rustfmt::skip]
-macro_rules! lex_it {
-    ($src:literal) => {{ 
-        ParseBuffer::new(crate::lexer::lexer().parse($src).into_result().unwrap()) 
-    }};
-}
+#[cfg(test)]
+use crate::{util::lex_it, Token};
 
 #[test]
 fn peek_paren() -> parse::Result<()> {

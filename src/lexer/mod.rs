@@ -1,4 +1,4 @@
-mod lexer;
+mod lex;
 mod token;
 
 use {chumsky::prelude::SimpleSpan, std::borrow::Cow};
@@ -237,4 +237,4 @@ use crate::{
     parse,
     parse::{define_token, Parse, ParseBuffer},
 };
-pub use lexer::lexer;
+pub use lex::lexer;

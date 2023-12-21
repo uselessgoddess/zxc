@@ -1,8 +1,7 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
-    crate::Token,
     chumsky::{extra, prelude::*, text, IterParser, Parser},
-    std::{borrow::Cow, mem},
+    std::borrow::Cow,
 };
 
 pub fn lexer<'src>()
@@ -69,7 +68,7 @@ pub fn lexer<'src>()
 
 #[test]
 fn lex_test() {
-    use crate::parse::ParseBuffer;
+    use {crate::parse::ParseBuffer, std::mem};
 
     println!("{}", mem::size_of::<Lex>());
 
@@ -133,6 +132,8 @@ fn parse() {
 #[test]
 #[should_panic]
 fn token() {
+    use crate::Token;
+
     let _ = Token![let];
     let _: Token![let] = panic!();
 }
