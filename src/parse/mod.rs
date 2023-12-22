@@ -1,7 +1,8 @@
 pub(crate) mod delim;
-mod expr;
+pub mod expr;
+mod surround;
 
-pub use expr::*;
+pub use expr::{Block, Expr, Local, Stmt};
 
 use {
     crate::{lexer::Token, Lex, Span},
@@ -149,6 +150,17 @@ impl<'lex> ParseBuffer<'lex> {
             )
         };
         Self { owner: true, tokens, walker, cursor: 0, span: Span::splat(0) }
+    }
+
+    #[deprecated(note = "possible but unlikely")]
+    pub(crate) fn listen(tokens: &mut [(Lex<'lex>, Span)]) -> Self {
+        let tokens = unsafe {
+            NonNull::slice_from_raw_parts(
+                NonNull::new_unchecked(tokens.as_mut_ptr().cast()),
+                tokens.len(),
+            )
+        };
+        Self { owner: false, tokens, walker: clone_walker, cursor: 0, span: Span::splat(0) }
     }
 
     unsafe fn make_clone<'a: 'b, 'b>(&ParseBuffer { tokens, cursor, span, .. }: &Self) -> Self {
@@ -351,4 +363,7 @@ impl<'parent, 'lex> Lookahead<'parent, 'lex> {
     }
 }
 
-pub use delim::{lookahead, DelimSpan};
+pub use {
+    delim::{lookahead, DelimSpan},
+    surround::Spanned,
+};

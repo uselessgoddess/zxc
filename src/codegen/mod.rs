@@ -1,39 +1,26 @@
 use {
     crate::{
         lexer::{Lit, LitInt},
-        parse::{BinOp, Binary, Expr, Paren, Stmt, UnOp, Unary},
+        parse::{self, Expr, Stmt},
         Span,
     },
+    inkwell::{builder::Builder, context::Context, module::Module},
     std::{
         error,
         fmt::{self, Formatter},
     },
 };
 
-pub struct GlobalCtx<'src> {
-    scope: Scope<'src>,
-}
+type UnitType<'cx> = inkwell::types::VoidType<'cx>;
+type IntType<'cx> = inkwell::types::IntType<'cx>;
+type AllKind<'cx> = inkwell::types::AnyTypeEnum<'cx>;
+type AnyKind<'cx> = inkwell::types::BasicTypeEnum<'cx>;
 
-struct Scope<'src> {
-    stmts: Vec<Stmt<'src>>,
-}
-
-use inkwell::{
-    builder::Builder,
-    context::Context,
-    module::Module,
-    types::{AnyTypeEnum, BasicTypeEnum, IntType, VoidType},
-    values::{AnyValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue},
-};
-
-type UnitType<'cx> = VoidType<'cx>;
-type AllKind<'cx> = AnyTypeEnum<'cx>;
-type AnyKind<'cx> = BasicTypeEnum<'cx>;
-
-type AllValue<'cx> = AnyValueEnum<'cx>;
-type AnyValue<'cx> = BasicValueEnum<'cx>;
-type PtrValue<'cx> = PointerValue<'cx>;
-type FnValue<'cx> = FunctionValue<'cx>;
+type AllValue<'cx> = inkwell::values::AnyValueEnum<'cx>;
+type AnyValue<'cx> = inkwell::values::BasicValueEnum<'cx>;
+type PtrValue<'cx> = inkwell::values::PointerValue<'cx>;
+type FnValue<'cx> = inkwell::values::FunctionValue<'cx>;
+type IntValue<'cx> = inkwell::values::IntValue<'cx>;
 
 pub enum Int {
     I64,
@@ -175,6 +162,8 @@ impl<'a, 'cx> LLVM<'a, 'cx> {
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<AnyValue<'cx>> {
+        use parse::expr::{BinOp, Binary, Paren, UnOp, Unary};
+
         let Self { cx, builder, cache: Cache { ty, .. }, .. } = self;
 
         Ok(match expr {

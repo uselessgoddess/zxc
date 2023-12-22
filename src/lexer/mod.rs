@@ -13,9 +13,12 @@ pub mod ast {
         ($(
             $space:ident($ty:ty) { $($token:literal => $name:ident)* }
         )*) => {$(
-            #[derive(Clone, Debug)]
-            pub enum $space {
-                $($name($name),)*
+
+            ast_enum_of_structs! {
+                #[derive(Clone, Debug)]
+                pub enum $space {
+                    $($name($name),)*
+                }
             }
 
             impl $space {
@@ -26,14 +29,6 @@ pub mod ast {
                     }
                 }
             }
-
-            $(
-                impl From<$name> for $space {
-                    fn from(token: $name) -> Self {
-                         Self::$name(token)
-                    }
-                }
-            )*
 
             $(
                 #[derive(Clone)]
@@ -70,6 +65,12 @@ pub mod ast {
                     }
                 }
 
+                impl $crate::parse::Spanned for $name {
+                    fn span(&self) -> $crate::Span {
+                        self.span
+                    }
+                }
+
                 impl fmt::Debug for $name {
                     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                         write!(f, "{:?}", self.span)
@@ -80,7 +81,7 @@ pub mod ast {
     }
 
     use {
-        super::{parse, Lex, Parse, ParseBuffer, Span},
+        super::{parse, Ident, Lit, Parse, ParseBuffer, Span},
         std::fmt,
     };
 
@@ -116,8 +117,20 @@ pub mod ast {
             ')' => Paren2
         }
     }
+
+    ast_enum_of_structs! {
+        #[derive(Clone, Debug)]
+        pub enum Lex<'src> {
+            Lit(Lit<'src>),
+            Ident(Ident<'src>),
+            Delim(Delim),
+            Punct(Punct),
+            Token(Token),
+        }
+    }
 }
 
+pub use ast::Lex;
 pub type Span = SimpleSpan<usize>;
 
 #[derive(Clone, Debug)]
@@ -134,15 +147,6 @@ ast_enum_of_structs! {
         Float(LitFloat),
         Bool(LitBool),
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Lex<'src> {
-    Lit(Lit<'src>),
-    Ident(Ident<'src>),
-    Delim(ast::Delim),
-    Punct(ast::Punct),
-    Token(ast::Token),
 }
 
 impl<'lex> Parse<'lex> for Lex<'lex> {

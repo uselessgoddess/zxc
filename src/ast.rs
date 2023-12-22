@@ -27,6 +27,14 @@ macro_rules! ast_enum_of_structs_impl {
             )*
         }
     ) => {
+        impl $crate::parse::Spanned for $name<'_> {
+            fn span(&self) -> $crate::Span {
+                match self {$(
+                    $name::$variant(e) => $crate::parse::Spanned::span(e),
+                )*}
+            }
+        }
+
         $($(
             ast_enum_from_struct!(@lifetime$(($need))? => $name::$variant, $member);
         )*)*
@@ -39,6 +47,14 @@ macro_rules! ast_enum_of_structs_impl {
             )*
         }
     ) => {
+        impl $crate::parse::Spanned for $name {
+            fn span(&self) -> $crate::Span {
+                match self {$(
+                    $name::$variant(e) => $crate::parse::Spanned::span(e),
+                )*}
+            }
+        }
+
         $($(
             ast_enum_from_struct!($name::$variant, $member);
         )*)*
