@@ -92,7 +92,6 @@ ast_enum_of_structs! {
     #[derive(Debug, Clone)]
     pub enum Expr<'a> {
         Lit(Lit<'a>),
-        Let(Let<'a>),
         Paren(Paren<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
