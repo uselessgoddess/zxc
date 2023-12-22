@@ -203,6 +203,10 @@ impl<'lex> ParseBuffer<'lex> {
         }
     }
 
+    pub fn do_in<T>(&mut self, f: fn(&mut ParseBuffer<'lex>) -> Result<T>) -> Result<T> {
+        f(self)
+    }
+
     pub fn span(&self) -> Span {
         if let Some((_, span)) = self.predict() { *span } else { self.span }
     }

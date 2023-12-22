@@ -1,4 +1,5 @@
 use crate::{
+    braced,
     lexer::{Ident, Lit},
     parenthesized,
     parse::{self, Parse, ParseBuffer},
@@ -226,8 +227,6 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
         input.parse().map(Expr::Lit)
     } else if input.peek(token::Paren) {
         input.custom(expr_paren).map(Expr::Paren)
-    } else if input.peek(Token![let]) {
-        input.parse().map(Expr::Let)
     } else if input.is_empty() {
         Err(input.error("expected an expression"))
     } else {
@@ -236,23 +235,48 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
 }
 
 #[derive(Debug, Clone)]
+pub struct Local<'lex> {
+    pub let_token: Token![let],
+    pub pat: Ident<'lex>,
+    pub eq: Token![=],
+    pub expr: Box<Expr<'lex>>,
+    pub semi: Token![;],
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt<'lex> {
+    Local(Local<'lex>),
     Expr(Expr<'lex>, Option<Token![;]>),
 }
 
 impl<'lex> Parse<'lex> for Stmt<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
-        parse_stmt(input)
+        parse_stmt(input, false)
     }
 }
 
-fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Stmt<'lex>> {
+fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>, no_semi: bool) -> parse::Result<Stmt<'lex>> {
+    if input.peek(Token![let]) {
+        Ok(Local {
+            let_token: input.parse()?,
+            pat: input.parse()?,
+            eq: input.parse()?,
+            expr: input.parse()?,
+            semi: input.parse()?,
+        })
+        .map(Stmt::Local)
+    } else {
+        stmt_expr(input, no_semi)
+    }
+}
+
+fn stmt_expr<'lex>(input: &mut ParseBuffer<'lex>, no_semi: bool) -> parse::Result<Stmt<'lex>> {
     let expr: Expr = input.parse()?;
     let semi: Option<Token![;]> = input.parse()?;
 
     if semi.is_some() {
         Ok(Stmt::Expr(expr, semi))
-    } else if !requires_terminator(&expr) {
+    } else if no_semi || !requires_terminator(&expr) {
         Ok(Stmt::Expr(expr, None))
     } else {
         Err(input.error("expected semicolon"))
@@ -262,6 +286,13 @@ fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Stmt<'lex>> 
 pub struct Block<'lex> {
     pub brace: token::Brace,
     pub stmts: Vec<Stmt<'lex>>,
+}
+
+impl<'lex> Parse<'lex> for Block<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        let mut content;
+        Ok(Block { brace: braced!(content in input), stmts: content.do_in(Block::parse_within)? })
+    }
 }
 
 impl Block<'_> {
@@ -274,7 +305,7 @@ impl Block<'_> {
             if input.is_empty() {
                 break;
             }
-            let stmt = parse_stmt(input)?;
+            let stmt = parse_stmt(input, true)?;
             let requires_semicolon = match &stmt {
                 Stmt::Expr(stmt, None) => requires_terminator(stmt),
                 _ => false,

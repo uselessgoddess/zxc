@@ -26,20 +26,34 @@ macro_rules! parenthesized {
 
 #[macro_export]
 macro_rules! braced {
-    ($content:ident in $input:expr) => {
-        $crate::delimited!(
+    ($content:ident in $input:expr) => {{
+        let (lt, rt) = $crate::delimited!(
             $content($crate::lexer::ast::Brace1, $crate::lexer::ast::Brace2) in $input
         );
-    };
+        $crate::token::Brace {
+            span: $crate::parse::DelimSpan {
+                lt: lt.span,
+                rt: rt.span,
+                block: $crate::parse::lookahead::predict_span(&mut $content),
+            }
+        }
+    }};
 }
 
 #[macro_export]
 macro_rules! bracketed {
-    ($content:ident in $input:expr) => {
-        $crate::delimited!(
+    ($content:ident in $input:expr) => {{
+        let (lt, rt) = $crate::delimited!(
             $content($crate::lexer::ast::Bracket1, $crate::lexer::ast::Bracket2) in $input
         );
-    };
+        $crate::token::Bracket {
+            span: $crate::parse::DelimSpan {
+                lt: lt.span,
+                rt: rt.span,
+                block: $crate::parse::lookahead::predict_span(&mut $content),
+            }
+        }
+    }};
 }
 
 pub mod lookahead {
