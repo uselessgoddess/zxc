@@ -1,7 +1,6 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
     chumsky::{extra, prelude::*, text, IterParser, Parser},
-    std::borrow::Cow,
 };
 
 pub fn lexer<'src>()
@@ -18,10 +17,11 @@ pub fn lexer<'src>()
     );
 
     // A parser for strings
-    let str_ =
-        just('"').ignore_then(none_of('"').repeated()).then_ignore(just('"')).to_slice().map_with(
-            |str, e| Lex::Lit(Lit::Str(LitStr { lit: Cow::Borrowed(str), span: e.span() })),
-        );
+    let str_ = just('"')
+        .ignore_then(none_of('"').repeated())
+        .then_ignore(just('"'))
+        .to_slice()
+        .map_with(|str, e| Lex::Lit(Lit::Str(LitStr { lit: str, span: e.span() })));
 
     // A parser for operators
     let punct = one_of("+*-/!=|") // TODO: make extendable
@@ -131,6 +131,7 @@ fn parse() {
 
 #[test]
 #[should_panic]
+#[allow(clippy::diverging_sub_expression)]
 fn token() {
     use crate::Token;
 

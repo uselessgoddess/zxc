@@ -33,7 +33,7 @@ impl Precedence {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum BinOp {
     Add(Token![+]),
     Sub(Token![-]),
@@ -68,7 +68,7 @@ impl<'lex> Parse<'lex> for BinOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnOp {
     Not(Token![!]),
     Neg(Token![-]),
@@ -92,6 +92,7 @@ ast_enum_of_structs! {
     #[derive(Debug, Clone)]
     pub enum Expr<'a> {
         Lit(Lit<'a>),
+        Ident(Ident<'a>),
         Paren(Paren<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
@@ -222,7 +223,9 @@ fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>
 }
 
 fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
-    if input.peek(Lit) {
+    if input.peek(Ident) {
+        input.parse().map(Expr::Ident)
+    } else if input.peek(Lit) {
         input.parse().map(Expr::Lit)
     } else if input.peek(token::Paren) {
         input.custom(expr_paren).map(Expr::Paren)
@@ -256,14 +259,13 @@ impl<'lex> Parse<'lex> for Stmt<'lex> {
 
 fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>, no_semi: bool) -> parse::Result<Stmt<'lex>> {
     if input.peek(Token![let]) {
-        Ok(Local {
+        Ok(Stmt::Local(Local {
             let_token: input.parse()?,
             pat: input.parse()?,
             eq: input.parse()?,
             expr: input.parse()?,
             semi: input.parse()?,
-        })
-        .map(Stmt::Local)
+        }))
     } else {
         stmt_expr(input, no_semi)
     }

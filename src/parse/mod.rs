@@ -2,7 +2,7 @@ pub(crate) mod delim;
 pub mod expr;
 mod surround;
 
-pub use expr::{Block, Expr, Local, Stmt};
+pub use expr::{BinOp, Block, Expr, Local, Stmt, UnOp};
 
 use {
     crate::{lexer::Token, Lex, Span},

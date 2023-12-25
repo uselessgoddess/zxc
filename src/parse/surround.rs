@@ -1,6 +1,6 @@
 use crate::{
     parenthesized,
-    parse::{expr, DelimSpan, ParseBuffer},
+    parse::{self, expr, DelimSpan, ParseBuffer, Stmt},
     Span,
 };
 
@@ -47,6 +47,27 @@ impl Spanned for expr::Unary<'_> {
 impl Spanned for expr::Binary<'_> {
     fn span(&self) -> Span {
         lookahead_span(self.left.span(), self.right.span())
+    }
+}
+
+impl Spanned for parse::Local<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.let_token.span, self.semi.span)
+    }
+}
+
+impl Spanned for Stmt<'_> {
+    fn span(&self) -> Span {
+        match self {
+            Stmt::Local(local) => local.span(),
+            Stmt::Expr(expr, semi) => {
+                if let Some(semi) = semi {
+                    lookahead_span(expr.span(), semi.span)
+                } else {
+                    expr.span()
+                }
+            }
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 mod lex;
 mod token;
 
-use {chumsky::prelude::SimpleSpan, std::borrow::Cow};
+use chumsky::prelude::SimpleSpan;
 
 pub trait Token {
     fn peek(input: &ParseBuffer) -> bool;
@@ -15,7 +15,7 @@ pub mod ast {
         )*) => {$(
 
             ast_enum_of_structs! {
-                #[derive(Clone, Debug)]
+                #[derive(Copy, Clone, Debug)]
                 pub enum $space {
                     $($name($name),)*
                 }
@@ -31,7 +31,7 @@ pub mod ast {
             }
 
             $(
-                #[derive(Clone)]
+                #[derive(Copy, Clone)]
                 pub struct $name {
                     pub span: Span,
                 }
@@ -140,7 +140,7 @@ pub enum Number {
 }
 
 ast_enum_of_structs! {
-    #[derive(Clone, Debug)]
+    #[derive(Debug, Copy, Clone)]
     pub enum Lit<'a> {
         Str(LitStr<'a>),
         Int(LitInt),
@@ -166,7 +166,7 @@ impl<'a> Ident<'a> {
         Self { ident, span }
     }
 
-    pub fn ident(&self) -> &str {
+    pub fn ident(&self) -> &'a str {
         self.ident
     }
 }
@@ -180,25 +180,25 @@ impl<'lex> Parse<'lex> for Ident<'lex> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct LitStr<'a> {
-    pub lit: Cow<'a, str>,
+    pub lit: &'a str,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct LitInt {
     pub lit: u64,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct LitFloat {
     pub lit: f64,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct LitBool {
     pub lit: bool,
     pub span: Span,

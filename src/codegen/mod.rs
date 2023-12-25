@@ -1,332 +1,646 @@
+mod arenas;
+mod ctx;
+mod intern;
+mod list;
+mod ty;
+
+pub use {
+    arenas::{DroplessArena, TypedArena},
+    ctx::{Arena, Local, Session, Tx, TyCtx},
+    intern::{InternSet, Interned},
+    ty::{IntTy, Ty, TyKind},
+};
 use {
-    crate::{
-        lexer::{Lit, LitInt},
-        parse::{self, Expr, Stmt},
-        Span,
+    cranelift::{
+        codegen::{
+            ir::{immediates::Offset32, Function, StackSlot, UserFuncName},
+            Context,
+        },
+        prelude::{
+            isa, settings, types, AbiParam, FunctionBuilder, FunctionBuilderContext, InstBuilder,
+            MemFlags, Signature, Value, Variable,
+        },
     },
-    inkwell::{builder::Builder, context::Context, module::Module},
-    std::{
-        error,
-        fmt::{self, Formatter},
-    },
+    cranelift_module::{FuncId, Linkage, Module},
+    std::{collections::HashMap, fs, io, mem, path::PathBuf, process::Command},
+    target_lexicon::Triple,
 };
 
-type UnitType<'cx> = inkwell::types::VoidType<'cx>;
-type IntType<'cx> = inkwell::types::IntType<'cx>;
-type AllKind<'cx> = inkwell::types::AnyTypeEnum<'cx>;
-type AnyKind<'cx> = inkwell::types::BasicTypeEnum<'cx>;
+mod abi {
+    use {crate::codegen::Interned, index_vec::IndexVec};
 
-type AllValue<'cx> = inkwell::values::AnyValueEnum<'cx>;
-type AnyValue<'cx> = inkwell::values::BasicValueEnum<'cx>;
-type PtrValue<'cx> = inkwell::values::PointerValue<'cx>;
-type FnValue<'cx> = inkwell::values::FunctionValue<'cx>;
-type IntValue<'cx> = inkwell::values::IntValue<'cx>;
+    index_vec::define_index_type! {
+        pub struct FieldIdx = u32;
+    }
 
-pub enum Int {
-    I64,
-}
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+    pub enum FieldsShape {
+        Primitive,
+        Arbitrary { offsets: IndexVec<FieldIdx, Size>, memory_index: IndexVec<FieldIdx, u32> },
+    }
 
-impl Int {
-    fn must_be(self, any: AnyValue, span: Span) -> Result<IntValue> {
-        if let AnyValue::IntValue(val) = any {
-            Ok(val)
-        } else {
-            Err(Error::new(span, "expected `i64`"))
+    impl FieldsShape {
+        pub fn count(&self) -> usize {
+            match *self {
+                FieldsShape::Primitive => 0,
+                FieldsShape::Arbitrary { ref offsets, .. } => offsets.len(),
+            }
         }
+
+        pub fn offset(&self, i: usize) -> Size {
+            match *self {
+                FieldsShape::Primitive => {
+                    unreachable!("FieldsShape::offset: `Primitive`s have no fields")
+                }
+                FieldsShape::Arbitrary { ref offsets, .. } => offsets[FieldIdx::from_usize(i)],
+            }
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Align {
+        pow2: u8,
+    }
+
+    impl Align {
+        pub const ONE: Align = Align { pow2: 0 };
+        pub const MAX: Align = Align { pow2: 29 };
+
+        pub fn from_bytes(align: u64) -> Option<Self> {
+            if align == 0 {
+                return Some(Align::ONE);
+            }
+
+            let tz = align.trailing_zeros();
+            if align != (1 << tz) {
+                return None; // not power of two
+            }
+
+            let pow2 = tz as u8;
+            if pow2 > Self::MAX.pow2 {
+                return None; // too large
+            }
+
+            Some(Align { pow2 })
+        }
+
+        pub fn bytes(self) -> u64 {
+            1 << self.pow2
+        }
+
+        pub fn bits(self) -> u64 {
+            self.bytes() * 8
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct Size {
+        raw: u64,
+    }
+
+    impl Size {
+        pub const ZERO: Size = Size { raw: 0 };
+
+        pub fn from_bytes(bytes: u64) -> Self {
+            Self { raw: bytes }
+        }
+
+        pub fn bytes(self) -> u64 {
+            self.raw
+        }
+
+        pub fn is_aligned(self, align: Align) -> bool {
+            let mask = align.bytes() - 1;
+            self.bytes() & mask == 0
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub enum Integer {
+        I8,
+        I16,
+        I32,
+        I64,
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub enum Scalar {
+        Int(Integer, bool),
+        F32,
+        F64,
+        Pointer,
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    pub enum Abi {
+        Scalar(Scalar),
+        Aggregate,
+    }
+
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+    pub struct LayoutKind {
+        pub abi: Abi,
+        pub size: Size,
+        pub align: Align,
+        pub shape: FieldsShape,
+    }
+
+    pub type Layout<'cx> = Interned<'cx, LayoutKind>;
+
+    #[derive(Debug, Copy, Clone)]
+    pub enum PassMode {
+        Ignore,
+        Direct, // Add ArgAttributes
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct TyAbi<'tcx> {
+        pub ty: super::Ty<'tcx>,
+        pub layout: Layout<'tcx>,
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    pub struct ArgAbi<'tcx> {
+        pub ty: TyAbi<'tcx>,
+        pub mode: PassMode,
     }
 }
 
-pub enum Ty {
-    Unit,
-    Int(Int),
+use crate::{
+    codegen::abi::{Abi, ArgAbi, Integer, PassMode, Scalar, TyAbi},
+    lexer::{Ident, Lit},
+    parse::{self, BinOp, Spanned, UnOp},
+    Span,
+};
+
+#[derive(Debug, Clone)]
+pub enum ExprKind<'tcx> {
+    Lit(Lit<'tcx>),
+    Var(&'tcx str),
+    Unary(UnOp, &'tcx Expr<'tcx>),
+    Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
 }
 
-struct TyCache<'cx> {
-    pub unit: UnitType<'cx>,
-    pub i64: IntType<'cx>,
+#[derive(Debug, Clone)]
+pub struct Expr<'tcx> {
+    pub kind: ExprKind<'tcx>,
+    pub span: Span,
 }
 
-struct Cache<'cx> {
-    ty: TyCache<'cx>,
-}
+impl<'tcx> Expr<'tcx> {
+    pub fn analyze(tcx: Tx<'tcx>, expr: &parse::Expr<'tcx>) -> &'tcx Self {
+        let span = expr.span();
 
-impl<'cx> Cache<'cx> {
-    pub fn from_cx(cx: &'cx Context) -> Self {
-        Cache { ty: TyCache { unit: cx.void_type(), i64: cx.i64_type() } }
+        use crate::parse::expr::{Binary, Paren, Unary};
+        let kind = match expr {
+            parse::Expr::Lit(lit) => expr::Lit(*lit),
+            parse::Expr::Paren(Paren { expr, .. }) => return Self::analyze(tcx, expr),
+            parse::Expr::Unary(Unary { op, expr }) => expr::Unary(*op, Self::analyze(tcx, expr)),
+            parse::Expr::Binary(Binary { left, op, right }) => {
+                expr::Binary(*op, Self::analyze(tcx, left), Self::analyze(tcx, right))
+            }
+            parse::Expr::Ident(str) => expr::Var(str.ident()),
+        };
+        tcx.arena.expr.alloc(Self { kind, span })
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Error {
-    pub repr: String,
+pub struct LocalStmt<'tcx> {
+    pub pat: Ident<'tcx>,
+    pub init: &'tcx Expr<'tcx>,
+}
+
+#[derive(Debug, Clone)]
+pub enum StmtKind<'tcx> {
+    Local(LocalStmt<'tcx>),
+    Expr(&'tcx Expr<'tcx>, /* semi */ bool),
+}
+
+#[derive(Debug, Clone)]
+pub struct Stmt<'tcx> {
+    pub kind: StmtKind<'tcx>,
     pub span: Span,
 }
 
-impl Error {
-    pub fn new(span: Span, repr: impl fmt::Display) -> Self {
-        Self { repr: repr.to_string(), span }
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.repr)
-    }
-}
-
-impl error::Error for Error {}
-
-type Result<T> = std::result::Result<T, Error>;
-
-pub struct LLVM<'a, 'cx> {
-    pub cx: &'cx Context,
-    pub builder: &'a Builder<'cx>,
-    pub module: &'a Module<'cx>,
-
-    cache: Cache<'cx>,
-}
-
-use crate::parse::{Block, Local};
-
-impl<'a, 'cx> LLVM<'a, 'cx> {
-    fn new(cx: &'cx Context, builder: &'a Builder<'cx>, module: &'a Module<'cx>) -> Self {
-        Self { cx, builder, module, cache: Cache::from_cx(cx) }
-    }
-
-    fn compile_fn(&mut self, name: &str, block: &[Stmt]) -> Result<FnValue<'cx>> {
-        let ty = self.cache.ty.unit.fn_type(&[], false);
-        let me = self.module.add_function(name, ty, None);
-
-        self.builder.position_at_end(self.cx.append_basic_block(me, "entry"));
-
-        if let Some((last, stmts)) = block.split_last() {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Local(local) => self.compile_local(me, local)?,
-                    Stmt::Expr(expr, semi) => {
-                        assert!(semi.is_some());
-                        let _ = self.compile_expr(expr)?;
-                    }
-                }
+impl<'tcx> Stmt<'tcx> {
+    pub fn analyze(tcx: Tx<'tcx>, stmt: parse::Stmt<'tcx>) -> Self {
+        let span = stmt.span();
+        let kind = match stmt {
+            parse::Stmt::Local(local) => {
+                StmtKind::Local(LocalStmt { pat: local.pat, init: Expr::analyze(tcx, &local.expr) })
             }
-
-            let ret = match last {
-                Stmt::Local(local) => {
-                    self.compile_local(me, local)?;
-                    None
-                }
-                Stmt::Expr(expr, semi) => {
-                    let expr = self.compile_expr(expr)?;
-                    if semi.is_none() { Some(expr) } else { None }
-                }
-            };
-
-            if let Some(ret) = ret {
-                self.builder.build_return(Some(&ret));
-            } else {
-                self.builder.build_return(None);
+            parse::Stmt::Expr(expr, semi) => {
+                StmtKind::Expr(Expr::analyze(tcx, &expr), semi.is_none())
             }
-        } else {
-            // assert ret type is ret type
-            self.builder.build_return(None);
-        }
-
-        Ok(me)
-    }
-
-    fn alloca_in(&self, in_fn: FnValue<'cx>, ty: AnyKind<'cx>, name: &str) -> PtrValue<'cx> {
-        let entry = in_fn.get_first_basic_block().expect("whatever");
-        let local = self.cx.create_builder();
-
-        match entry.get_first_instruction() {
-            Some(first_instr) => local.position_before(&first_instr),
-            None => local.position_at_end(entry),
-        }
-
-        local.build_alloca(ty, name)
-    }
-
-    fn compile_local(
-        &mut self,
-        in_fn: FnValue<'cx>,
-        Local { pat, expr, .. }: &Local,
-    ) -> Result<()> {
-        match self.compile_expr(expr)? {
-            AnyValue::IntValue(val) => self
-                .builder
-                .build_store(self.alloca_in(in_fn, self.cache.ty.i64.into(), pat.ident()), val),
-            _ => todo!(),
         };
-
-        Ok(())
-    }
-
-    fn compile_expr(&mut self, expr: &Expr) -> Result<AnyValue<'cx>> {
-        use parse::expr::{BinOp, Binary, Paren, UnOp, Unary};
-
-        let Self { cx, builder, cache: Cache { ty, .. }, .. } = self;
-
-        Ok(match expr {
-            Expr::Lit(Lit::Int(LitInt { lit, .. })) => {
-                AnyValue::IntValue(ty.i64.const_int(*lit, false))
-            }
-            Expr::Paren(Paren { expr, .. }) => self.compile_expr(expr)?,
-            Expr::Unary(Unary { op, expr }) => match op {
-                UnOp::Not(_) => match self.compile_expr(expr)? {
-                    AnyValue::IntValue(val) => {
-                        AnyValue::IntValue(self.builder.build_not(val, "not"))
-                    }
-                    _ => todo!(),
-                },
-                UnOp::Neg(_) => match self.compile_expr(expr)? {
-                    AnyValue::IntValue(val) => {
-                        AnyValue::IntValue(self.builder.build_int_neg(val, "neg"))
-                    }
-                    _ => todo!(),
-                },
-            },
-            Expr::Binary(Binary { left, op, right }) => {
-                let lhs = Int::I64.must_be(self.compile_expr(left)?, Span::splat(0))?;
-                let rhs = Int::I64.must_be(self.compile_expr(right)?, Span::splat(0))?;
-
-                match op {
-                    BinOp::Add(_) => {
-                        AnyValue::IntValue(self.builder.build_int_add(lhs, rhs, "add"))
-                    }
-                    BinOp::Sub(_) => {
-                        AnyValue::IntValue(self.builder.build_int_sub(lhs, rhs, "sub"))
-                    }
-                    BinOp::Mul(_) => {
-                        AnyValue::IntValue(self.builder.build_int_mul(lhs, rhs, "mu;"))
-                    }
-                    BinOp::Div(_) => {
-                        AnyValue::IntValue(self.builder.build_int_unsigned_div(lhs, rhs, "div"))
-                    }
-                }
-            }
-            _ => todo!(),
-        })
+        Self { kind, span }
     }
 }
 
-// impl Backend for LLVM {
-//     type Codegen = ();
-//
-//     fn codegen(gcx: GlobalCtx) -> Self::Codegen {
-//         use inkwell::{
-//             context::Context,
-//             targets::{
-//                 CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
-//                 TargetTriple,
-//             },
-//             OptimizationLevel,
-//         };
-//
-//         let ctx = Context::create();
-//         let builder = ctx.create_builder();
-//         let module = ctx.create_module("prove");
-//
-//         let void = ctx.void_type();
-//         {
-//             let func = module.add_function("main", void.fn_type(&[], false), None);
-//
-//             builder.position_at_end(ctx.append_basic_block(func, "entry"));
-//
-//             {
-//                 pub struct Compiler<'a, 'ctx> {
-//                     pub context: &'ctx Context,
-//                     pub builder: &'a Builder<'ctx>,
-//                     function: FunctionValue<'ctx>,
-//                 }
-//
-//                 impl<'a, 'ctx> Compiler<'a, 'ctx> {
-//                     fn create_entry_block_alloca(&self, name: &str) -> PointerValue<'ctx> {
-//                         let builder = self.context.create_builder();
-//
-//                         let entry = self.function.get_first_basic_block().unwrap();
-//
-//                         match entry.get_first_instruction() {
-//                             Some(first_instr) => builder.position_before(&first_instr),
-//                             None => builder.position_at_end(entry),
-//                         }
-//
-//                         builder.build_alloca(self.context.f64_type(), name)
-//                     }
-//
-//                     fn visit_expr(&mut self, expr: &Expr) -> IntValue<'ctx> {
-//                         match expr {
-//                             Expr::Lit(Lit::Int(LitInt { lit, .. })) => {
-//                                 self.context.i64_type().const_int(*lit, false)
-//                             }
-//                             Expr::Let(Let { pat, expr, .. }) => {
-//                                 let alloca = self.create_entry_block_alloca(pat.ident());
-//                                 self.builder.build_store(alloca, self.visit_expr(expr));
-//
-//                                 self.context.i64_type().const_int(0, false)
-//                             }
-//                             Expr::Paren(Paren { expr, .. }) => self.visit_expr(expr),
-//                             Expr::Unary(Unary { op, expr }) => match op {
-//                                 UnOp::Not(_) => {
-//                                     self.builder.build_not(self.visit_expr(expr), "not")
-//                                 }
-//                                 UnOp::Neg(_) => {
-//                                     self.builder.build_int_neg(self.visit_expr(expr), "neg")
-//                                 }
-//                             },
-//                             Expr::Binary(Binary { left, op, right }) => {
-//                                 let lhs = self.visit_expr(left);
-//                                 let rhs = self.visit_expr(right);
-//
-//                                 match op {
-//                                     BinOp::Add(_) => self.builder.build_int_add(lhs, rhs, "add"),
-//                                     BinOp::Sub(_) => self.builder.build_int_sub(lhs, rhs, "sub"),
-//                                     BinOp::Mul(_) => self.builder.build_int_mul(lhs, rhs, "mu;"),
-//                                     BinOp::Div(_) => {
-//                                         self.builder.build_int_unsigned_div(lhs, rhs, "div")
-//                                     }
-//                                 }
-//                             }
-//                             _ => todo!(),
-//                         }
-//                     }
-//                 }
-//
-//                 let mut compiler = Compiler { context: &ctx, builder: &builder, function: func };
-//                 for stmt in gcx.scope.stmts {
-//                     let Stmt::Expr(expr, _) = stmt;
-//                     let _ = compiler.visit_expr(&expr);
-//                 }
-//             }
-//
-//             let _ = builder.build_return(None);
-//
-//             func.print_to_stderr();
-//         }
-//
-//         {
-//             Target::initialize_x86(&InitializationConfig { ..Default::default() });
-//
-//             let triplet = TargetMachine::get_default_triple();
-//             let target = Target::from_triple(&triplet).unwrap();
-//
-//             let machine = target
-//                 .create_target_machine(
-//                     &TargetTriple::create("x86_64-pc-windows-gnu"),
-//                     "x86-64",
-//                     "+avx2",
-//                     OptimizationLevel::None,
-//                     RelocMode::Default,
-//                     CodeModel::Small,
-//                 )
-//                 .unwrap();
-//
-//             machine.write_to_file(&module, FileType::Assembly, "a.out".as_ref()).unwrap();
-//         }
-//     }
-// }
+pub mod stmt {
+    pub use super::StmtKind::*;
+}
+
+pub mod expr {
+    pub use super::ExprKind::*;
+}
+
+pub struct FnAbi<'tcx> {
+    pub symbol: String,
+    pub args: Box<[ArgAbi<'tcx>]>,
+    pub ret: ArgAbi<'tcx>,
+}
+
+pub struct Instance<'tcx> {
+    pub abi: FnAbi<'tcx>,
+    pub body: Box<[Stmt<'tcx>]>,
+}
+
+#[derive(Debug, Copy, Clone)] // FIXME: want be `Clone`
+pub(crate) struct CValue<'tcx> {
+    inner: CValueInner,
+    layout: TyAbi<'tcx>,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum CValueInner {
+    ByRef(Pointer),
+    ByVal(Value),
+}
+
+impl<'tcx> CValue<'tcx> {
+    pub fn layout(&self) -> TyAbi<'tcx> {
+        self.layout
+    }
+
+    pub fn by_val(value: Value, layout: TyAbi<'tcx>) -> CValue<'tcx> {
+        CValue { inner: CValueInner::ByVal(value), layout }
+    }
+
+    pub fn by_ref(ptr: Pointer, layout: TyAbi<'tcx>) -> CValue<'tcx> {
+        CValue { inner: CValueInner::ByRef(ptr), layout }
+    }
+
+    pub fn load_scalar(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> Value {
+        let layout = self.layout();
+        match self.inner {
+            CValueInner::ByRef(ptr) => {
+                let clif_ty = match layout.layout.abi {
+                    Abi::Scalar(scalar) => scalar_to_clif(fx.tcx, scalar),
+                    _ => unreachable!("{:?}", layout.ty),
+                };
+                ptr.load(fx, clif_ty, MemFlags::new().with_notrap())
+            }
+            CValueInner::ByVal(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)] // FIXME: want be `Clone`
+pub(crate) struct CPlace<'tcx> {
+    inner: CPlaceInner,
+    layout: TyAbi<'tcx>,
+}
+
+#[derive(Debug, Copy, Clone)]
+enum CPlaceInner {
+    Var(Local, Variable),
+    Addr(Pointer),
+}
+
+impl<'tcx> CPlace<'tcx> {
+    pub fn layout(&self) -> TyAbi<'tcx> {
+        self.layout
+    }
+
+    pub fn new_var(
+        fx: &mut FunctionCx<'_, '_, 'tcx>,
+        local: Local,
+        layout: TyAbi<'tcx>,
+    ) -> CPlace<'tcx> {
+        let var = Variable::from_u32(fx.next_ssa());
+        fx.bcx.declare_var(var, fx.clif_type(layout.ty).expect("LMAO"));
+        CPlace { inner: CPlaceInner::Var(local, var), layout }
+    }
+
+    pub(crate) fn into_value(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> CValue<'tcx> {
+        let layout = self.layout();
+        match self.inner {
+            CPlaceInner::Var(_local, var) => {
+                let val = fx.bcx.use_var(var);
+                CValue::by_val(val, layout)
+            }
+            CPlaceInner::Addr(ptr) => CValue::by_ref(ptr, layout),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Pointer {
+    base: PointerBase,
+    offset: Offset32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum PointerBase {
+    Addr(Value),
+    Stack(StackSlot),
+}
+
+impl Pointer {
+    pub fn new(addr: Value) -> Self {
+        Pointer { base: PointerBase::Addr(addr), offset: Offset32::new(0) }
+    }
+
+    pub fn stack_slot(stack_slot: StackSlot) -> Self {
+        Pointer { base: PointerBase::Stack(stack_slot), offset: Offset32::new(0) }
+    }
+
+    pub fn load(self, fx: &mut FunctionCx<'_, '_, '_>, ty: types::Type, flags: MemFlags) -> Value {
+        match self.base {
+            PointerBase::Addr(base_addr) => fx.bcx.ins().load(ty, flags, base_addr, self.offset),
+            PointerBase::Stack(stack_slot) => fx.bcx.ins().stack_load(ty, stack_slot, self.offset),
+        }
+    }
+
+    pub fn store(self, fx: &mut FunctionCx<'_, '_, '_>, value: Value, flags: MemFlags) {
+        match self.base {
+            PointerBase::Addr(base_addr) => {
+                fx.bcx.ins().store(flags, value, base_addr, self.offset);
+            }
+            PointerBase::Stack(stack_slot) => {
+                fx.bcx.ins().stack_store(value, stack_slot, self.offset);
+            }
+        }
+    }
+}
+
+struct Scope<'cl, 'tcx> {
+    inner: HashMap<&'cl str, CPlace<'tcx>>,
+}
+
+impl<'cl, 'tcx> Scope<'cl, 'tcx> {
+    pub fn new() -> Self {
+        Self { inner: HashMap::new() }
+    }
+
+    pub fn enter(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+
+    pub fn declare_var(
+        &mut self,
+        fx: &mut FunctionCx<'_, '_, 'tcx>,
+        layout: TyAbi<'tcx>,
+        ident: &'cl str,
+    ) -> CPlace<'tcx> {
+        let ssa = Local::from_usize(fx.next_ssa() as usize);
+        let var = CPlace::new_var(fx, ssa, layout);
+        self.inner.insert(ident, var);
+        var
+    }
+
+    pub fn use_var(
+        &mut self,
+        fx: &mut FunctionCx<'_, '_, 'tcx>,
+        layout: TyAbi<'tcx>,
+        ident: &'cl str,
+    ) -> CPlace<'tcx> {
+        if let Some(var) = self.inner.get(ident) {
+            *var
+        } else {
+            self.declare_var(fx, layout, ident)
+        }
+    }
+
+    pub fn get_var(&mut self, ident: &str) -> Option<CPlace<'tcx>> {
+        self.inner.get(ident).map(mem::copy)
+    }
+}
+
+pub struct FunctionCx<'m, 'cl, 'tcx: 'm> {
+    tcx: Tx<'tcx>,
+    bcx: FunctionBuilder<'cl>,
+    module: &'m mut dyn Module,
+    abi: FnAbi<'tcx>,
+    body: &'cl [Stmt<'tcx>],
+
+    ptr: types::Type,
+    next_ssa: u32,
+}
+
+impl<'tcx> FunctionCx<'_, '_, 'tcx> {
+    pub fn next_ssa(&mut self) -> u32 {
+        let ret = self.next_ssa;
+        self.next_ssa += 1;
+        ret
+    }
+
+    fn clif_type(&self, ty: Ty<'tcx>) -> Option<types::Type> {
+        ty::clif_type_from_ty(self.tcx, ty)
+    }
+}
+
+pub(crate) fn pointer_ty(tcx: Tx<'_>) -> types::Type {
+    // match tcx.data_layout.pointer_size.bits() {
+    //     16 => types::I16,
+    //     32 => types::I32,
+    //     64 => types::I64,
+    //     bits => todo!("unknown bits: {bits}"),
+    // }
+    types::I64
+}
+
+pub(crate) fn scalar_to_clif(tcx: Tx<'_>, scalar: Scalar) -> types::Type {
+    match scalar {
+        Scalar::Int(int, _sign) => match int {
+            Integer::I8 => types::I8,
+            Integer::I16 => types::I16,
+            Integer::I32 => types::I32,
+            Integer::I64 => types::I64,
+        },
+        Scalar::F32 => types::F32,
+        Scalar::F64 => types::F64,
+        Scalar::Pointer => pointer_ty(tcx),
+    }
+}
+
+fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, abi: &FnAbi<'tcx>) -> Signature {
+    let from_abi = |ty: &ArgAbi| match ty.mode {
+        PassMode::Ignore => None,
+        PassMode::Direct => Some(match ty.ty.layout.abi {
+            Abi::Scalar(scalar) => AbiParam::new(scalar_to_clif(tcx, scalar)),
+            Abi::Aggregate => todo!(),
+        }),
+    };
+
+    let params = abi.args.iter().flat_map(from_abi).collect();
+    let ret = from_abi(&abi.ret);
+
+    Signature { params, returns: Vec::from_iter(ret), call_conv: isa::CallConv::SystemV }
+}
+
+fn codegen_expr<'cl, 'tcx>(
+    fx: &mut FunctionCx<'_, 'cl, 'tcx>,
+    scope: &mut Scope<'cl, 'tcx>,
+    expr: &Expr<'tcx>,
+) -> CValue<'tcx> {
+    match &expr.kind {
+        expr::Lit(Lit::Int(int)) => {
+            let val = fx.bcx.ins().iconst(types::I64, int.lit as i64);
+            CValue::by_val(val, fx.tcx.layout_of(fx.tcx.types.i64))
+        }
+        expr::Var(name) => scope.get_var(name).expect("compile error").into_value(fx),
+        expr::Unary(op, expr) => match op {
+            UnOp::Neg(_) => {
+                let val = codegen_expr(fx, scope, expr);
+                let scalar = val.load_scalar(fx);
+                CValue::by_val(fx.bcx.ins().ineg(scalar), val.layout())
+            }
+            _ => todo!(),
+        },
+        expr::Binary(op, lhs, rhs) => match op {
+            BinOp::Add(_) => {
+                let lhs = codegen_expr(fx, scope, lhs);
+                let rhs = codegen_expr(fx, scope, rhs);
+
+                assert_eq!(lhs.layout(), rhs.layout());
+
+                let a = lhs.load_scalar(fx);
+                let b = rhs.load_scalar(fx);
+                CValue::by_val(fx.bcx.ins().iadd(a, b), lhs.layout())
+            }
+            BinOp::Sub(_) => {
+                let lhs = codegen_expr(fx, scope, lhs);
+                let rhs = codegen_expr(fx, scope, rhs);
+
+                assert_eq!(lhs.layout(), rhs.layout());
+
+                let a = lhs.load_scalar(fx);
+                let b = rhs.load_scalar(fx);
+                CValue::by_val(fx.bcx.ins().isub(a, b), lhs.layout())
+            }
+            BinOp::Mul(_) => {
+                let lhs = codegen_expr(fx, scope, lhs);
+                let rhs = codegen_expr(fx, scope, rhs);
+
+                assert_eq!(lhs.layout(), rhs.layout());
+
+                let a = lhs.load_scalar(fx);
+                let b = rhs.load_scalar(fx);
+                CValue::by_val(fx.bcx.ins().imul(a, b), lhs.layout())
+            }
+            BinOp::Div(_) => {
+                let lhs = codegen_expr(fx, scope, lhs);
+                let rhs = codegen_expr(fx, scope, rhs);
+
+                assert_eq!(lhs.layout(), rhs.layout());
+
+                let a = lhs.load_scalar(fx);
+                let b = rhs.load_scalar(fx);
+                CValue::by_val(fx.bcx.ins().sdiv(a, b), lhs.layout())
+            }
+            _ => todo!(),
+        },
+        _ => todo!(),
+    }
+}
+
+fn codegen_stmt<'cl, 'tcx>(
+    fx: &mut FunctionCx<'_, 'cl, 'tcx>,
+    scope: &mut Scope<'cl, 'tcx>,
+    stmt: &'cl Stmt<'tcx>,
+) {
+    match &stmt.kind {
+        stmt::Local(LocalStmt { pat, init }) => {
+            let init = codegen_expr(fx, scope, init);
+            let place = scope.declare_var(fx, init.layout(), pat.ident());
+            // TODO: fix
+            match place.inner {
+                CPlaceInner::Var(local, var) => {
+                    let val = init.load_scalar(fx);
+                    fx.bcx.def_var(var, val);
+                }
+                _ => todo!(),
+            }
+        }
+        stmt::Expr(_, _) => {}
+    }
+}
+
+fn codegen_return<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, val: CValue<'tcx>) {
+    match &fx.abi.ret.mode {
+        PassMode::Ignore => {
+            fx.bcx.ins().return_(&[]);
+        }
+        PassMode::Direct => {
+            let ret = val.load_scalar(fx);
+            fx.bcx.ins().return_(&[ret]);
+        }
+    }
+}
+
+fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>) {
+    let mut scope = Scope::new();
+    if let Some((tail, body)) = fx.body.split_last() {
+        let block = fx.bcx.create_block();
+        fx.bcx.switch_to_block(block);
+
+        for stmt in body {
+            if let stmt::Expr(_, true) = &stmt.kind {
+                panic!()
+            }
+            codegen_stmt(fx, &mut scope, stmt);
+        }
+
+        if let stmt::Expr(expr, true) = &tail.kind {
+            let val = codegen_expr(fx, &mut scope, expr);
+            codegen_return(fx, val);
+        } else {
+            codegen_stmt(fx, &mut scope, tail);
+            fx.bcx.ins().return_(&[]);
+        }
+    }
+}
+
+fn compile_fn<'tcx>(
+    tcx: Tx<'tcx>,
+    module: &mut dyn Module,
+    Instance { abi, ref body }: Instance<'tcx>,
+) -> (FuncId, Function) {
+    let sig = sig_from_abi(tcx, &abi);
+    let id =
+        module.declare_function(&abi.symbol, Linkage::Export, &sig).unwrap_or_else(|_| todo!());
+
+    let mut fn_ctx = FunctionBuilderContext::new();
+    let mut fn_ = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), sig);
+
+    let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
+
+    let mut fx = FunctionCx { tcx, bcx, module, abi, body, ptr: Default::default(), next_ssa: 0 };
+
+    codegen_fn_body(&mut fx);
+
+    fx.bcx.seal_all_blocks();
+    fx.bcx.finalize();
+    (id, fn_)
+}
+
+fn linker_and_flavor(_: &Session) -> (PathBuf /* LinkerFlavor */,) {
+    (PathBuf::from("gcc"),)
+}
+
+fn link_binary(sess: &Session, module: PathBuf, output: PathBuf) -> io::Result<()> {
+    // now it's just one `module` and `output`
+
+    let (linker,) = linker_and_flavor(sess);
+
+    Command::new(linker).arg(module).arg("-o").arg(output).output().map(|_| ())
+}
 
 #[test]
-fn codegen() {
+fn codegen() -> Result<(), Box<dyn std::error::Error>> {
     use {
         crate::{
             lexer::lexer,
@@ -337,33 +651,53 @@ fn codegen() {
 
     let src = r#"
         {
-            let x = 228 * 1337;
-            let y = 177013 - -1;
-            12 + 342
+            let a = 1;
+            let b = -5;
+            let c = 6;
+
+            let d = b * b - 4 * a * c;
+            (-b + d) / 2 * a
         }
     "#;
-    let mut input = ParseBuffer::new(lexer().parse(src).into_result().unwrap());
-    let Block { stmts, .. } = input.parse().unwrap();
 
-    println!("{stmts:#?}");
+    let mut input =
+        ParseBuffer::new(lexer().parse(src).into_result().unwrap_or_else(|vec| panic!("{vec:#?}")));
+    let Block { stmts, .. } = input.parse()?;
 
-    // LLVM::codegen(GlobalCtx { scope: Scope { stmts } })
+    let module_path = "my_funny_module.o";
+    let mut module = {
+        use {cranelift_module as module, cranelift_object as object};
 
-    let context = Context::create();
-    let module = context.create_module("test_module");
-    let builder = context.create_builder();
+        let isa = isa::lookup(Triple::host())?.finish(settings::Flags::new(settings::builder()))?;
+        let mut out =
+            object::ObjectBuilder::new(isa, module_path, module::default_libcall_names())?;
+        out.per_function_section(false);
+        object::ObjectModule::new(out)
+    };
 
-    let mut llvm = LLVM::new(&context, &builder, &module);
+    let tcx = TyCtx::enter(Session {});
 
-    let foo = llvm.compile_fn("main_fn", &stmts).unwrap();
+    let i64 = tcx.types.i64;
+    let (id, main) = compile_fn(
+        &tcx,
+        &mut module,
+        Instance {
+            abi: FnAbi {
+                symbol: "main".to_string(),
+                args: Box::new([]),
+                // ret: ArgAbi { ty: tcx.layout_of(unit), mode: PassMode::Ignore },
+                ret: ArgAbi { ty: tcx.layout_of(i64), mode: PassMode::Direct },
+            },
+            body: stmts.iter().map(|stmt| Stmt::analyze(&tcx, stmt.clone())).collect(),
+        },
+    );
+    println!("{main}");
+    module.define_function(id, &mut Context::for_function(main))?;
 
-    foo.print_to_stderr();
-}
+    let path = PathBuf::from(module_path);
+    fs::write(&path, module.finish().emit()?)?;
 
-#[test]
-fn foo() {
-    let context = Context::create();
-    let ty = context.i128_type();
+    link_binary(&Session {}, path, "binary.out".into()).unwrap_or_else(|_| panic!("linker errors"));
 
-    println!("{}", ty.get_bit_width());
+    Ok(())
 }
