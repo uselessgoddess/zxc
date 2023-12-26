@@ -156,7 +156,7 @@ impl<'lex> Parse<'lex> for Lex<'lex> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Ident<'a> {
     ident: &'a str,
     pub span: Span,

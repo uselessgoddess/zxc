@@ -36,6 +36,13 @@ impl Spanned for expr::Paren<'_> {
     }
 }
 
+impl Spanned for expr::Block<'_> {
+    fn span(&self) -> Span {
+        let DelimSpan { lt, rt, .. } = self.brace.span;
+        lookahead_span(lt, rt)
+    }
+}
+
 impl Spanned for expr::Unary<'_> {
     fn span(&self) -> Span {
         // FIXME: add implementation for `UnOp`

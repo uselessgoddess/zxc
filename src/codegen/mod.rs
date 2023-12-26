@@ -192,6 +192,7 @@ pub enum ExprKind<'tcx> {
     Unary(UnOp, &'tcx Expr<'tcx>),
     Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
     Call(&'tcx str, &'tcx [Expr<'tcx>]),
+    Block(&'tcx [Stmt<'tcx>]),
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +203,7 @@ pub struct Expr<'tcx> {
 
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &parse::Expr<'tcx>) -> Self {
-        use crate::parse::expr::{Binary, Paren, TailCall, Unary};
+        use crate::parse::expr::{Binary, Block, Paren, TailCall, Unary};
 
         let span = expr.span();
         let kind = match expr {
@@ -225,6 +226,9 @@ impl<'tcx> Expr<'tcx> {
                     tcx.arena.expr.alloc_from_iter([Self::analyze(tcx, receiver)]),
                 )
             }
+            parse::Expr::Block(Block { stmts, .. }) => expr::Block(
+                tcx.arena.stmt.alloc_from_iter(stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt))),
+            ),
         };
         Self { kind, span }
     }
@@ -249,7 +253,7 @@ pub struct Stmt<'tcx> {
 }
 
 impl<'tcx> Stmt<'tcx> {
-    pub fn analyze(tcx: Tx<'tcx>, stmt: parse::Stmt<'tcx>) -> Self {
+    pub fn analyze(tcx: Tx<'tcx>, stmt: &parse::Stmt<'tcx>) -> Self {
         let span = stmt.span();
         let kind = match stmt {
             parse::Stmt::Local(local) => StmtKind::Local(LocalStmt {
@@ -293,6 +297,7 @@ pub(crate) struct CValue<'tcx> {
 enum CValueInner {
     ByRef(Pointer),
     ByVal(Value),
+    Unit,
 }
 
 impl<'tcx> CValue<'tcx> {
@@ -308,6 +313,10 @@ impl<'tcx> CValue<'tcx> {
         CValue { inner: CValueInner::ByRef(ptr), layout }
     }
 
+    pub fn unit(tcx: Tx<'tcx>) -> CValue<'tcx> {
+        CValue { inner: CValueInner::Unit, layout: tcx.layout_of(tcx.types.unit) }
+    }
+
     pub fn load_scalar(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> Value {
         let layout = self.layout();
         match self.inner {
@@ -319,6 +328,9 @@ impl<'tcx> CValue<'tcx> {
                 ptr.load(fx, clif_ty, MemFlags::new().with_notrap())
             }
             CValueInner::ByVal(value) => value,
+            CValueInner::Unit => {
+                panic!("the unit type is not represented in memory")
+            }
         }
     }
 }
@@ -602,6 +614,14 @@ fn codegen_expr<'cl, 'tcx>(
 
             CValue::by_val(val, abi)
         }
+        expr::Block(stmts) => {
+            let unit = CValue::unit(fx.tcx);
+            if let Some(split) = stmts.split_last() {
+                codegen_block(fx, scope.enter(), split)?.unwrap_or(unit)
+            } else {
+                unit
+            }
+        }
         panic => todo!("{panic:?}"),
     })
 }
@@ -640,48 +660,25 @@ fn codegen_return<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, val: CValue<'tcx>) {
     }
 }
 
-fn codegen_fn_body<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>) -> Result<'tcx, ()> {
-    let mut scope = Scope::new();
-    if let Some((tail, body)) = fx.body.split_last() {
-        let block = fx.bcx.create_block();
-        fx.bcx.switch_to_block(block);
-
-        for stmt in body {
-            if let stmt::Expr(_, true) = &stmt.kind {
-                panic!()
-            }
-            codegen_stmt(fx, &mut scope, stmt)?;
+fn codegen_block<'cl, 'tcx>(
+    fx: &mut FunctionCx<'_, 'cl, 'tcx>,
+    mut scope: Scope<'cl, 'tcx>,
+    (tail, body): (&'cl Stmt<'tcx>, &'cl [Stmt<'tcx>]),
+) -> Result<'tcx, Option<CValue<'tcx>>> {
+    for stmt in body {
+        if let stmt::Expr(_, true) = &stmt.kind {
+            panic!()
         }
-
-        if let stmt::Expr(expr, true) = &tail.kind {
-            let val = codegen_expr(fx, &mut scope, expr)?;
-            if fx.abi.ret.mode != PassMode::Ignore && val.layout() != fx.abi.ret.ty {
-                return Err(Error::TypeMismatch {
-                    expected: (
-                        fx.abi.ret.ty.ty,
-                        expr.span, /* TODO: use span from `parse::Signature` */
-                    ),
-                    found: (val.layout().ty, expr.span),
-                });
-            }
-            codegen_return(fx, val);
-        } else {
-            let unit = fx.tcx.types.unit;
-            if fx.abi.ret.ty.ty != unit {
-                return Err(Error::TypeMismatch {
-                    expected: (
-                        fx.abi.ret.ty.ty,
-                        tail.span, /* TODO: use span from `parse::Signature` */
-                    ),
-                    found: (unit, tail.span),
-                });
-            }
-
-            codegen_stmt(fx, &mut scope, tail)?;
-            fx.bcx.ins().return_(&[]);
-        }
+        codegen_stmt(fx, &mut scope, stmt)?;
     }
-    Ok(())
+
+    Ok(if let stmt::Expr(expr, true) = &tail.kind {
+        let val = codegen_expr(fx, &mut scope, expr)?;
+        Some(val)
+    } else {
+        codegen_stmt(fx, &mut scope, tail)?;
+        None
+    })
 }
 
 fn compile_fn<'tcx>(
@@ -697,10 +694,39 @@ fn compile_fn<'tcx>(
     let mut fn_ = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), sig);
 
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
-
     let mut fx = FunctionCx { tcx, bcx, module, abi, body, ptr: Default::default(), next_ssa: 0 };
 
-    codegen_fn_body(&mut fx)?;
+    if let Some(split @ (tail, body)) = body.split_last() {
+        let block = fx.bcx.create_block();
+        fx.bcx.switch_to_block(block);
+
+        if let Some(ret) = codegen_block(&mut fx, Scope::new(), split)? {
+            if fx.abi.ret.mode != PassMode::Ignore && ret.layout() != fx.abi.ret.ty {
+                return Err(Error::TypeMismatch {
+                    expected: (
+                        fx.abi.ret.ty.ty,
+                        tail.span, /* TODO: use span from `parse::Signature` */
+                    ),
+                    found: (ret.layout().ty, tail.span),
+                });
+            }
+            codegen_return(&mut fx, ret);
+        } else {
+            let unit = fx.tcx.types.unit;
+            if fx.abi.ret.ty.ty != unit {
+                return Err(Error::TypeMismatch {
+                    expected: (
+                        fx.abi.ret.ty.ty,
+                        tail.span, /* TODO: use span from `parse::Signature` */
+                    ),
+                    found: (unit, tail.span),
+                });
+            }
+            fx.bcx.ins().return_(&[]);
+        }
+    }
+
+    fx.bcx.ins().uadd_overflow_trap()
 
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
@@ -731,15 +757,15 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let src = r#"
         {
-            let a = 1;
-            let b = -5;
-            let c = 6;
-
-            let d = b * b - 4 * a * c;
-            (-b + d) / 2 * a
+            let a = 227;
+            let x = {
+                let a = 12;
+                let b = 13;
+                { a + { b + { } } }
+            };
+            x + a
         }
     "#;
-
     let mut input =
         ParseBuffer::new(lexer().parse(src).into_result().unwrap_or_else(|vec| panic!("{vec:#?}")));
     let Block { stmts, .. } = input.parse()?;
@@ -768,7 +794,7 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 // ret: ArgAbi { ty: tcx.layout_of(unit), mode: PassMode::Ignore },
                 ret: ArgAbi { ty: tcx.layout_of(i64), mode: PassMode::Direct },
             },
-            body: stmts.iter().map(|stmt| Stmt::analyze(&tcx, stmt.clone())).collect(),
+            body: stmts.iter().map(|stmt| Stmt::analyze(&tcx, stmt)).collect(),
         },
     ) {
         Ok(ok) => ok,
@@ -779,7 +805,7 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
             let source = "src/sample.src";
             let (code, reason, labels) = err.report(source, settings);
             let mut report =
-                Report::build(ReportKind::Error, source, 0).with_code(code).with_message(reason);
+                Report::build(ReportKind::Error, source, 5).with_code(code).with_message(reason);
             for label in labels {
                 report = report.with_label(label);
             }

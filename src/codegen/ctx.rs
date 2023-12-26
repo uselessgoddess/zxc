@@ -49,6 +49,7 @@ index_vec::define_index_type! {
 pub struct Arena<'tcx> {
     pub dropless: DroplessArena,
     pub expr: TypedArena<Expr<'tcx>>,
+    pub stmt: TypedArena<Stmt<'tcx>>,
 }
 
 pub struct Intern<'tcx> {
@@ -82,7 +83,11 @@ impl<'tcx> TyCtx<'tcx> {
         let types = CommonTypes::new(&intern, &sess);
 
         Self {
-            arena: Arena { dropless: DroplessArena::default(), expr: TypedArena::default() },
+            arena: Arena {
+                dropless: DroplessArena::default(),
+                expr: TypedArena::default(),
+                stmt: TypedArena::default(),
+            },
             intern,
             types,
             locals: IndexVec::with_capacity(128),
@@ -130,7 +135,10 @@ impl<'tcx> TyCtx<'tcx> {
     }
 }
 
-use ariadne::{Color, Fmt, Label};
+use {
+    crate::codegen::Stmt,
+    ariadne::{Color, Fmt, Label},
+};
 
 pub struct ReportSettings {
     pub err_kw: Color,

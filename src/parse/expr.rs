@@ -92,8 +92,9 @@ ast_enum_of_structs! {
     #[derive(Debug, Clone)]
     pub enum Expr<'a> {
         Lit(Lit<'a>),
-        Ident(Ident<'a>),
+        Block(Block<'a>),
         Paren(Paren<'a>),
+        Ident(Ident<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
         TailCall(TailCall<'a>),
@@ -256,6 +257,8 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
         input.parse().map(Expr::Lit)
     } else if input.peek(token::Paren) {
         input.custom(expr_paren).map(Expr::Paren)
+    } else if input.peek(token::Brace) {
+        input.custom(Block::parse).map(Expr::Block)
     } else if input.is_empty() {
         Err(input.error("expected an expression"))
     } else {
@@ -311,6 +314,7 @@ fn stmt_expr<'lex>(input: &mut ParseBuffer<'lex>, no_semi: bool) -> parse::Resul
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Block<'lex> {
     pub brace: token::Brace,
     pub stmts: Vec<Stmt<'lex>>,
