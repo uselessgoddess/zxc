@@ -2,15 +2,17 @@ mod arenas;
 mod ctx;
 mod intern;
 mod list;
+mod numeric;
 mod ty;
 
 pub use {
     arenas::{DroplessArena, TypedArena},
-    ctx::{Arena, Local, Session, Tx, TyCtx},
+    ctx::{Arena, Error, Local, Result, Session, Tx, TyCtx},
     intern::{InternSet, Interned},
     ty::{IntTy, Ty, TyKind},
 };
 use {
+    ariadne::{Color, Report, ReportKind},
     cranelift::{
         codegen::{
             ir::{immediates::Offset32, Function, StackSlot, UserFuncName},
@@ -27,7 +29,7 @@ use {
 };
 
 mod abi {
-    use {crate::codegen::Interned, index_vec::IndexVec};
+    use {crate::codegen::Interned, index_vec::IndexVec, std::fmt};
 
     index_vec::define_index_type! {
         pub struct FieldIdx = u32;
@@ -93,9 +95,15 @@ mod abi {
         }
     }
 
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+    #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Size {
         raw: u64,
+    }
+
+    impl fmt::Debug for Size {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "Size({} bytes)", self.bytes())
+        }
     }
 
     impl Size {
@@ -147,7 +155,7 @@ mod abi {
 
     pub type Layout<'cx> = Interned<'cx, LayoutKind>;
 
-    #[derive(Debug, Copy, Clone)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub enum PassMode {
         Ignore,
         Direct, // Add ArgAttributes
@@ -167,7 +175,11 @@ mod abi {
 }
 
 use crate::{
-    codegen::abi::{Abi, ArgAbi, Integer, PassMode, Scalar, TyAbi},
+    codegen::{
+        abi::{Abi, ArgAbi, Integer, PassMode, Scalar, TyAbi},
+        ctx::ReportSettings,
+        ty::clif_type_from_ty,
+    },
     lexer::{Ident, Lit},
     parse::{self, BinOp, Spanned, UnOp},
     Span,
@@ -179,6 +191,7 @@ pub enum ExprKind<'tcx> {
     Var(&'tcx str),
     Unary(UnOp, &'tcx Expr<'tcx>),
     Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
+    Call(&'tcx str, &'tcx [Expr<'tcx>]),
 }
 
 #[derive(Debug, Clone)]
@@ -188,20 +201,32 @@ pub struct Expr<'tcx> {
 }
 
 impl<'tcx> Expr<'tcx> {
-    pub fn analyze(tcx: Tx<'tcx>, expr: &parse::Expr<'tcx>) -> &'tcx Self {
-        let span = expr.span();
+    pub fn analyze(tcx: Tx<'tcx>, expr: &parse::Expr<'tcx>) -> Self {
+        use crate::parse::expr::{Binary, Paren, TailCall, Unary};
 
-        use crate::parse::expr::{Binary, Paren, Unary};
+        let span = expr.span();
         let kind = match expr {
             parse::Expr::Lit(lit) => expr::Lit(*lit),
             parse::Expr::Paren(Paren { expr, .. }) => return Self::analyze(tcx, expr),
-            parse::Expr::Unary(Unary { op, expr }) => expr::Unary(*op, Self::analyze(tcx, expr)),
-            parse::Expr::Binary(Binary { left, op, right }) => {
-                expr::Binary(*op, Self::analyze(tcx, left), Self::analyze(tcx, right))
+            parse::Expr::Unary(Unary { op, expr }) => {
+                expr::Unary(*op, tcx.arena.expr.alloc(Self::analyze(tcx, expr)))
             }
+            parse::Expr::Binary(Binary { left, op, right }) => expr::Binary(
+                *op,
+                tcx.arena.expr.alloc(Self::analyze(tcx, left)),
+                tcx.arena.expr.alloc(Self::analyze(tcx, right)),
+            ),
             parse::Expr::Ident(str) => expr::Var(str.ident()),
+            parse::Expr::TailCall(TailCall { receiver, func, args, .. }) => {
+                assert!(args.is_none());
+
+                expr::Call(
+                    func.ident(),
+                    tcx.arena.expr.alloc_from_iter([Self::analyze(tcx, receiver)]),
+                )
+            }
         };
-        tcx.arena.expr.alloc(Self { kind, span })
+        Self { kind, span }
     }
 }
 
@@ -227,11 +252,12 @@ impl<'tcx> Stmt<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, stmt: parse::Stmt<'tcx>) -> Self {
         let span = stmt.span();
         let kind = match stmt {
-            parse::Stmt::Local(local) => {
-                StmtKind::Local(LocalStmt { pat: local.pat, init: Expr::analyze(tcx, &local.expr) })
-            }
+            parse::Stmt::Local(local) => StmtKind::Local(LocalStmt {
+                pat: local.pat,
+                init: tcx.arena.expr.alloc(Expr::analyze(tcx, &local.expr)),
+            }),
             parse::Stmt::Expr(expr, semi) => {
-                StmtKind::Expr(Expr::analyze(tcx, &expr), semi.is_none())
+                StmtKind::Expr(tcx.arena.expr.alloc(Expr::analyze(tcx, &expr)), semi.is_none())
             }
         };
         Self { kind, span }
@@ -481,12 +507,47 @@ fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, abi: &FnAbi<'tcx>) -> Signature {
     Signature { params, returns: Vec::from_iter(ret), call_conv: isa::CallConv::SystemV }
 }
 
+pub(crate) fn codegen_binop<'tcx>(
+    fx: &mut FunctionCx<'_, '_, 'tcx>,
+    bin_op: BinOp,
+    (in_lhs, lspan): (CValue<'tcx>, Span),
+    (in_rhs, rspan): (CValue<'tcx>, Span),
+) -> Result<'tcx, CValue<'tcx>> {
+    // match bin_op {
+    //     BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => {
+    //         match in_lhs.layout().ty.kind() {
+    //             ty::Bool | ty::Uint(_) | ty::Int(_) | ty::Char => {
+    //                 let signed = type_sign(in_lhs.layout().ty);
+    //                 let lhs = in_lhs.load_scalar(fx);
+    //                 let rhs = in_rhs.load_scalar(fx);
+
+    //                 return codegen_compare_bin_op(fx, bin_op, signed, lhs, rhs);
+    //             }
+    //             _ => {}
+    //         }
+    //     }
+    //     _ => {}
+    // }
+
+    if in_lhs.layout() != in_rhs.layout() {
+        return Err(Error::TypeMismatch {
+            expected: (in_lhs.layout().ty, lspan),
+            found: (in_rhs.layout().ty, rspan),
+        });
+    }
+
+    Ok(match in_lhs.layout().ty.kind() {
+        ty::Int(_) => numeric::codegen_int_binop(fx, bin_op, in_lhs, in_rhs),
+        _ => todo!(),
+    })
+}
+
 fn codegen_expr<'cl, 'tcx>(
     fx: &mut FunctionCx<'_, 'cl, 'tcx>,
     scope: &mut Scope<'cl, 'tcx>,
     expr: &Expr<'tcx>,
-) -> CValue<'tcx> {
-    match &expr.kind {
+) -> Result<'tcx, CValue<'tcx>> {
+    Ok(match &expr.kind {
         expr::Lit(Lit::Int(int)) => {
             let val = fx.bcx.ins().iconst(types::I64, int.lit as i64);
             CValue::by_val(val, fx.tcx.layout_of(fx.tcx.types.i64))
@@ -494,67 +555,65 @@ fn codegen_expr<'cl, 'tcx>(
         expr::Var(name) => scope.get_var(name).expect("compile error").into_value(fx),
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
-                let val = codegen_expr(fx, scope, expr);
+                let val = codegen_expr(fx, scope, expr)?;
                 let scalar = val.load_scalar(fx);
                 CValue::by_val(fx.bcx.ins().ineg(scalar), val.layout())
             }
             _ => todo!(),
         },
-        expr::Binary(op, lhs, rhs) => match op {
-            BinOp::Add(_) => {
-                let lhs = codegen_expr(fx, scope, lhs);
-                let rhs = codegen_expr(fx, scope, rhs);
+        expr::Binary(op, lhs, rhs) => {
+            let a = codegen_expr(fx, scope, lhs)?;
+            let b = codegen_expr(fx, scope, rhs)?;
+            codegen_binop(fx, *op, (a, lhs.span), (b, rhs.span))?
+        }
+        expr::Call(intrinsic, args) => {
+            let ty = match *intrinsic {
+                "i8" => fx.tcx.types.i8,
+                "i16" => fx.tcx.types.i16,
+                "i32" => fx.tcx.types.i32,
+                "i64" => fx.tcx.types.i64,
+                _ => todo!(),
+            };
+            let abi @ TyAbi { ty, layout } = fx.tcx.layout_of(ty);
 
-                assert_eq!(lhs.layout(), rhs.layout());
+            let arg = match *args {
+                [single] => single,
+                _ => todo!(),
+            };
 
-                let a = lhs.load_scalar(fx);
-                let b = rhs.load_scalar(fx);
-                CValue::by_val(fx.bcx.ins().iadd(a, b), lhs.layout())
-            }
-            BinOp::Sub(_) => {
-                let lhs = codegen_expr(fx, scope, lhs);
-                let rhs = codegen_expr(fx, scope, rhs);
+            let ty = fx.clif_type(ty).ok_or_else(|| Error::ConcreateType {
+                expected: vec![
+                    fx.tcx.types.i8,
+                    fx.tcx.types.i16,
+                    fx.tcx.types.i32,
+                    fx.tcx.types.i64,
+                ],
+                found: (ty, arg.span),
+            })?;
 
-                assert_eq!(lhs.layout(), rhs.layout());
+            let val = codegen_expr(fx, scope, arg)?;
+            let scalar = val.load_scalar(fx);
 
-                let a = lhs.load_scalar(fx);
-                let b = rhs.load_scalar(fx);
-                CValue::by_val(fx.bcx.ins().isub(a, b), lhs.layout())
-            }
-            BinOp::Mul(_) => {
-                let lhs = codegen_expr(fx, scope, lhs);
-                let rhs = codegen_expr(fx, scope, rhs);
+            let val = if val.layout().layout.size < layout.size {
+                fx.bcx.ins().sextend(ty, scalar)
+            } else {
+                fx.bcx.ins().ireduce(ty, scalar)
+            };
 
-                assert_eq!(lhs.layout(), rhs.layout());
-
-                let a = lhs.load_scalar(fx);
-                let b = rhs.load_scalar(fx);
-                CValue::by_val(fx.bcx.ins().imul(a, b), lhs.layout())
-            }
-            BinOp::Div(_) => {
-                let lhs = codegen_expr(fx, scope, lhs);
-                let rhs = codegen_expr(fx, scope, rhs);
-
-                assert_eq!(lhs.layout(), rhs.layout());
-
-                let a = lhs.load_scalar(fx);
-                let b = rhs.load_scalar(fx);
-                CValue::by_val(fx.bcx.ins().sdiv(a, b), lhs.layout())
-            }
-            _ => todo!(),
-        },
-        _ => todo!(),
-    }
+            CValue::by_val(val, abi)
+        }
+        panic => todo!("{panic:?}"),
+    })
 }
 
 fn codegen_stmt<'cl, 'tcx>(
     fx: &mut FunctionCx<'_, 'cl, 'tcx>,
     scope: &mut Scope<'cl, 'tcx>,
     stmt: &'cl Stmt<'tcx>,
-) {
-    match &stmt.kind {
+) -> Result<'tcx, ()> {
+    Ok(match &stmt.kind {
         stmt::Local(LocalStmt { pat, init }) => {
-            let init = codegen_expr(fx, scope, init);
+            let init = codegen_expr(fx, scope, init)?;
             let place = scope.declare_var(fx, init.layout(), pat.ident());
             // TODO: fix
             match place.inner {
@@ -566,7 +625,7 @@ fn codegen_stmt<'cl, 'tcx>(
             }
         }
         stmt::Expr(_, _) => {}
-    }
+    })
 }
 
 fn codegen_return<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, val: CValue<'tcx>) {
@@ -581,7 +640,7 @@ fn codegen_return<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, val: CValue<'tcx>) {
     }
 }
 
-fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>) {
+fn codegen_fn_body<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>) -> Result<'tcx, ()> {
     let mut scope = Scope::new();
     if let Some((tail, body)) = fx.body.split_last() {
         let block = fx.bcx.create_block();
@@ -591,24 +650,45 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>) {
             if let stmt::Expr(_, true) = &stmt.kind {
                 panic!()
             }
-            codegen_stmt(fx, &mut scope, stmt);
+            codegen_stmt(fx, &mut scope, stmt)?;
         }
 
         if let stmt::Expr(expr, true) = &tail.kind {
-            let val = codegen_expr(fx, &mut scope, expr);
+            let val = codegen_expr(fx, &mut scope, expr)?;
+            if fx.abi.ret.mode != PassMode::Ignore && val.layout() != fx.abi.ret.ty {
+                return Err(Error::TypeMismatch {
+                    expected: (
+                        fx.abi.ret.ty.ty,
+                        expr.span, /* TODO: use span from `parse::Signature` */
+                    ),
+                    found: (val.layout().ty, expr.span),
+                });
+            }
             codegen_return(fx, val);
         } else {
-            codegen_stmt(fx, &mut scope, tail);
+            let unit = fx.tcx.types.unit;
+            if fx.abi.ret.ty.ty != unit {
+                return Err(Error::TypeMismatch {
+                    expected: (
+                        fx.abi.ret.ty.ty,
+                        tail.span, /* TODO: use span from `parse::Signature` */
+                    ),
+                    found: (unit, tail.span),
+                });
+            }
+
+            codegen_stmt(fx, &mut scope, tail)?;
             fx.bcx.ins().return_(&[]);
         }
     }
+    Ok(())
 }
 
 fn compile_fn<'tcx>(
     tcx: Tx<'tcx>,
     module: &mut dyn Module,
     Instance { abi, ref body }: Instance<'tcx>,
-) -> (FuncId, Function) {
+) -> Result<'tcx, (FuncId, Function)> {
     let sig = sig_from_abi(tcx, &abi);
     let id =
         module.declare_function(&abi.symbol, Linkage::Export, &sig).unwrap_or_else(|_| todo!());
@@ -620,11 +700,11 @@ fn compile_fn<'tcx>(
 
     let mut fx = FunctionCx { tcx, bcx, module, abi, body, ptr: Default::default(), next_ssa: 0 };
 
-    codegen_fn_body(&mut fx);
+    codegen_fn_body(&mut fx)?;
 
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
-    (id, fn_)
+    Ok((id, fn_))
 }
 
 fn linker_and_flavor(_: &Session) -> (PathBuf /* LinkerFlavor */,) {
@@ -640,7 +720,7 @@ fn link_binary(sess: &Session, module: PathBuf, output: PathBuf) -> io::Result<(
 }
 
 #[test]
-fn codegen() -> Result<(), Box<dyn std::error::Error>> {
+fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use {
         crate::{
             lexer::lexer,
@@ -678,7 +758,7 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
     let tcx = TyCtx::enter(Session {});
 
     let i64 = tcx.types.i64;
-    let (id, main) = compile_fn(
+    let (id, main) = match compile_fn(
         &tcx,
         &mut module,
         Instance {
@@ -690,7 +770,31 @@ fn codegen() -> Result<(), Box<dyn std::error::Error>> {
             },
             body: stmts.iter().map(|stmt| Stmt::analyze(&tcx, stmt.clone())).collect(),
         },
-    );
+    ) {
+        Ok(ok) => ok,
+        Err(err) => {
+            let settings =
+                ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Green };
+
+            let source = "src/sample.src";
+            let (code, reason, labels) = err.report(source, settings);
+            let mut report =
+                Report::build(ReportKind::Error, source, 0).with_code(code).with_message(reason);
+            for label in labels {
+                report = report.with_label(label);
+            }
+            report
+                .with_config(
+                    ariadne::Config::default()
+                        // .with_cross_gap(true)
+                        .with_underlines(true),
+                )
+                .finish()
+                .print(ariadne::sources([(source, src)]))
+                .unwrap();
+            todo!()
+        }
+    };
     println!("{main}");
     module.define_function(id, &mut Context::for_function(main))?;
 

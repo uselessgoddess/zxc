@@ -1,18 +1,26 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
     chumsky::{extra, prelude::*, text, IterParser, Parser},
+    std::num::{IntErrorKind, ParseIntError},
 };
 
 pub fn lexer<'src>()
 -> impl Parser<'src, &'src str, Vec<(Lex<'src>, Span)>, extra::Err<Rich<'src, char, Span>>> {
-    let num = text::digits(10).then(just('.').then(text::digits(10)).or_not()).to_slice().map_with(
-        |num: &str, e| {
-            let span = e.span();
-            if let Ok(lit) = num.parse::<u64>() {
-                Lex::Lit(Lit::Int(LitInt { lit, span }))
-            } else {
-                Lex::Lit(Lit::Float(LitFloat { lit: num.parse::<f64>().unwrap(), span }))
-            }
+    let num = text::digits(10).then(just('.').then(text::digits(10)).or_not()).to_slice().try_map(
+        |num: &str, span| {
+            Ok(match num.parse::<u64>() {
+                Ok(lit) => Lex::Lit(Lit::Int(LitInt { lit, span })),
+                Err(err) => {
+                    if let IntErrorKind::PosOverflow | IntErrorKind::NegOverflow = err.kind() {
+                        return Err(Rich::custom(span, err));
+                    } else {
+                        Lex::Lit(Lit::Float(LitFloat {
+                            lit: num.parse::<f64>().map_err(|err| Rich::custom(span, err))?,
+                            span,
+                        }))
+                    }
+                }
+            })
         },
     );
 
@@ -33,7 +41,7 @@ pub fn lexer<'src>()
         .map(Lex::Punct);
 
     // A parser for control characters (delimiters, semicolons, etc.)
-    let delim = one_of("()[]{};,")
+    let delim = one_of("()[]{};,.")
         .map_with(|delim, e| ast::Delim::new(delim, e.span()))
         .unwrapped()
         .map(Lex::Delim);
@@ -53,6 +61,7 @@ pub fn lexer<'src>()
 
     // A single token can be one of the above
     let token = num.or(str_).or(punct).or(delim).or(ident);
+    // let token = ident.or(delim).or(punct).or(str_).or(num);
 
     let comment = just("//").then(any().and_is(just('\n').not()).repeated()).padded();
 

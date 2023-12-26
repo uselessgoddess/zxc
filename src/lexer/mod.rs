@@ -107,6 +107,7 @@ pub mod ast {
         }
 
         Delim(char) {
+            '.' => Dot
             ';' => Semi
             ',' => Comma
             '{' => Brace1

@@ -1,8 +1,12 @@
 pub(crate) mod delim;
 pub mod expr;
+mod punct;
 mod surround;
 
-pub use expr::{BinOp, Block, Expr, Local, Stmt, UnOp};
+pub use {
+    expr::{BinOp, Block, Expr, Local, Stmt, UnOp},
+    punct::Punctuated,
+};
 
 use {
     crate::{lexer::Token, Lex, Span},
@@ -234,6 +238,19 @@ impl<'lex> ParseBuffer<'lex> {
 
     pub fn parse<P: Parse<'lex>>(&mut self) -> Result<P> {
         P::parse(self)
+    }
+
+    pub fn parse_terminated<T, P>(
+        &mut self,
+        parser: fn(&mut ParseBuffer<'lex>) -> Result<T>,
+        separator: P,
+    ) -> Result<Punctuated<T, P::Token>>
+    where
+        P: Peek,
+        P::Token: Parse<'lex>,
+    {
+        let _ = separator;
+        Punctuated::parse_terminated_with(self, parser)
     }
 
     pub fn custom<T>(&mut self, parser: fn(&mut ParseBuffer<'lex>) -> Result<T>) -> Result<T> {

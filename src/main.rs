@@ -15,6 +15,8 @@
 #![allow(internal_features)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
+extern crate core;
+
 #[macro_use]
 pub mod ast;
 pub mod lexer;

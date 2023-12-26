@@ -50,6 +50,15 @@ impl Spanned for expr::Binary<'_> {
     }
 }
 
+impl Spanned for expr::TailCall<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(
+            self.receiver.span(),
+            if let Some((paren, _)) = &self.args { paren.span.rt } else { self.func.span },
+        )
+    }
+}
+
 impl Spanned for parse::Local<'_> {
     fn span(&self) -> Span {
         lookahead_span(self.let_token.span, self.semi.span)

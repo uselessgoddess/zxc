@@ -1,12 +1,15 @@
 use {
-    crate::codegen::{
-        abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, Scalar, Size, TyAbi},
-        ctx,
-        list::List,
-        CPlace, DroplessArena, Expr, IntTy, InternSet, Ty, TyKind, TypedArena,
+    crate::{
+        codegen::{
+            abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, Scalar, Size, TyAbi},
+            ctx,
+            list::List,
+            CPlace, DroplessArena, Expr, IntTy, InternSet, Ty, TyKind, TypedArena,
+        },
+        Span,
     },
     index_vec::IndexVec,
-    std::hash::Hash,
+    std::{fmt, hash::Hash, ops::Range},
 };
 
 mod private {
@@ -16,6 +19,9 @@ mod private {
 
 pub struct CommonTypes<'tcx> {
     pub unit: Ty<'tcx>,
+    pub i8: Ty<'tcx>,
+    pub i16: Ty<'tcx>,
+    pub i32: Ty<'tcx>,
     pub i64: Ty<'tcx>,
 }
 
@@ -26,7 +32,13 @@ impl<'tcx> CommonTypes<'tcx> {
         // Safety: compiler intrinsics
         let mk = |ty| unsafe { intern.intern_ty(ty) };
 
-        Self { unit: mk(Tuple(List::empty())), i64: mk(Int(IntTy::I64)) }
+        Self {
+            unit: mk(Tuple(List::empty())),
+            i8: mk(Int(IntTy::I8)),
+            i16: mk(Int(IntTy::I16)),
+            i32: mk(Int(IntTy::I32)),
+            i64: mk(Int(IntTy::I64)),
+        }
     }
 }
 
@@ -79,15 +91,21 @@ impl<'tcx> TyCtx<'tcx> {
 
     pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
         // Safety: compiler intrinsics
+        let scalar = |ty, sign, (size, align)| LayoutKind {
+            abi: Abi::Scalar(Scalar::Int(ty, true)),
+            size: Size::from_bytes(size),
+            align: Align::from_bytes(align).expect("compiler query"),
+            shape: FieldsShape::Primitive,
+        };
+
+        // Safety: compiler intrinsics
         let layout = unsafe {
             self.intern.intern_layout(match ty.kind() {
                 TyKind::Int(int) => match int {
-                    IntTy::I64 => LayoutKind {
-                        abi: Abi::Scalar(Scalar::Int(Integer::I64, true)),
-                        size: Size::from_bytes(8),
-                        align: Align::from_bytes(8).expect("compiler query"),
-                        shape: FieldsShape::Primitive,
-                    },
+                    IntTy::I8 => scalar(Integer::I8, true, (1, 1)),
+                    IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
+                    IntTy::I32 => scalar(Integer::I32, true, (4, 4)),
+                    IntTy::I64 => scalar(Integer::I64, true, (8, 8)),
                 },
                 TyKind::Tuple(list) => {
                     if list.is_empty() {
@@ -105,6 +123,85 @@ impl<'tcx> TyCtx<'tcx> {
         };
         TyAbi { ty, layout }
     }
+
+    pub fn fatal(&self, msg: impl Into<String>) -> ! {
+        // TODO: Add diagnostic handler
+        panic!("{}", msg.into())
+    }
+}
+
+use ariadne::{Color, Fmt, Label};
+
+pub struct ReportSettings {
+    pub err_kw: Color,
+    pub err: Color,
+    pub kw: Color,
+}
+
+pub type Result<'tcx, T> = std::result::Result<T, Error<'tcx>>;
+
+pub enum Error<'tcx> {
+    TypeMismatch { expected: (Ty<'tcx>, Span), found: (Ty<'tcx>, Span) },
+    ConcreateType { expected: Vec<Ty<'tcx>>, found: (Ty<'tcx>, Span) },
+}
+
+type Spanned<'a> = (&'a str, Range<usize>);
+
+fn s(str: &str, span: Span) -> Spanned {
+    (str, span.into_range())
+}
+
+impl Error<'_> {
+    pub fn report<'a>(
+        &self,
+        src: &'a str,
+        colors: ReportSettings,
+    ) -> (&str, String, Vec<Label<Spanned<'a>>>) {
+        let t = |ty| format!("{ty}").fg(colors.err_kw);
+
+        use ariadne::Fmt;
+
+        match self {
+            Error::TypeMismatch { expected, found } => (
+                "E0228", // sample code
+                "mismatch types".into(),
+                vec![
+                    Label::new(s(src, expected.1))
+                        .with_message(format!("expected `{}` ", t(expected.0)))
+                        .with_color(colors.err),
+                    Label::new(s(src, found.1))
+                        .with_message(format!("found `{}` ", t(found.0)))
+                        .with_color(colors.err),
+                ],
+            ),
+            Error::ConcreateType { expected, found: (ty, span) } => (
+                "E1337",
+                "mismatch types".into(),
+                vec![
+                    Label::new(s(src, *span))
+                        .with_message(format!(
+                            "expected {} ",
+                            match &expected[..] {
+                                [expected] => format!("{}", t(*ty)),
+                                &[a, b] => format!("expected {} or {}", t(a), t(b)),
+                                types =>
+                                    format!("expected one of: {}", join_fmt(types, |&ty| t(ty))),
+                            }
+                        ))
+                        .with_color(colors.err),
+                ],
+            ),
+        }
+    }
+}
+
+fn join_fmt<T, U: fmt::Display>(slice: &[T], mut map: impl FnMut(&T) -> U) -> String {
+    let mut place = String::with_capacity(128);
+
+    for fmt in slice {
+        place.push_str(&format!("{}", map(fmt)));
+    }
+    place
 }
 
 pub type Tx<'tcx> = &'tcx TyCtx<'tcx>;

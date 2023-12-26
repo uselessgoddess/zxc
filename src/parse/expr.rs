@@ -2,7 +2,7 @@ use crate::{
     braced,
     lexer::{Ident, Lit},
     parenthesized,
-    parse::{self, Parse, ParseBuffer},
+    parse::{self, Parse, ParseBuffer, Punctuated},
     token::{self},
     Token,
 };
@@ -96,6 +96,7 @@ ast_enum_of_structs! {
         Paren(Paren<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
+        TailCall(TailCall<'a>),
     }
 }
 
@@ -124,6 +125,14 @@ pub struct Binary<'a> {
 pub struct Unary<'a> {
     pub op: UnOp,
     pub expr: Box<Expr<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TailCall<'a> {
+    pub receiver: Box<Expr<'a>>,
+    pub dot: Token![.],
+    pub func: Ident<'a>,
+    pub args: Option<(token::Paren, Punctuated<Expr<'a>, Token![,]>)>,
 }
 
 impl<'lex> Parse<'lex> for Expr<'lex> {
@@ -210,12 +219,30 @@ fn unary_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> 
 }
 
 fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
-    let e = atom_expr(input)?;
+    let mut e = atom_expr(input)?;
 
-    #[allow(clippy::never_loop)]
     loop {
         // Doesn't allow trailer expressions now
         // later there will be `func(a) |..| { b }` syntax
+
+        if input.peek(Token![.]) {
+            e = Expr::TailCall(TailCall {
+                receiver: Box::new(e),
+                dot: input.parse()?,
+                func: input.parse()?,
+                args: {
+                    if input.peek(token::Paren) {
+                        let mut content;
+                        Some((
+                            parenthesized!(content in input),
+                            content.parse_terminated(Expr::parse, Token![,])?,
+                        ))
+                    } else {
+                        None
+                    }
+                },
+            });
+        }
         break;
     }
 
@@ -338,8 +365,24 @@ fn bit_op() {
 
 #[test]
 fn unary() {
-    let mut input = lex_it!("let x = 12 + 3");
+    let mut input = lex_it!("- - 3");
     let expr: Expr = input.parse().unwrap();
 
     println!("{expr:#?}");
+}
+
+#[test]
+fn tail_call() {
+    {
+        let mut input = lex_it!("12.i64");
+        let expr: Expr = input.parse().unwrap();
+
+        println!("{expr:#?}");
+    }
+    {
+        let mut input = lex_it!("12.i64(12 + 32, 234)");
+        let expr: Expr = input.parse().unwrap();
+
+        println!("{expr:#?}");
+    }
 }
