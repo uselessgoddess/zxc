@@ -2,10 +2,12 @@ pub(crate) mod delim;
 pub mod expr;
 mod punct;
 mod surround;
+pub mod ty;
 
 pub use {
     expr::{BinOp, Block, Expr, Local, Stmt, UnOp},
     punct::Punctuated,
+    ty::Type,
 };
 
 use {

@@ -98,7 +98,7 @@ pub struct DelimSpan {
 
 macro_rules! define_delimiters {
     ($($lt:ident..$rt:ident pub struct $name:ident)*) => {$(
-        #[derive(Clone)]
+        #[derive(Copy, Clone)]
         pub struct $name {
             pub span: DelimSpan,
         }

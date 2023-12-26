@@ -243,8 +243,9 @@ fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>
                     }
                 },
             });
+        } else {
+            break;
         }
-        break;
     }
 
     Ok(e)

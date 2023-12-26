@@ -2,14 +2,13 @@ use {
     crate::{
         codegen::{
             abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, Scalar, Size, TyAbi},
-            ctx,
             list::List,
-            CPlace, DroplessArena, Expr, IntTy, InternSet, Ty, TyKind, TypedArena,
+            CPlace, DroplessArena, Expr, IntTy, Sharded, Ty, TyKind, TypedArena,
         },
         Span,
     },
     index_vec::IndexVec,
-    std::{fmt, hash::Hash, ops::Range},
+    std::{hash::Hash, ops::Range},
 };
 
 mod private {
@@ -26,11 +25,11 @@ pub struct CommonTypes<'tcx> {
 }
 
 impl<'tcx> CommonTypes<'tcx> {
-    pub fn new(intern: &ctx::Intern<'tcx>, _: &Session) -> CommonTypes<'tcx> {
+    pub fn new(intern: &Intern<'tcx>, arena: &'tcx Arena<'tcx>, _: &Session) -> CommonTypes<'tcx> {
         use TyKind::*;
 
         // Safety: compiler intrinsics
-        let mk = |ty| unsafe { intern.intern_ty(ty) };
+        let mk = |ty| intern.intern_ty(arena, ty);
 
         Self {
             unit: mk(Tuple(List::empty())),
@@ -46,29 +45,46 @@ index_vec::define_index_type! {
     pub struct Local = u32;
 }
 
+#[derive(Default)]
 pub struct Arena<'tcx> {
     pub dropless: DroplessArena,
     pub expr: TypedArena<Expr<'tcx>>,
     pub stmt: TypedArena<Stmt<'tcx>>,
+    pub type_: TypedArena<TyKind<'tcx>>,
+    pub layout: TypedArena<LayoutKind>,
 }
 
+type InternSet<'tcx, T> = Sharded<Interned<'tcx, T>>;
+
+#[derive(Default)]
 pub struct Intern<'tcx> {
-    pub types: InternSet<TyKind<'tcx>>,
-    pub layouts: InternSet<LayoutKind>,
+    pub types: InternSet<'tcx, TyKind<'tcx>>,
+    pub layouts: InternSet<'tcx, LayoutKind>,
+    pub type_lists: InternSet<'tcx, List<Ty<'tcx>>>,
 }
 
 impl<'tcx> Intern<'tcx> {
-    pub unsafe fn intern_ty(&self, kind: TyKind<'tcx>) -> Ty<'tcx> {
-        self.types.intern_outlive(kind)
+    pub fn intern_ty(&self, arena: &'tcx Arena<'tcx>, kind: TyKind<'tcx>) -> Ty<'tcx> {
+        self.types.intern(kind, |kind| Interned::new_unchecked(arena.type_.alloc(kind)))
     }
 
-    pub unsafe fn intern_layout(&self, kind: LayoutKind) -> Layout<'tcx> {
-        self.layouts.intern_outlive(kind)
+    pub fn intern_layout(&self, arena: &'tcx Arena<'tcx>, kind: LayoutKind) -> Layout<'tcx> {
+        self.layouts.intern(kind, |kind| Interned::new_unchecked(arena.layout.alloc(kind)))
+    }
+
+    pub fn intern_type_list(
+        &self,
+        arena: &'tcx Arena<'tcx>,
+        slice: &[Ty<'tcx>],
+    ) -> &'tcx List<Ty<'tcx>> {
+        self.type_lists
+            .intern_ref(slice, || Interned::new_unchecked(List::from_arena(arena, slice)))
+            .0
     }
 }
 
 pub struct TyCtx<'tcx> {
-    pub arena: Arena<'tcx>,
+    pub arena: &'tcx Arena<'tcx>,
     pub intern: Intern<'tcx>,
 
     pub types: CommonTypes<'tcx>,
@@ -78,34 +94,26 @@ pub struct TyCtx<'tcx> {
 pub struct Session {}
 
 impl<'tcx> TyCtx<'tcx> {
-    pub fn enter(sess: Session) -> Self {
-        let intern = Intern { types: InternSet::new(), layouts: InternSet::new() };
-        let types = CommonTypes::new(&intern, &sess);
+    pub fn enter(arena: &'tcx Arena<'tcx>, sess: Session) -> Self {
+        let intern = Intern::default();
+        let types = CommonTypes::new(&intern, &arena, &sess);
 
-        Self {
-            arena: Arena {
-                dropless: DroplessArena::default(),
-                expr: TypedArena::default(),
-                stmt: TypedArena::default(),
-            },
-            intern,
-            types,
-            locals: IndexVec::with_capacity(128),
-        }
+        Self { arena, intern, types, locals: IndexVec::with_capacity(128) }
     }
 
     pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
         // Safety: compiler intrinsics
         let scalar = |ty, sign, (size, align)| LayoutKind {
-            abi: Abi::Scalar(Scalar::Int(ty, true)),
+            abi: Abi::Scalar(Scalar::Int(ty, sign)),
             size: Size::from_bytes(size),
             align: Align::from_bytes(align).expect("compiler query"),
             shape: FieldsShape::Primitive,
         };
 
         // Safety: compiler intrinsics
-        let layout = unsafe {
-            self.intern.intern_layout(match ty.kind() {
+        let layout = self.intern.intern_layout(
+            &self.arena,
+            match ty.kind() {
                 TyKind::Int(int) => match int {
                     IntTy::I8 => scalar(Integer::I8, true, (1, 1)),
                     IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
@@ -124,9 +132,17 @@ impl<'tcx> TyCtx<'tcx> {
                         todo!()
                     }
                 }
-            })
-        };
+            },
+        );
         TyAbi { ty, layout }
+    }
+
+    pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {
+        if slice.is_empty() {
+            List::empty()
+        } else {
+            self.intern.intern_type_list(&self.arena, slice)
+        }
     }
 
     pub fn fatal(&self, msg: impl Into<String>) -> ! {
@@ -136,8 +152,8 @@ impl<'tcx> TyCtx<'tcx> {
 }
 
 use {
-    crate::codegen::Stmt,
-    ariadne::{Color, Fmt, Label},
+    crate::codegen::{util, Interned, Stmt},
+    ariadne::{Color, Label},
 };
 
 pub struct ReportSettings {
@@ -165,7 +181,7 @@ impl Error<'_> {
         src: &'a str,
         colors: ReportSettings,
     ) -> (&str, String, Vec<Label<Spanned<'a>>>) {
-        let t = |ty| format!("{ty}").fg(colors.err_kw);
+        let t = |ty| format!("`{ty}`").fg(colors.err_kw);
 
         use ariadne::Fmt;
 
@@ -175,10 +191,10 @@ impl Error<'_> {
                 "mismatch types".into(),
                 vec![
                     Label::new(s(src, expected.1))
-                        .with_message(format!("expected `{}` ", t(expected.0)))
+                        .with_message(format!("expected {} ", t(expected.0)))
                         .with_color(colors.err),
                     Label::new(s(src, found.1))
-                        .with_message(format!("found `{}` ", t(found.0)))
+                        .with_message(format!("found {} ", t(found.0)))
                         .with_color(colors.err),
                 ],
             ),
@@ -190,26 +206,22 @@ impl Error<'_> {
                         .with_message(format!(
                             "expected {} ",
                             match &expected[..] {
-                                [expected] => format!("{}", t(*ty)),
+                                [expected] => format!("{}", t(*expected)),
                                 &[a, b] => format!("expected {} or {}", t(a), t(b)),
-                                types =>
-                                    format!("expected one of: {}", join_fmt(types, |&ty| t(ty))),
+                                types => format!(
+                                    "expected one of: {}",
+                                    util::join_fmt(types, |&ty| t(ty))
+                                ),
                             }
                         ))
+                        .with_color(colors.err),
+                    Label::new(s(src, *span))
+                        .with_message(format!("found {} ", t(*ty)))
                         .with_color(colors.err),
                 ],
             ),
         }
     }
-}
-
-fn join_fmt<T, U: fmt::Display>(slice: &[T], mut map: impl FnMut(&T) -> U) -> String {
-    let mut place = String::with_capacity(128);
-
-    for fmt in slice {
-        place.push_str(&format!("{}", map(fmt)));
-    }
-    place
 }
 
 pub type Tx<'tcx> = &'tcx TyCtx<'tcx>;

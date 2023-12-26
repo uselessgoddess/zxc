@@ -1,6 +1,10 @@
 use {
-    crate::codegen::{list::List, Interned},
+    crate::{
+        codegen::{list::List, Interned},
+        parse,
+    },
     cranelift::prelude::types,
+    smallvec::SmallVec,
     std::{fmt, fmt::Formatter},
 };
 
@@ -24,6 +28,28 @@ impl<'cx> Ty<'cx> {
     pub fn kind(&self) -> TyKind<'cx> {
         *self.0
     }
+
+    pub fn analyze(tcx: Tx<'cx>, ty: &parse::Type<'cx>) -> Ty<'cx> {
+        use parse::ty::{Paren, Tuple, Type};
+
+        match ty {
+            Type::Ident(name) => match name.ident() {
+                "i8" => tcx.types.i8,
+                "i16" => tcx.types.i16,
+                "i32" => tcx.types.i32,
+                "i64" => tcx.types.i64,
+                _ => todo!(),
+            },
+            Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
+            Type::Tuple(Tuple { items, .. }) => tcx.intern.intern_ty(
+                &tcx.arena,
+                ty::Tuple(tcx.mk_type_list(
+                    // TODO: add size hint optimizations because tuple's size usually less than 8
+                    &items.iter().map(|ty| Self::analyze(tcx, ty)).collect::<SmallVec<_, 8>>(),
+                )),
+            ),
+        }
+    }
 }
 
 impl fmt::Display for Ty<'_> {
@@ -39,18 +65,14 @@ impl fmt::Display for Ty<'_> {
                 if list.is_empty() {
                     f.write_str("@unit")
                 } else {
-                    let mut tuple = f.debug_tuple("");
-                    for ty in list {
-                        tuple.field(&ty);
-                    }
-                    tuple.finish()
+                    write!(f, "({})", util::join_fmt(list, Ty::to_string))
                 }
             }
         }
     }
 }
 
-use crate::codegen::Tx;
+use crate::codegen::{ty, util, Tx};
 
 pub use TyKind::*;
 

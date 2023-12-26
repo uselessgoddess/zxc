@@ -4,11 +4,12 @@ mod intern;
 mod list;
 mod numeric;
 mod ty;
+pub mod util;
 
 pub use {
     arenas::{DroplessArena, TypedArena},
     ctx::{Arena, Error, Local, Result, Session, Tx, TyCtx},
-    intern::{InternSet, Interned},
+    intern::{Interned, Sharded},
     ty::{IntTy, Ty, TyKind},
 };
 use {
@@ -178,7 +179,6 @@ use crate::{
     codegen::{
         abi::{Abi, ArgAbi, Integer, PassMode, Scalar, TyAbi},
         ctx::ReportSettings,
-        ty::clif_type_from_ty,
     },
     lexer::{Ident, Lit},
     parse::{self, BinOp, Spanned, UnOp},
@@ -593,7 +593,9 @@ fn codegen_expr<'cl, 'tcx>(
                 _ => todo!(),
             };
 
-            let ty = fx.clif_type(ty).ok_or_else(|| Error::ConcreateType {
+            let val = codegen_expr(fx, scope, arg)?;
+
+            let _ = fx.clif_type(val.layout.ty).ok_or_else(|| Error::ConcreateType {
                 expected: vec![
                     fx.tcx.types.i8,
                     fx.tcx.types.i16,
@@ -602,17 +604,20 @@ fn codegen_expr<'cl, 'tcx>(
                 ],
                 found: (ty, arg.span),
             })?;
+            let cl_ty = fx.clif_type(ty).expect("always some: FIXME");
 
-            let val = codegen_expr(fx, scope, arg)?;
-            let scalar = val.load_scalar(fx);
-
-            let val = if val.layout().layout.size < layout.size {
-                fx.bcx.ins().sextend(ty, scalar)
+            // skip instruction if same layout
+            if ty != val.layout().ty {
+                let scalar = val.load_scalar(fx);
+                let val = if val.layout().layout.size < layout.size {
+                    fx.bcx.ins().sextend(cl_ty, scalar)
+                } else {
+                    fx.bcx.ins().ireduce(cl_ty, scalar)
+                };
+                CValue::by_val(val, abi)
             } else {
-                fx.bcx.ins().ireduce(ty, scalar)
-            };
-
-            CValue::by_val(val, abi)
+                val
+            }
         }
         expr::Block(stmts) => {
             let unit = CValue::unit(fx.tcx);
@@ -696,7 +701,7 @@ fn compile_fn<'tcx>(
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
     let mut fx = FunctionCx { tcx, bcx, module, abi, body, ptr: Default::default(), next_ssa: 0 };
 
-    if let Some(split @ (tail, body)) = body.split_last() {
+    if let Some(split @ (tail, _)) = body.split_last() {
         let block = fx.bcx.create_block();
         fx.bcx.switch_to_block(block);
 
@@ -725,8 +730,6 @@ fn compile_fn<'tcx>(
             fx.bcx.ins().return_(&[]);
         }
     }
-
-    fx.bcx.ins().uadd_overflow_trap()
 
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
@@ -761,8 +764,8 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
             let x = {
                 let a = 12;
                 let b = 13;
-                { a + { b + { } } }
-            };
+                { a + { b } }
+            }.i8.i64;
             x + a
         }
     "#;
@@ -781,7 +784,8 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
         object::ObjectModule::new(out)
     };
 
-    let tcx = TyCtx::enter(Session {});
+    let arena = Arena::default();
+    let tcx = TyCtx::enter(&arena, Session {});
 
     let i64 = tcx.types.i64;
     let (id, main) = match compile_fn(
@@ -830,4 +834,22 @@ fn codegen() -> std::result::Result<(), Box<dyn std::error::Error>> {
     link_binary(&Session {}, path, "binary.out".into()).unwrap_or_else(|_| panic!("linker errors"));
 
     Ok(())
+}
+
+#[test]
+fn ty_intern() {
+    use crate::{parse::ParseBuffer, util::lex_it};
+
+    let mut input = lex_it!("(i32, (i32,))");
+    let ty: parse::Type = input.parse().unwrap();
+
+    let arena = Arena::default();
+    let tcx = TyCtx::enter(&arena, Session {});
+
+    let a = Ty::analyze(&tcx, &ty);
+    let b = Ty::analyze(&tcx, &ty);
+    println!("`{a}` is `{b}`");
+
+    assert_eq!(a, b);
+    assert_eq!(a.0 as *const _, b.0 as *const _);
 }

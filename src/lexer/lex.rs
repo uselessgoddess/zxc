@@ -1,7 +1,7 @@
 use {
     super::{ast, Ident, Lex, Lit, LitBool, LitFloat, LitInt, LitStr, Span},
     chumsky::{extra, prelude::*, text, IterParser, Parser},
-    std::num::{IntErrorKind, ParseIntError},
+    std::num::IntErrorKind,
 };
 
 pub fn lexer<'src>()

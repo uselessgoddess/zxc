@@ -1,6 +1,6 @@
 use {
     crate::{
-        codegen::{ty, CValue, FunctionCx, Result, Ty},
+        codegen::{ty, CValue, FunctionCx, Ty},
         parse::BinOp,
     },
     cranelift::prelude::InstBuilder,

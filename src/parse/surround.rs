@@ -1,7 +1,7 @@
 use crate::{
     parenthesized,
-    parse::{self, expr, DelimSpan, ParseBuffer, Stmt},
-    Span,
+    parse::{self, expr, ty, DelimSpan, ParseBuffer, Stmt},
+    token, Span,
 };
 
 pub trait Spanned {
@@ -29,10 +29,16 @@ fn lookahead_span(lo: Span, hi: Span) -> Span {
     Span::new(lo.start, hi.end)
 }
 
+impl Spanned for token::Paren {
+    fn span(&self) -> Span {
+        let DelimSpan { lt, rt, .. } = self.span;
+        lookahead_span(lt, rt)
+    }
+}
+
 impl Spanned for expr::Paren<'_> {
     fn span(&self) -> Span {
-        let DelimSpan { lt, rt, .. } = self.paren.span;
-        lookahead_span(lt, rt)
+        self.paren.span()
     }
 }
 
@@ -84,6 +90,18 @@ impl Spanned for Stmt<'_> {
                 }
             }
         }
+    }
+}
+
+impl Spanned for ty::Tuple<'_> {
+    fn span(&self) -> Span {
+        self.paren.span()
+    }
+}
+
+impl Spanned for ty::Paren<'_> {
+    fn span(&self) -> Span {
+        self.paren.span()
     }
 }
 
