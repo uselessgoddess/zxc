@@ -10,10 +10,20 @@ use {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum IntTy {
+    Isize,
     I8,
     I16,
     I32,
     I64,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum UintTy {
+    Usize,
+    U8,
+    U16,
+    U32,
+    U64,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -60,6 +70,7 @@ impl fmt::Display for Ty<'_> {
                 IntTy::I16 => f.write_str("i16"),
                 IntTy::I32 => f.write_str("i32"),
                 IntTy::I64 => f.write_str("i64"),
+                _ => todo!(),
             },
             Tuple(list) => {
                 if list.is_empty() {
@@ -83,6 +94,7 @@ pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<typ
             IntTy::I16 => types::I16,
             IntTy::I32 => types::I32,
             IntTy::I64 => types::I64,
+            _ => todo!(),
         },
         _ => return None,
     })

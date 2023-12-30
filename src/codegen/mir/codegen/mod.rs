@@ -1,3 +1,4 @@
+mod cast;
 mod ssa;
 
 use {
@@ -6,8 +7,8 @@ use {
             abi::{Abi, Align, PassMode, Size, TyAbi},
             list::List,
             mir::{
-                BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Operand, Place,
-                Rvalue, ScalarRepr, Statement, Terminator,
+                codegen::cast::clif_intcast, BasicBlock, BasicBlockData, Body, ConstValue, Local,
+                LocalDecl, Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
             },
             scalar_to_clif, ty, Arena, Session, Tx, Ty, TyCtx, TyKind,
         },
@@ -206,6 +207,7 @@ fn codegen_stmt<'tcx>(
     match stmt {
         Statement::Assign(place, rvalue) => {
             let place = codegen_place(fx, *place);
+            let dst_ty = place.layout();
             match *rvalue {
                 Rvalue::Use(ref operand) => {
                     let val = codegen_operand(fx, operand);
@@ -234,6 +236,16 @@ fn codegen_stmt<'tcx>(
                         },
                     };
                     place.write_cvalue(fx, res);
+                }
+                Rvalue::Cast(kind, ref operand, cast_ty) => {
+                    let operand = codegen_operand(fx, operand);
+                    let from_ty = operand.layout().ty;
+
+                    // TODO: only supports ints
+                    let clif_ty = fx.clif_type(cast_ty).unwrap();
+                    let from = operand.load_scalar(fx);
+                    let val = clif_intcast(fx, from, clif_ty, type_sign(from_ty));
+                    place.write_cvalue(fx, CValue::by_val(val, dst_ty))
                 }
             }
         }

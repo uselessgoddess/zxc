@@ -5,6 +5,11 @@ use {
     std::ops::Range,
 };
 
+// FIXME: move `Ty` into MIR
+mod mir {
+    pub use crate::codegen::Ty;
+}
+
 pub struct ReportSettings {
     pub err_kw: Color,
     pub err: Color,
@@ -17,6 +22,7 @@ pub enum Error<'tcx> {
     NotFoundLocal(Ident<'tcx>),
     TypeMismatch { expected: Ty<'tcx>, found: Ty<'tcx> },
     ConcreateType { expected: Vec<Ty<'tcx>>, found: Ty<'tcx> },
+    NonPrimitiveCast { from: Ty<'tcx>, cast: mir::Ty<'tcx> },
 }
 
 type Spanned<'a> = (&'a str, Range<usize>);
@@ -27,7 +33,7 @@ impl<'a> Error<'a> {
         src: &'a str,
         colors: ReportSettings,
     ) -> (&str, String, Vec<Label<Spanned<'a>>>) {
-        let fmt = |ty: &Ty| format!("`{ty}`").fg(colors.err_kw);
+        let fmt = |ty: mir::Ty| format!("`{}`", ty).fg(colors.err_kw);
 
         use ariadne::Fmt;
 
@@ -37,9 +43,9 @@ impl<'a> Error<'a> {
                 "mismatch types".into(),
                 vec![
                     Label::new((src, expected.span.into_range()))
-                        .with_message(format!("expected {} ", fmt(expected))),
+                        .with_message(format!("expected {} ", fmt(expected.kind))),
                     Label::new((src, found.span.into_range()))
-                        .with_message(format!("found {} ", fmt(found))),
+                        .with_message(format!("found {} ", fmt(found.kind))),
                 ],
             ),
             Error::ConcreateType { expected, found } => (
@@ -49,14 +55,16 @@ impl<'a> Error<'a> {
                     Label::new((src, found.span.into_range())).with_message(format!(
                         "expected {} ",
                         match &expected[..] {
-                            [expected] => format!("{}", fmt(expected)),
-                            [a, b] => format!("expected {} or {}", fmt(a), fmt(b)),
-                            types =>
-                                format!("expected one of: {}", util::join_fmt(types, |ty| fmt(ty))),
+                            [expected] => format!("{}", fmt(expected.kind)),
+                            [a, b] => format!("expected {} or {}", fmt(a.kind), fmt(b.kind)),
+                            types => format!(
+                                "expected one of: {}",
+                                util::join_fmt(types, |ty| fmt(ty.kind))
+                            ),
                         }
                     )),
                     Label::new((src, found.span.into_range()))
-                        .with_message(format!("found {} ", fmt(found))),
+                        .with_message(format!("found {} ", fmt(found.kind))),
                 ],
             ),
             Error::NotFoundLocal(local) => {
@@ -69,6 +77,15 @@ impl<'a> Error<'a> {
                     ))],
                 )
             }
+            Error::NonPrimitiveCast { from, cast } => (
+                "E0xFF",
+                "non primitive cast".into(),
+                vec![Label::new((src, from.span.into_range())).with_message(format!(
+                    "{} as {}",
+                    fmt(from.kind),
+                    fmt(*cast)
+                ))],
+            ),
         }
     }
 }

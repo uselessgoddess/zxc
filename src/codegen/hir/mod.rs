@@ -1,12 +1,11 @@
 mod error;
-mod fmt;
 mod scope;
 mod ty;
 
 use {
     ariadne::{Color, Report, ReportKind},
     index_vec::index_vec,
-    std::{collections::HashMap, mem},
+    std::{collections::HashMap, io, mem},
 };
 pub use {
     error::{Error, ReportSettings, Result},
@@ -17,8 +16,8 @@ pub use {
 use crate::{
     codegen::{
         mir::{
-            self, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr, Statement,
-            Terminator,
+            self, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr,
+            Statement, Terminator,
         },
         Arena, Session, Tx, TyCtx,
     },
@@ -229,6 +228,28 @@ fn analyze_expr<'hir>(
                 acx.unit_place(*span)
             }
         }
+        expr::Call(call, args) => {
+            assert!(args.len() == 1);
+
+            if ["i64", "i32", "i16", "i8"].contains(call) {
+                let (from, place) = analyze_expr(acx, &args[0])?;
+                let cast = match *call {
+                    "i8" => acx.tcx.types.i8,
+                    "i16" => acx.tcx.types.i16,
+                    "i32" => acx.tcx.types.i32,
+                    "i64" => acx.tcx.types.i64,
+                    _ => todo!(),
+                };
+                let kind = CastKind::from_cast(from.kind, cast)
+                    .ok_or(Error::NonPrimitiveCast { from, cast })?;
+                acx.push_rvalue(
+                    Ty::new(from.span, cast),
+                    Rvalue::Cast(kind, Operand::Copy(place), cast),
+                )
+            } else {
+                todo!()
+            }
+        }
         panic => todo!("{panic:?}"),
     };
 
@@ -318,10 +339,10 @@ fn analyze() {
              let y = {
                 let x = 13;
                 x * 10
-             };
+             }.i8;
              let z = x;
              // let y = z;
-             let _ = x + y;
+             let _ = x + y.i64;
         }
         "#
         in src
@@ -377,6 +398,6 @@ fn analyze() {
         });
     }
 
-    fmt::mir_body(&body);
+    mir::write_mir_body_pretty(&tcx, &body, &mut io::stdout()).unwrap();
     mir::codegen::compile_fn(&tcx, &body);
 }
