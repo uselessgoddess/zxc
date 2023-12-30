@@ -94,13 +94,13 @@ impl<'tcx, T> Borrow<[T]> for Interned<'tcx, List<T>> {
 
 impl<'tcx> Borrow<TyKind<'tcx>> for Interned<'tcx, TyKind<'tcx>> {
     fn borrow(&self) -> &TyKind<'tcx> {
-        &self.0
+        self.0
     }
 }
 
 impl<'tcx> Borrow<LayoutKind> for Interned<'tcx, LayoutKind> {
     fn borrow(&self) -> &LayoutKind {
-        &self.0
+        self.0
     }
 }
 

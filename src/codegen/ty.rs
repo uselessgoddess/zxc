@@ -42,7 +42,7 @@ impl<'cx> Ty<'cx> {
             },
             Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
             Type::Tuple(Tuple { items, .. }) => tcx.intern.intern_ty(
-                &tcx.arena,
+                tcx.arena,
                 ty::Tuple(tcx.mk_type_list(
                     // TODO: add size hint optimizations because tuple's size usually less than 8
                     &items.iter().map(|ty| Self::analyze(tcx, ty)).collect::<SmallVec<_, 8>>(),

@@ -43,6 +43,11 @@ mod util {
             use chumsky::Parser;
             ParseBuffer::new(crate::lexer::lexer().parse($src).into_result().unwrap()) 
         }};
+        ($src:literal in $var:ident) => {{ 
+            $var = $src;
+            use chumsky::Parser;
+            ParseBuffer::new(crate::lexer::lexer().parse($src).into_result().unwrap()) 
+        }};
     }
 
     pub(crate) use lex_it;

@@ -52,14 +52,14 @@ impl<T, P> Punctuated<T, P> {
     }
 
     pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
-        self.inner.iter_mut().map(|(item, _)| item).chain(self.last.as_mut().map(Box::deref_mut))
+        self.inner.iter_mut().map(|(item, _)| item).chain(self.last.as_deref_mut())
     }
 
     pub fn pairs(&self) -> impl Iterator<Item = Pair<&T, &P>> {
         self.inner
             .iter()
             .map(|(t, p)| Pair::Punctuated(t, p))
-            .chain(self.last.as_ref().map(Box::deref).map(Pair::End))
+            .chain(self.last.as_deref().map(Pair::End))
     }
 
     pub fn push_value(&mut self, value: T) {
