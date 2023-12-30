@@ -1,6 +1,6 @@
 use {
     crate::{
-        codegen::{abi::Size, list::List, Ty},
+        codegen::{abi::Size, list::List, mir::Ty},
         parse::{BinOp, UnOp},
     },
     index_vec::IndexVec,

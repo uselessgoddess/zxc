@@ -1,5 +1,5 @@
 use {
-    crate::codegen::{abi::LayoutKind, list::List, TyKind},
+    crate::codegen::{abi::LayoutKind, list::List, mir::TyKind},
     parking_lot::Mutex,
     std::{
         borrow::Borrow,

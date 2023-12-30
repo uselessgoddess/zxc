@@ -1,14 +1,12 @@
 use {
     super::Ty,
-    crate::{codegen::util, lexer::Ident},
+    crate::{
+        codegen::{mir, util},
+        lexer::Ident,
+    },
     ariadne::{Color, Label},
     std::ops::Range,
 };
-
-// FIXME: move `Ty` into MIR
-mod mir {
-    pub use crate::codegen::Ty;
-}
 
 pub struct ReportSettings {
     pub err_kw: Color,

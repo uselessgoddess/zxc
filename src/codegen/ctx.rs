@@ -1,7 +1,9 @@
 use crate::codegen::{
     abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, Scalar, Size, TyAbi},
+    hir,
     list::List,
-    DroplessArena, IntTy, Sharded, Ty, TyKind, TypedArena,
+    mir::{IntTy, Ty, TyKind},
+    DroplessArena, Interned, Sharded, TypedArena,
 };
 
 mod private {
@@ -140,7 +142,5 @@ impl<'tcx> TyCtx<'tcx> {
         panic!("{}", msg.into())
     }
 }
-
-use crate::codegen::{hir, Interned};
 
 pub type Tx<'tcx> = &'tcx TyCtx<'tcx>;

@@ -1,11 +1,11 @@
 use {
-    crate::{codegen, Span},
+    crate::{codegen::mir, Span},
     std::{fmt, fmt::Formatter},
 };
 
 #[derive(Debug)]
 pub struct Ty<'hir> {
-    pub kind: codegen::Ty<'hir>,
+    pub kind: mir::Ty<'hir>,
     pub span: Span,
 }
 
@@ -18,7 +18,7 @@ impl Clone for Ty<'_> {
 impl Copy for Ty<'_> {}
 
 impl<'hir> Ty<'hir> {
-    pub fn new(span: Span, kind: codegen::Ty<'hir>) -> Self {
+    pub fn new(span: Span, kind: mir::Ty<'hir>) -> Self {
         Self { kind, span }
     }
 

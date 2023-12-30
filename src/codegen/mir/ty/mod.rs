@@ -1,9 +1,10 @@
+pub mod cast;
+
 use {
     crate::{
         codegen::{list::List, Interned},
         parse,
     },
-    cranelift::prelude::types,
     smallvec::SmallVec,
     std::{fmt, fmt::Formatter},
 };
@@ -53,7 +54,7 @@ impl<'cx> Ty<'cx> {
             Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
             Type::Tuple(Tuple { items, .. }) => tcx.intern.intern_ty(
                 tcx.arena,
-                ty::Tuple(tcx.mk_type_list(
+                self::Tuple(tcx.mk_type_list(
                     // TODO: add size hint optimizations because tuple's size usually less than 8
                     &items.iter().map(|ty| Self::analyze(tcx, ty)).collect::<SmallVec<_, 8>>(),
                 )),
@@ -83,19 +84,6 @@ impl fmt::Display for Ty<'_> {
     }
 }
 
-use crate::codegen::{ty, util, Tx};
+use crate::codegen::{util, Tx};
 
 pub use TyKind::*;
-
-pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<types::Type> {
-    Some(match ty.kind() {
-        Int(size) => match size {
-            IntTy::I8 => types::I8,
-            IntTy::I16 => types::I16,
-            IntTy::I32 => types::I32,
-            IntTy::I64 => types::I64,
-            _ => todo!(),
-        },
-        _ => return None,
-    })
-}

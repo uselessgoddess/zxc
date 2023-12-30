@@ -5,7 +5,6 @@ mod intern;
 mod list;
 mod mir;
 mod numeric;
-mod ty;
 pub mod util;
 
 use cranelift::prelude::types;
@@ -13,11 +12,14 @@ pub use {
     arenas::{DroplessArena, TypedArena},
     ctx::{Arena, Session, Tx, TyCtx},
     intern::{Interned, Sharded},
-    ty::{IntTy, Ty, TyKind},
 };
 
 mod abi {
-    use {crate::codegen::Interned, index_vec::IndexVec, std::fmt};
+    use {
+        crate::codegen::{mir, Interned},
+        index_vec::IndexVec,
+        std::fmt,
+    };
 
     index_vec::define_index_type! {
         pub struct FieldIdx = u32;
@@ -180,7 +182,7 @@ mod abi {
 
     #[derive(Debug, Copy, Clone, Eq, PartialEq)]
     pub struct TyAbi<'tcx> {
-        pub ty: super::Ty<'tcx>,
+        pub ty: mir::Ty<'tcx>,
         pub layout: Layout<'tcx>,
     }
 
@@ -192,7 +194,10 @@ mod abi {
 }
 
 use crate::{
-    codegen::abi::{Integer, Scalar},
+    codegen::{
+        abi::{Integer, Scalar},
+        mir::Ty,
+    },
     parse,
 };
 

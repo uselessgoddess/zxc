@@ -7,10 +7,11 @@ use {
             abi::{Abi, Align, PassMode, Size, TyAbi},
             list::List,
             mir::{
-                codegen::cast::clif_intcast, BasicBlock, BasicBlockData, Body, ConstValue, Local,
-                LocalDecl, Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
+                codegen::cast::clif_intcast, ty, BasicBlock, BasicBlockData, Body, ConstValue,
+                IntTy, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
+                Ty,
             },
-            scalar_to_clif, ty, Arena, Session, Tx, Ty, TyCtx, TyKind,
+            scalar_to_clif, Arena, Session, Tx, TyCtx,
         },
         parse::{BinOp, UnOp},
     },
@@ -64,7 +65,7 @@ impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
     }
 
     fn clif_type(&self, ty: Ty<'tcx>) -> Option<types::Type> {
-        ty::clif_type_from_ty(self.tcx, ty)
+        clif_type_from_ty(self.tcx, ty)
     }
 
     pub(crate) fn create_stack_slot(&mut self, size: u32, align: u32) -> Pointer {
@@ -85,6 +86,19 @@ impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
             Pointer::new(self.bcx.ins().iadd(base_ptr, realign_offset))
         }
     }
+}
+
+pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<Type> {
+    Some(match ty.kind() {
+        ty::Int(size) => match size {
+            IntTy::I8 => types::I8,
+            IntTy::I16 => types::I16,
+            IntTy::I32 => types::I32,
+            IntTy::I64 => types::I64,
+            _ => todo!(),
+        },
+        _ => return None,
+    })
 }
 
 fn make_local_place<'tcx>(
@@ -454,7 +468,7 @@ impl<'tcx> CValue<'tcx> {
         // }
 
         let val = match abi.ty.kind() {
-            TyKind::Int(_) => {
+            ty::Int(_) => {
                 let raw_val =
                     const_val.size().truncate(const_val.to_bits(abi.layout.size).unwrap());
                 fx.bcx.ins().iconst(clif_ty, raw_val as i64)

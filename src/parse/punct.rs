@@ -1,10 +1,7 @@
 use {
     super::Result,
     crate::parse::{Parse, ParseBuffer},
-    std::{
-        fmt,
-        ops::{Deref, DerefMut},
-    },
+    std::{fmt, ops::Deref},
 };
 
 pub enum Pair<T, P> {

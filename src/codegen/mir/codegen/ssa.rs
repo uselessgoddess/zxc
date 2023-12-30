@@ -1,8 +1,5 @@
 use {
-    crate::codegen::{
-        mir::{codegen::FunctionCx, Local, Statement::*},
-        Ty,
-    },
+    crate::codegen::mir::{codegen::FunctionCx, Local, Statement::*, Ty},
     index_vec::IndexVec,
 };
 
