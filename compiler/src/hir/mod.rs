@@ -369,7 +369,7 @@ fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) ->
         let local = acx.body.local_decls.push(LocalDecl { ty: ty.kind });
         acx.scope().declare_var(pat, (ty, Place::pure(local)));
     }
-    acx.end_of_block(Terminator::Goto { target: acx.next_block() });
+    // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
 
     Ok(())
 }

@@ -453,7 +453,8 @@ pub(crate) fn compile_fn<'tcx>(
             assert_eq!(fx.local_map.push(place), local);
         }
 
-        fx.bcx.ins().jump(*fx.block_map.get(BasicBlock::START_BLOCK).unwrap(), &[]);
+        let start = fx.block(BasicBlock::START_BLOCK);
+        fx.bcx.ins().jump(start, &[]);
     }
 
     codegen_block(&mut fx, fn_abi);

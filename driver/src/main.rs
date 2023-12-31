@@ -26,7 +26,10 @@ use {
 fn main() -> Result<(), Box<dyn Error>> {
     let src = r#"
 fn main(argc: i32, argv: i32) -> i8 {
-    argc.i8 - 1.i8
+    // let x = argc;
+    // let y = argc * 2.i32;
+    // let z = (x + y) * x;
+    argc.i8
 }
         "#;
     println!("{}{}", Paint::cyan("Source code -->:"), src);
