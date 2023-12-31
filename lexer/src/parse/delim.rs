@@ -120,7 +120,7 @@ macro_rules! define_delimiters {
     )*};
 }
 
-impl Token for Paren {
+impl lexer::Token for Paren {
     fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Paren1, Paren2))
     }
@@ -130,7 +130,7 @@ impl Token for Paren {
     }
 }
 
-impl Token for Brace {
+impl lexer::Token for Brace {
     fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Brace1, Brace2))
     }
@@ -140,7 +140,7 @@ impl Token for Brace {
     }
 }
 
-impl Token for Bracket {
+impl lexer::Token for Bracket {
     fn peek(input: &ParseBuffer) -> bool {
         lookahead::is_delimiter(input, (Bracket1, Bracket2))
     }
@@ -151,7 +151,10 @@ impl Token for Bracket {
 }
 
 use {
-    crate::lexer::ast::{Brace1, Brace2, Bracket1, Bracket2, Paren1, Paren2},
+    crate::{
+        lexer,
+        lexer::ast::{Brace1, Brace2, Bracket1, Bracket2, Paren1, Paren2},
+    },
     std::{fmt, fmt::Formatter},
 };
 
@@ -161,7 +164,7 @@ define_delimiters! {
     Paren1..Paren2       pub struct Paren
 }
 
-use crate::{lexer::Token, parse::ParseBuffer, Span};
+use crate::{parse::ParseBuffer, Span};
 
 #[cfg(test)]
 use {

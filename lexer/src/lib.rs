@@ -3,7 +3,6 @@
     slice_ptr_len,
     slice_ptr_get,
 )]
-#![allow(internal_features)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
 #[macro_use]

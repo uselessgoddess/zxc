@@ -10,7 +10,8 @@
     core_intrinsics,
     mem_copy_fn
 )]
-#[allow(internal_features)]
+#![allow(internal_features)]
+
 pub mod abi;
 pub mod hir;
 pub mod mir;
