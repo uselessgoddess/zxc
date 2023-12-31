@@ -1,0 +1,20 @@
+[package]
+name = "driver"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+cranelift = { version = "0.102.1" }
+cranelift-native = { version = "0.102.1" }
+cranelift-object = { version = "0.102.1" }
+cranelift-module = { version = "0.102.1" }
+target-lexicon = { version = "0.12.12" }
+
+ariadne = { version = "0.3.0" }
+chumsky = { version = "1.0.0-alpha.6" }
+index_vec = { version = "0.1.3" }
+
+compiler = { path = "../compiler" }
+lexer = { path = "../lexer" }
+
+yansi = "1.0.0-rc.1"

@@ -1,22 +1,7 @@
-[package]
-name = "zxc"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-inkwell = { version = "0.2.0", features = ["llvm16-0"] }
-chumsky = { version = "1.0.0-alpha.6" }
-ariadne = { version = "0.3.0" }
-
-
-index_vec = "0.1.3"
-typed-arena = "2.0.2"
-parking_lot = "0.12.1"
-target-lexicon = "0.12.12"
-smallvec = { version = "2.0.0-alpha.1", features = ["specialization"] }
-internment = { version = "0.7.4", features = ["arena"] }
-
-
-cranelift = { version = "0.102.1" }
-cranelift-object = { version = "0.102.1" }
-cranelift-module = { version = "0.102.1" }
+[workspace]
+resolver = "2"
+members = [
+    "lexer",
+    "compiler",
+    "driver",
+]
