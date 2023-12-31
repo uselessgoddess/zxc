@@ -19,6 +19,7 @@ pub type Result<'tcx, T> = std::result::Result<T, Error<'tcx>>;
 pub enum Error<'tcx> {
     NotFoundLocal(Ident<'tcx>),
     TypeMismatch { expected: Ty<'tcx>, found: Ty<'tcx> },
+    TypeMismatchOnePlace { expected: Ty<'tcx>, found: mir::Ty<'tcx> },
     ConcreateType { expected: Vec<Ty<'tcx>>, found: Ty<'tcx> },
     NonPrimitiveCast { from: Ty<'tcx>, cast: mir::Ty<'tcx> },
 }
@@ -44,6 +45,16 @@ impl<'a> Error<'a> {
                         .with_message(format!("expected {} ", fmt(expected.kind))),
                     Label::new((src, found.span.into_range()))
                         .with_message(format!("found {} ", fmt(found.kind))),
+                ],
+            ),
+            Error::TypeMismatchOnePlace { expected, found } => (
+                "E0228", // sample code
+                "mismatch types".into(),
+                vec![
+                    Label::new((src, expected.span.into_range()))
+                        .with_message(format!("expected {} ", fmt(expected.kind))),
+                    Label::new((src, expected.span.into_range()))
+                        .with_message(format!("found {} ", fmt(*found))),
                 ],
             ),
             Error::ConcreateType { expected, found } => (

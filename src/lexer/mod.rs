@@ -87,6 +87,7 @@ pub mod ast {
 
     define_tokens! {
         Token(&str) {
+            "extern" => Extern
             "let" => Let
             "fn" => Fn
         }
@@ -104,10 +105,13 @@ pub mod ast {
             "!" => Not
             "|" => Or
             "||" => OrOr
+
+            "->" => RArrow
         }
 
         Delim(char) {
             '.' => Dot
+            ':' => Colon
             ';' => Semi
             ',' => Comma
             '{' => Brace1
@@ -227,6 +231,7 @@ impl_parse! {
 define_token! {
     Lex::Ident(_) in Ident<'a> => "identifier"
     Lex::Lit(_) in Lit<'a> => "literal"
+    Lex::Lit(Lit::Str(_)) in LitStr<'a> => "string literal"
 }
 
 impl<'lex> Parse<'lex> for LitStr<'lex> {

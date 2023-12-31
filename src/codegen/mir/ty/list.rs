@@ -52,7 +52,10 @@ impl<T> List<T> {
 
 impl<T: Copy> List<T> {
     #[inline]
-    pub(super) fn from_arena<'tcx>(arena: &'tcx Arena<'tcx>, slice: &[T]) -> &'tcx List<T> {
+    pub(in crate::codegen) fn from_arena<'tcx>(
+        arena: &'tcx Arena<'tcx>,
+        slice: &[T],
+    ) -> &'tcx List<T> {
         assert!(!mem::needs_drop::<T>());
         assert!(mem::size_of::<T>() != 0);
         assert!(!slice.is_empty());

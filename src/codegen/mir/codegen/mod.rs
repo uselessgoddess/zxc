@@ -4,12 +4,13 @@ mod ssa;
 use {
     crate::{
         codegen::{
-            abi::{Abi, Align, PassMode, Size, TyAbi},
-            list::List,
+            abi::{self, Abi, Align, ArgAbi, PassMode, Size, TyAbi},
             mir::{
-                codegen::cast::clif_intcast, ty, BasicBlock, BasicBlockData, Body, ConstValue,
-                IntTy, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
-                Ty,
+                self,
+                codegen::cast::clif_intcast,
+                ty::{self, List},
+                BasicBlock, BasicBlockData, Body, ConstValue, IntTy, Local, LocalDecl, Operand,
+                Place, Rvalue, ScalarRepr, Statement, Terminator, Ty,
             },
             scalar_to_clif, Arena, Session, Tx, TyCtx,
         },
@@ -20,14 +21,16 @@ use {
             self,
             ir::{immediates::Offset32, Function, StackSlot, UserFuncName},
             isa::lookup_by_name,
-            settings,
+            settings, verify_function,
         },
         prelude::{
-            isa, types, Block, FunctionBuilder, FunctionBuilderContext, InstBuilder, MemFlags,
-            Signature, StackSlotData, StackSlotKind, TrapCode, Type, Value, Variable,
+            isa, types, AbiParam, Block, Configurable, FunctionBuilder, FunctionBuilderContext,
+            InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Type, Value,
+            Variable,
         },
     },
     index_vec::IndexVec,
+    smallvec::SmallVec,
     std::marker::PhantomData,
     target_lexicon::PointerWidth,
 };
@@ -267,7 +270,7 @@ fn codegen_stmt<'tcx>(
     }
 }
 
-fn codegen_block(fx: &mut FunctionCx<'_, '_, '_>, start: Block) {
+fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: abi::FnAbi<'tcx>) {
     for (bb, bb_data @ BasicBlockData { statements, .. }) in fx.mir.basic_blocks.iter_enumerated() {
         let block = fx.block(bb);
         fx.bcx.switch_to_block(block);
@@ -281,7 +284,7 @@ fn codegen_block(fx: &mut FunctionCx<'_, '_, '_>, start: Block) {
                 let block = fx.block(target);
                 fx.bcx.ins().jump(block, &[]);
             }
-            Terminator::Return => codegen_fn_return(fx),
+            Terminator::Return => codegen_fn_return(fx, abi.ret),
             Terminator::Unreachable => {
                 fx.bcx.ins().trap(TrapCode::UnreachableCodeReached);
             }
@@ -289,8 +292,8 @@ fn codegen_block(fx: &mut FunctionCx<'_, '_, '_>, start: Block) {
     }
 }
 
-fn codegen_fn_return(fx: &mut FunctionCx<'_, '_, '_>) {
-    match PassMode::Ignore {
+fn codegen_fn_return<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, ret: ArgAbi<'tcx>) {
+    match ret.mode {
         PassMode::Ignore => {
             fx.bcx.ins().return_(&[]);
         }
@@ -302,12 +305,48 @@ fn codegen_fn_return(fx: &mut FunctionCx<'_, '_, '_>) {
     }
 }
 
-pub(crate) fn compile_fn<'tcx>(tcx: Tx<'tcx>, mir: &'tcx Body<'tcx>) {
+pub(super) fn value_for_param<'tcx>(
+    fx: &mut FunctionCx<'_, '_, 'tcx>,
+    // local: Option<Local>,
+    // local_field: Option<usize>,
+    arg_abi: ArgAbi<'tcx>,
+    block_params_iter: &mut impl Iterator<Item = Value>,
+) -> Option<CValue<'tcx>> {
+    let block_param = param_from_abi(fx.tcx, arg_abi).map(|abi_param| {
+        let block_param = block_params_iter.next().unwrap();
+        assert_eq!(fx.bcx.func.dfg.value_type(block_param), abi_param.value_type);
+        block_param
+    });
+
+    match arg_abi.mode {
+        PassMode::Ignore => None,
+        PassMode::Direct => Some(CValue::by_val(block_param.unwrap(), arg_abi.ty)),
+    }
+}
+
+fn param_from_abi<'tcx>(tcx: Tx<'tcx>, abi: ArgAbi<'tcx>) -> Option<AbiParam> {
+    match abi.mode {
+        PassMode::Ignore => None,
+        PassMode::Direct => Some(match abi.ty.layout.abi {
+            Abi::Scalar(scalar) => AbiParam::new(scalar_to_clif(tcx, scalar)),
+            Abi::Aggregate => todo!(),
+        }),
+    }
+}
+
+fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, abi: &abi::FnAbi<'tcx>) -> Signature {
+    Signature {
+        params: abi.args.iter().flat_map(|&arg| param_from_abi(tcx, arg)).collect(),
+        returns: Vec::from_iter(param_from_abi(tcx, abi.ret)),
+        call_conv: isa::CallConv::SystemV,
+    }
+}
+
+pub(crate) fn compile_fn<'tcx>(tcx: Tx<'tcx>, sig: mir::FnSig<'tcx>, mir: &'tcx Body<'tcx>) {
+    let fn_abi = tcx.fn_abi_of_sig(sig);
     let mut fn_ctx = FunctionBuilderContext::new();
-    let mut fn_ = Function::with_name_signature(
-        UserFuncName::user(0, 0),
-        Signature::new(isa::CallConv::Fast),
-    );
+    let mut fn_ =
+        Function::with_name_signature(UserFuncName::user(0, 0), sig_from_abi(tcx, &fn_abi));
 
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
 
@@ -332,10 +371,28 @@ pub(crate) fn compile_fn<'tcx>(tcx: Tx<'tcx>, mir: &'tcx Body<'tcx>) {
     };
 
     {
+        fx.bcx.append_block_params_for_function_params(start_block);
+        fx.bcx.switch_to_block(start_block);
+        fx.bcx.ins().nop();
+
         let fx = &mut fx;
         let ssa_analyzed = ssa::analyze(fx);
 
-        let ret = fx.tcx.types.unit;
+        let mut block_params_iter = fx.bcx.func.dfg.block_params(start_block).to_vec().into_iter();
+        let func_params = fx
+            .mir
+            .args_iter()
+            .zip(fn_abi.args.iter())
+            .map(|(local, &abi)| {
+                (
+                    local,
+                    value_for_param(fx, abi, &mut block_params_iter),
+                    fx.mir.local_decls[local].ty,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let ret = sig.output();
         let ret = make_local_place(
             fx,
             Local::RETURN_PLACE,
@@ -343,6 +400,25 @@ pub(crate) fn compile_fn<'tcx>(tcx: Tx<'tcx>, mir: &'tcx Body<'tcx>) {
             ssa_analyzed[Local::RETURN_PLACE].is_ssa(fx, ret),
         );
         assert_eq!(fx.local_map.push(ret), Local::RETURN_PLACE);
+
+        for (local, arg, ty) in func_params {
+            if let Some(arg) = arg
+                && let Some(addr) = arg.try_to_ptr()
+            {
+                let place = CPlace::for_ptr(addr, arg.layout());
+                assert_eq!(fx.local_map.push(place), local);
+
+                continue;
+            }
+
+            let is_ssa = ssa_analyzed[local].is_ssa(fx, ty);
+            let place = make_local_place(fx, local, fx.tcx.layout_of(ty), is_ssa);
+            assert_eq!(fx.local_map.push(place), local);
+
+            if let Some(param) = arg {
+                place.write_cvalue(fx, param);
+            }
+        }
 
         for local in fx.mir.vars_and_temps_iter() {
             let ty = fx.mir.local_decls[local].ty;
@@ -354,61 +430,28 @@ pub(crate) fn compile_fn<'tcx>(tcx: Tx<'tcx>, mir: &'tcx Body<'tcx>) {
             );
             assert_eq!(fx.local_map.push(place), local);
         }
+
+        fx.bcx.ins().jump(*fx.block_map.get(BasicBlock::START_BLOCK).unwrap(), &[]);
     }
 
-    codegen_block(&mut fx, start_block);
+    codegen_block(&mut fx, fn_abi);
 
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
 
     {
         let mut builder = settings::builder();
-        // builder.set("opt_level", "speed_and_size").unwrap();
+        builder.set("opt_level", "speed_and_size").unwrap();
         let flags = settings::Flags::new(builder);
 
         let isa = lookup_by_name("x86_64").unwrap();
         let isa = isa.finish(flags).unwrap();
         let mut ctx = codegen::Context::for_function(fn_);
-        // ctx.optimize(&*isa).unwrap();
+        ctx.optimize(&*isa).unwrap();
 
         println!("{}", ctx.func);
+        verify_function(&ctx.func, &*isa).unwrap();
     }
-}
-
-#[test]
-fn codegen() {
-    let arena = Arena::default();
-    let tcx = &TyCtx::enter(&arena, Session {});
-
-    let mut basic_blocks = IndexVec::new();
-
-    basic_blocks.push(BasicBlockData {
-        statements: vec![
-            Statement::Assign(
-                Place { local: Local::new(1), projection: List::empty() },
-                Rvalue::Use(Operand::Const(
-                    ConstValue::Scalar(ScalarRepr::from(12u64)),
-                    tcx.types.i64,
-                )),
-            ),
-            Statement::Assign(
-                Place { local: Local::new(1), projection: List::empty() },
-                Rvalue::Use(Operand::Copy(Place {
-                    local: Local::new(1),
-                    projection: List::empty(),
-                })),
-            ),
-        ],
-        terminator: Some(Terminator::Return),
-    });
-
-    let mut local_decls = IndexVec::new();
-
-    local_decls.push(LocalDecl { ty: tcx.types.unit }); // return type
-    local_decls.push(LocalDecl { ty: tcx.types.i64 });
-
-    let body = Body { argc: 0, basic_blocks, local_decls };
-    compile_fn(tcx, &body);
 }
 
 #[derive(Debug, Copy, Clone)] // FIXME: want be `Clone`
@@ -434,6 +477,13 @@ impl<'tcx> CValue<'tcx> {
 
     pub fn by_ref(ptr: Pointer, layout: TyAbi<'tcx>) -> CValue<'tcx> {
         CValue { inner: CValueInner::ByRef(ptr), layout }
+    }
+
+    pub(crate) fn try_to_ptr(self) -> Option<(Pointer)> {
+        match self.inner {
+            CValueInner::ByRef(ptr) => Some(ptr),
+            CValueInner::ByVal(_) => None,
+        }
     }
 
     pub fn load_scalar(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> Value {
@@ -543,6 +593,10 @@ impl<'tcx> CPlace<'tcx> {
         self.layout
     }
 
+    pub(crate) fn for_ptr(ptr: Pointer, layout: TyAbi<'tcx>) -> CPlace<'tcx> {
+        CPlace { inner: CPlaceInner::Addr(ptr), layout }
+    }
+
     fn new_stack_slot(
         fx: &mut FunctionCx<'_, '_, 'tcx>,
         abi @ TyAbi { layout, .. }: TyAbi<'tcx>,
@@ -576,17 +630,6 @@ impl<'tcx> CPlace<'tcx> {
         let var = Variable::from_u32(fx.next_ssa());
         fx.bcx.declare_var(var, fx.clif_type(layout.ty).expect("LMAO"));
         CPlace { inner: CPlaceInner::Var(local, var), layout }
-    }
-
-    pub(crate) fn into_value(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> CValue<'tcx> {
-        let layout = self.layout();
-        match self.inner {
-            CPlaceInner::Var(_local, var) => {
-                let val = fx.bcx.use_var(var);
-                CValue::by_val(val, layout)
-            }
-            CPlaceInner::Addr(ptr) => CValue::by_ref(ptr, layout),
-        }
     }
 
     fn to_ptr(self) -> Pointer {

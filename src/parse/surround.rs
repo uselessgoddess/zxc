@@ -1,6 +1,6 @@
 use crate::{
     parenthesized,
-    parse::{self, expr, ty, DelimSpan, ParseBuffer, Stmt},
+    parse::{self, expr, ty, Abi, DelimSpan, ParseBuffer, ReturnType, Signature, Stmt},
     token, Span,
 };
 
@@ -25,7 +25,7 @@ simple_span! {
     crate::lexer::Ident<'_>
 }
 
-fn lookahead_span(lo: Span, hi: Span) -> Span {
+pub(crate) fn lookahead_span(lo: Span, hi: Span) -> Span {
     Span::new(lo.start, hi.end)
 }
 
@@ -102,6 +102,24 @@ impl Spanned for ty::Tuple<'_> {
 impl Spanned for ty::Paren<'_> {
     fn span(&self) -> Span {
         self.paren.span()
+    }
+}
+
+impl Spanned for Abi<'_> {
+    fn span(&self) -> Span {
+        let base = self.extern_token.span;
+        lookahead_span(base, self.name.as_ref().map(Spanned::span).unwrap_or(base))
+    }
+}
+
+impl Spanned for Signature<'_> {
+    fn span(&self) -> Span {
+        let lo = self.abi.as_ref().map(Spanned::span).unwrap_or(self.fn_token.span);
+        let hi = match &self.output {
+            ReturnType::Default => self.paren.span(),
+            ReturnType::Type(_, ty) => ty.span(),
+        };
+        lookahead_span(lo, hi)
     }
 }
 

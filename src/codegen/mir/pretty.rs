@@ -88,6 +88,10 @@ pub fn write_mir_body_pretty<'tcx>(
     body: &mir::Body<'tcx>,
     w: &mut dyn io::Write,
 ) -> io::Result<()> {
+    for local in body.args_iter() {
+        writeln!(w, "let _{}: {}", local.raw(), body.local_decls[local].ty)?;
+    }
+
     for (bb, block) in body.basic_blocks.iter_enumerated() {
         writeln!(w, "bb{}: {{", bb.raw())?;
 

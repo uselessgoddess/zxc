@@ -9,5 +9,5 @@ pub use {
         BasicBlock, BasicBlockData, Body, CastKind, ConstValue, Local, LocalDecl, Operand, Place,
         PlaceElem, Rvalue, ScalarRepr, Statement, Terminator,
     },
-    ty::{cast, IntTy, Ty, TyKind, UintTy},
+    ty::{cast, FnSig, IntTy, Ty, TyKind, UintTy},
 };

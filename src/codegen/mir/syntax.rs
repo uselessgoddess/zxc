@@ -1,6 +1,9 @@
 use {
     crate::{
-        codegen::{abi::Size, list::List, mir::Ty},
+        codegen::{
+            abi::Size,
+            mir::{ty::List, Ty},
+        },
         parse::{BinOp, UnOp},
     },
     index_vec::IndexVec,
@@ -13,6 +16,10 @@ index_vec::define_index_type! {
 
 index_vec::define_index_type! {
     pub struct Local = u32;
+}
+
+impl BasicBlock {
+    pub const START_BLOCK: Self = Self::from_usize_unchecked(0);
 }
 
 impl Local {
@@ -146,7 +153,7 @@ pub struct LocalDecl<'tcx> {
     pub ty: Ty<'tcx>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Body<'tcx> {
     pub argc: usize,
     pub local_decls: IndexVec<Local, LocalDecl<'tcx>>,
@@ -154,6 +161,11 @@ pub struct Body<'tcx> {
 }
 
 impl<'tcx> Body<'tcx> {
+    #[inline]
+    pub fn args_iter(&self) -> impl Iterator<Item = Local> + ExactSizeIterator {
+        (1..self.argc + 1).map(Local::new)
+    }
+
     #[inline]
     pub fn vars_and_temps_iter(
         &self,

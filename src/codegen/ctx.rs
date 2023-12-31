@@ -1,8 +1,8 @@
 use crate::codegen::{
-    abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, Scalar, Size, TyAbi},
+    abi,
+    abi::{Abi, Align, FieldsShape, Integer, Layout, LayoutKind, PassMode, Scalar, Size, TyAbi},
     hir,
-    list::List,
-    mir::{IntTy, Ty, TyKind},
+    mir::{self, ty::List, IntTy, Ty, TyKind},
     DroplessArena, Interned, Sharded, TypedArena,
 };
 
@@ -137,9 +137,35 @@ impl<'tcx> TyCtx<'tcx> {
         }
     }
 
+    pub fn empty_hir_scope(&self) -> &mut hir::Scope<'tcx> {
+        self.arena.scope.alloc(hir::Scope::new())
+    }
+
     pub fn fatal(&self, msg: impl Into<String>) -> ! {
         // TODO: Add diagnostic handler
         panic!("{}", msg.into())
+    }
+
+    pub fn fn_abi_of_sig(&self, sig: mir::FnSig<'tcx>) -> abi::FnAbi<'tcx> {
+        let probe_abi = |tcx, ty| abi::ArgAbi {
+            ty: self.layout_of(ty),
+            mode: match ty.kind() {
+                TyKind::Int(_) => PassMode::Direct,
+                TyKind::Tuple(types) => {
+                    if types.is_empty() {
+                        PassMode::Ignore
+                    } else {
+                        PassMode::Direct
+                    }
+                }
+            },
+        };
+
+        // FIXME: now `sig.` doesn't affect on abi inferring
+        abi::FnAbi {
+            args: sig.inputs().iter().map(|&ty| probe_abi(self, ty)).collect(),
+            ret: probe_abi(self, sig.output()),
+        }
     }
 }
 

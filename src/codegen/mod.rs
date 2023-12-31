@@ -2,7 +2,6 @@ mod arenas;
 mod ctx;
 mod hir;
 mod intern;
-mod list;
 mod mir;
 mod numeric;
 pub mod util;
@@ -190,6 +189,12 @@ mod abi {
     pub struct ArgAbi<'tcx> {
         pub ty: TyAbi<'tcx>,
         pub mode: PassMode,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct FnAbi<'tcx> {
+        pub args: Box<[ArgAbi<'tcx>]>,
+        pub ret: ArgAbi<'tcx>,
     }
 }
 

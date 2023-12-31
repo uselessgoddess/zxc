@@ -16,13 +16,13 @@ pub use {
 use crate::{
     codegen::{
         mir::{
-            self, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr,
-            Statement, Terminator,
+            self, ty::Abi, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
+            ScalarRepr, Statement, Terminator,
         },
         Arena, Session, Tx, TyCtx,
     },
     lexer::{Ident, Lit, LitInt},
-    parse::{self, BinOp, Spanned, UnOp},
+    parse::{self, BinOp, Block, ItemFn, ReturnType, Spanned, UnOp},
     Span,
 };
 
@@ -107,6 +107,42 @@ impl<'tcx> Stmt<'tcx> {
             }
         };
         Self { kind, span }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum FnRetTy<'hir> {
+    Default(Span),
+    Return(Ty<'hir>),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FnDecl<'hir> {
+    pub inputs: &'hir [(&'hir str, Ty<'hir>)],
+    pub output: FnRetTy<'hir>,
+    pub span: Span,
+}
+
+fn analyze_hir_ty<'tcx>(tcx: Tx<'tcx>, ty: &parse::Type<'tcx>) -> Ty<'tcx> {
+    Ty::new(ty.span(), mir::Ty::analyze(tcx, ty))
+}
+
+impl<'tcx> FnDecl<'tcx> {
+    pub fn analyze(tcx: Tx<'tcx>, sig: &parse::Signature<'tcx>) -> Self {
+        Self {
+            inputs: tcx.arena.dropless.alloc_from_iter(
+                sig.inputs.iter().map(|arg| (arg.pat.ident(), analyze_hir_ty(tcx, &arg.ty))),
+            ),
+            output: match &sig.output {
+                ReturnType::Default => FnRetTy::Default({
+                    // Let the place of return type be implied just next of parentheses
+                    let Span { start, end, .. } = sig.paren.span.rt;
+                    Span::new(start + 1, end + 1)
+                }),
+                ReturnType::Type(_, ty) => FnRetTy::Return(analyze_hir_ty(tcx, ty)),
+            },
+            span: sig.span(),
+        }
     }
 }
 
@@ -307,7 +343,6 @@ fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, ty: Ty<'hir>, place: Place<'
 fn analyze_body<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmts: &[Stmt<'hir>],
-    mut start: mir::BasicBlock,
     ret: Ty<'hir>,
 ) -> Result<'hir, ()> {
     if let Some((last, stmts)) = stmts.split_last() {
@@ -320,11 +355,49 @@ fn analyze_body<'hir>(
         } else {
             if let Some((ty, place)) = analyze_stmt(acx, last, None)? {
                 make_return(acx, assert_same_types(ret, ty)?, place);
+            } else {
+                assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
             }
             acx.end_of_block(Terminator::Return);
         });
     }
     Ok(())
+}
+
+fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) -> Result<'hir, ()> {
+    acx.body.argc = sig.inputs.len();
+    for &(pat, ty) in sig.inputs {
+        let local = acx.body.local_decls.push(LocalDecl { ty: ty.kind });
+        acx.scope().declare_var(pat, (ty, Place::pure(local)));
+    }
+    acx.end_of_block(Terminator::Goto { target: acx.next_block() });
+
+    Ok(())
+}
+
+fn analyze_fn_definition<'hir>(
+    tcx: Tx<'hir>,
+    sig: FnDecl<'hir>,
+    stmts: &[Stmt<'hir>],
+) -> Result<'hir, mir::Body<'hir>> {
+    let ret = match sig.output {
+        FnRetTy::Default(span) => Ty::new(span, tcx.types.unit),
+        FnRetTy::Return(ty) => ty,
+    };
+    let mut body =
+        mir::Body { local_decls: index_vec![LocalDecl { ty: ret.kind }], ..Default::default() };
+    let mut acx = AnalyzeCx {
+        tcx: &tcx,
+        block: mir::BasicBlockData { statements: vec![], terminator: None },
+        body: &mut body,
+        scope: Some(tcx.empty_hir_scope()),
+    };
+
+    analyze_fn_prelude(&mut acx, sig)?;
+    analyze_body(&mut acx, stmts, ret)?;
+    acx.end_of_block(Terminator::Return);
+
+    Ok(body)
 }
 
 #[test]
@@ -334,7 +407,7 @@ fn analyze() {
     let src;
     let mut input = lex_it!(
         r#"
-        {
+        fn main(x: i32, y: i32) -> i32 {
              let x = 12;
              let y = {
                 let x = 13;
@@ -342,40 +415,22 @@ fn analyze() {
              }.i8;
              let z = x;
              // let y = z;
-             let _ = x + y.i64;
+             let ret = x + y.i64;
+             ret.i32
         }
         "#
         in src
     );
     let src = src.to_string();
     // let Block { stmts, .. } = input.parse()?;
-    let parse::Block { stmts, .. } = input.parse().unwrap();
+    let ItemFn { sig, block: Block { stmts, .. } } = input.parse().unwrap();
 
     let arena = Arena::default();
     let tcx = TyCtx::enter(&arena, Session {});
-    let mut body = mir::Body {
-        argc: 0,
-        local_decls: index_vec![LocalDecl { ty: tcx.types.unit }],
-        basic_blocks: Default::default(),
-    };
-
-    {
-        let scope = tcx.arena.scope.alloc(Scope::new());
-        let mut acx = AnalyzeCx {
-            tcx: &tcx,
-            block: mir::BasicBlockData { statements: vec![], terminator: None },
-            body: &mut body,
-            scope: Some(scope),
-        };
-
+    let decl = FnDecl::analyze(&tcx, &sig);
+    let body = {
         let stmts = stmts.iter().map(|stmt| Stmt::analyze(&tcx, stmt)).collect::<Vec<_>>();
-        let _ = analyze_body(
-            &mut acx,
-            &stmts[..],
-            mir::BasicBlock::from_usize(0),
-            Ty { kind: tcx.types.unit, span: Span::splat(0) },
-        )
-        .unwrap_or_else(|err| {
+        analyze_fn_definition(&tcx, decl, &stmts).unwrap_or_else(|err| {
             let settings =
                 ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Green };
             let (code, reason, labels) = err.report("src/sample.src", settings);
@@ -395,9 +450,22 @@ fn analyze() {
                 .print(("src/sample.src", ariadne::Source::from(src)))
                 .unwrap();
             panic!();
-        });
-    }
+        })
+    };
+
+    let sig = {
+        let io = decl
+            .inputs
+            .iter()
+            .map(|(_, ty)| ty.kind)
+            .chain(Some(match decl.output {
+                FnRetTy::Default(_) => tcx.types.unit,
+                FnRetTy::Return(ty) => ty.kind,
+            }))
+            .collect::<Vec<_>>();
+        mir::FnSig { inputs_and_output: tcx.mk_type_list(&io), abi: Abi::Zxc }
+    };
 
     mir::write_mir_body_pretty(&tcx, &body, &mut io::stdout()).unwrap();
-    mir::codegen::compile_fn(&tcx, &body);
+    mir::codegen::compile_fn(&tcx, sig, &body);
 }

@@ -1,10 +1,9 @@
 pub mod cast;
+mod list;
+mod sty;
 
 use {
-    crate::{
-        codegen::{list::List, Interned},
-        parse,
-    },
+    crate::{codegen::Interned, parse},
     smallvec::SmallVec,
     std::{fmt, fmt::Formatter},
 };
@@ -86,4 +85,4 @@ impl fmt::Display for Ty<'_> {
 
 use crate::codegen::{util, Tx};
 
-pub use TyKind::*;
+pub use {list::List, sty::*, TyKind::*};

@@ -1,7 +1,13 @@
 use {
     super::Result,
-    crate::parse::{Parse, ParseBuffer},
-    std::{fmt, ops::Deref},
+    crate::{
+        parse::{surround::lookahead_span, Parse, ParseBuffer, Spanned},
+        Span,
+    },
+    std::{
+        fmt,
+        ops::{Deref, Index},
+    },
 };
 
 pub enum Pair<T, P> {
@@ -131,6 +137,36 @@ impl<T, P> Punctuated<T, P> {
         }
 
         Ok(punctuated)
+    }
+
+    pub(crate) fn predict_span(punct: &Punctuated<T, P>) -> Option<Span>
+    where
+        T: Spanned,
+        P: Spanned,
+    {
+        Some(match (punct.inner.first(), &punct.last) {
+            (Some((first, _)), Some(last)) => lookahead_span(first.span(), last.span()),
+            (Some((first, _)), None) => {
+                lookahead_span(first.span(), punct.inner.last().unwrap().1.span())
+            }
+            (None, Some(last)) => last.span(),
+            _ => return None,
+        })
+    }
+}
+
+impl<T, P> Index<usize> for Punctuated<T, P> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        if index == self.len() - 1 {
+            match &self.last {
+                Some(t) => t,
+                None => &self.inner[index].0,
+            }
+        } else {
+            &self.inner[index].0
+        }
     }
 }
 
