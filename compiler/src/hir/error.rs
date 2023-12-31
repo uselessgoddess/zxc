@@ -1,7 +1,6 @@
 use {
-    crate::{hir::Ty, mir, util},
+    crate::{hir::Ty, mir, symbol::Ident, util},
     ariadne::{Color, Label},
-    lexer::Ident,
     std::ops::Range,
 };
 
@@ -14,7 +13,7 @@ pub struct ReportSettings {
 pub type Result<'tcx, T> = std::result::Result<T, Error<'tcx>>;
 
 pub enum Error<'tcx> {
-    NotFoundLocal(Ident<'tcx>),
+    NotFoundLocal(Ident),
     TypeMismatch { expected: Ty<'tcx>, found: Ty<'tcx> },
     TypeMismatchOnePlace { expected: Ty<'tcx>, found: mir::Ty<'tcx> },
     ConcreateType { expected: Vec<Ty<'tcx>>, found: Ty<'tcx> },
@@ -73,16 +72,14 @@ impl<'a> Error<'a> {
                         .with_message(format!("found {} ", fmt(found.kind))),
                 ],
             ),
-            Error::NotFoundLocal(local) => {
-                (
-                    "E1234",
-                    "cannot find local".into(),
-                    vec![Label::new((src, local.span.into_range())).with_message(format!(
-                        "cannot find value `{}` in this scope ",
-                        local.ident()
-                    ))],
-                )
-            }
+            Error::NotFoundLocal(local) => (
+                "E1234",
+                "cannot find local".into(),
+                vec![
+                    Label::new((src, local.span.into_range()))
+                        .with_message(format!("cannot find value `{local}` in this scope ")),
+                ],
+            ),
             Error::NonPrimitiveCast { from, cast } => (
                 "E0xFF",
                 "non primitive cast".into(),

@@ -2,13 +2,13 @@ use {
     crate::{
         abi::LayoutKind,
         mir::{ty::List, TyKind},
-        tcx::FxHashMap,
+        sync::Lock,
+        FxHashMap,
     },
-    parking_lot::Mutex,
     std::{
         borrow::Borrow,
         cmp::Ordering,
-        collections::{hash_map::RawEntryMut, HashMap},
+        collections::hash_map::RawEntryMut,
         fmt,
         hash::{BuildHasher, Hash, Hasher},
         ops::Deref,
@@ -110,12 +110,12 @@ impl<'tcx> Borrow<LayoutKind> for Interned<'tcx, LayoutKind> {
 
 // FIXME: later use sharder by `Hash` HashMap
 pub struct Sharded<T> {
-    data: Mutex<FxHashMap<T, ()>>,
+    data: Lock<FxHashMap<T, ()>>,
 }
 
 impl<T> Default for Sharded<T> {
     fn default() -> Self {
-        Self { data: Mutex::new(FxHashMap::default()) }
+        Self { data: Lock::new(FxHashMap::default()) }
     }
 }
 

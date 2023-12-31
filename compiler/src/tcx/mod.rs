@@ -1,10 +1,8 @@
 mod arenas;
-pub mod fx;
 pub mod intern;
 
 pub use {
     arenas::{DroplessArena, TypedArena},
-    fx::{FxHashMap, FxHashSet},
     intern::Interned,
 };
 
@@ -58,6 +56,7 @@ type InternSet<'tcx, T> = intern::Sharded<Interned<'tcx, T>>;
 #[derive(Default)]
 pub struct Intern<'tcx> {
     pub types: InternSet<'tcx, TyKind<'tcx>>,
+    pub symbols: InternSet<'tcx, TyKind<'tcx>>,
     pub layouts: InternSet<'tcx, abi::LayoutKind>,
     pub type_lists: InternSet<'tcx, List<Ty<'tcx>>>,
 }

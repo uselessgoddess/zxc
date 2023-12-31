@@ -17,9 +17,15 @@ pub mod hir;
 pub mod mir;
 pub mod tcx;
 
+mod fx;
+pub mod sess;
+mod symbol;
+mod sync;
 pub(crate) mod util;
 
-pub use {
+pub use tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx};
+pub(crate) use {
+    fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
-    tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx},
+    sync::Lock,
 };

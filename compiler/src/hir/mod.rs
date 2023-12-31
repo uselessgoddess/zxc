@@ -2,31 +2,29 @@ mod error;
 mod scope;
 mod ty;
 
+use {
+    crate::{
+        mir::{
+            self, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr,
+            Statement, Terminator,
+        },
+        symbol::{Ident, Symbol},
+        FxHashMap, Span, Tx,
+    },
+    index_vec::index_vec,
+    lexer::{BinOp, Block, Lit, LitInt, ReturnType, Spanned, UnOp},
+    std::mem,
+};
 pub use {
     error::{Error, ReportSettings, Result},
     scope::Scope,
     ty::Ty,
 };
-use {
-    index_vec::index_vec,
-    std::{collections::HashMap, io, mem},
-};
-
-use {
-    crate::{
-        mir::{
-            self, ty::Abi, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue,
-            ScalarRepr, Statement, Terminator,
-        },
-        Arena, Session, Span, Tx, TyCtx,
-    },
-    lexer::{BinOp, Block, Ident, ItemFn, Lit, LitInt, ReturnType, Spanned, UnOp},
-};
 
 #[derive(Debug, Clone)]
 pub enum ExprKind<'tcx> {
     Lit(Lit<'tcx>),
-    Local(Ident<'tcx>),
+    Local(Ident),
     Unary(UnOp, &'tcx Expr<'tcx>),
     Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
     Call(&'tcx str, &'tcx [Expr<'tcx>]),
@@ -55,7 +53,9 @@ impl<'tcx> Expr<'tcx> {
                 tcx.arena.expr.alloc(Self::analyze(tcx, left)),
                 tcx.arena.expr.alloc(Self::analyze(tcx, right)),
             ),
-            lexer::Expr::Ident(str) => expr::Local(*str),
+            lexer::Expr::Ident(str) => {
+                expr::Local(Ident::new(Symbol::intern(str.ident()), str.span))
+            }
             lexer::Expr::TailCall(TailCall { receiver, func, args, .. }) => {
                 assert!(args.is_none());
 
@@ -75,7 +75,7 @@ impl<'tcx> Expr<'tcx> {
 
 #[derive(Debug, Clone)]
 pub struct LocalStmt<'tcx> {
-    pub pat: Ident<'tcx>,
+    pub pat: Ident,
     pub init: &'tcx Expr<'tcx>,
 }
 
@@ -96,7 +96,7 @@ impl<'tcx> Stmt<'tcx> {
         let span = stmt.span();
         let kind = match stmt {
             lexer::Stmt::Local(local) => StmtKind::Local(LocalStmt {
-                pat: local.pat,
+                pat: Ident::new(Symbol::intern(local.pat.ident()), local.pat.span),
                 init: tcx.arena.expr.alloc(Expr::analyze(tcx, &local.expr)),
             }),
             lexer::Stmt::Expr(expr, semi) => {
@@ -115,8 +115,8 @@ pub enum FnRetTy<'hir> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FnDecl<'hir> {
-    pub name: &'hir str,
-    pub inputs: &'hir [(&'hir str, Ty<'hir>)],
+    pub name: Symbol,
+    pub inputs: &'hir [(Symbol, Ty<'hir>)],
     pub output: FnRetTy<'hir>,
     pub span: Span,
 }
@@ -128,9 +128,11 @@ fn analyze_hir_ty<'tcx>(tcx: Tx<'tcx>, ty: &lexer::Type<'tcx>) -> Ty<'tcx> {
 impl<'tcx> FnDecl<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, sig: &lexer::Signature<'tcx>) -> Self {
         Self {
-            name: sig.ident.ident(),
+            name: Symbol::intern(sig.ident.ident()),
             inputs: tcx.arena.dropless.alloc_from_iter(
-                sig.inputs.iter().map(|arg| (arg.pat.ident(), analyze_hir_ty(tcx, &arg.ty))),
+                sig.inputs
+                    .iter()
+                    .map(|arg| (Symbol::intern(arg.pat.ident()), analyze_hir_ty(tcx, &arg.ty))),
             ),
             output: match &sig.output {
                 ReturnType::Default => FnRetTy::Default({
@@ -167,7 +169,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
 
     fn enter_scope(&mut self) {
         let parent = self.scope.take();
-        self.scope = Some(self.tcx.arena.scope.alloc(Scope { parent, inner: HashMap::new() }))
+        self.scope = Some(self.tcx.arena.scope.alloc(Scope { parent, inner: FxHashMap::default() }))
     }
 
     fn exit_scope(&mut self) {
@@ -232,8 +234,8 @@ fn analyze_expr<'hir>(
                 Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from(*lit)), ty)),
             )
         }
-        expr::Local(name) => {
-            acx.scope().get_var(name.ident()).ok_or(Error::NotFoundLocal(*name))?
+        expr::Local(ident) => {
+            acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(*ident))?
         }
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
@@ -310,7 +312,7 @@ fn analyze_stmt<'hir>(
 
             match stmt {
                 StmtKind::Local(LocalStmt { pat, .. }) => {
-                    acx.scope().declare_var(pat.ident(), (ty, place));
+                    acx.scope().declare_var(pat.name, (ty, place));
                     None
                 }
                 StmtKind::Expr(_, _) => Some((ty, place)),

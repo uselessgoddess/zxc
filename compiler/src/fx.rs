@@ -8,6 +8,9 @@ use std::{
 pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 pub type FxHashSet<V> = HashSet<V, BuildHasherDefault<FxHasher>>;
 
+pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<FxHasher>>;
+pub type FxIndexSet<V> = indexmap::IndexSet<V, BuildHasherDefault<FxHasher>>;
+
 pub struct FxHasher {
     hash: usize,
 }

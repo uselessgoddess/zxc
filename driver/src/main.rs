@@ -16,6 +16,7 @@ use {
     compiler::{
         hir::{self, FnDecl, FnRetTy, ReportSettings, Stmt},
         mir::{self, ty::Abi},
+        sess::SessionGlobals,
         Arena, Session, TyCtx,
     },
     cranelift::codegen::isa,
@@ -23,7 +24,7 @@ use {
     std::{error::Error, io},
 };
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn driver() -> Result<(), Box<dyn Error>> {
     let src = r#"
 fn main(argc: i32, argv: i32) -> i8 {
     // let x = argc;
@@ -122,4 +123,12 @@ fn main(argc: i32, argv: i32) -> i8 {
     }
 
     Ok(())
+}
+
+fn main() {
+    unsafe {
+        compiler::sess::in_session_globals(SessionGlobals::default(), || {
+            driver().unwrap();
+        });
+    }
 }
