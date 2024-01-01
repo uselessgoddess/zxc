@@ -23,6 +23,7 @@ impl<'tcx> TyCtx<'tcx> {
                     IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
                     IntTy::I32 => scalar(Integer::I32, true, (4, 4)),
                     IntTy::I64 => scalar(Integer::I64, true, (8, 8)),
+                    IntTy::Isize => scalar(Integer::I64, true, (8, 8)),
                     _ => todo!(),
                 },
                 TyKind::Tuple(list) => {

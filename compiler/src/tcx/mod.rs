@@ -1,6 +1,7 @@
 mod arenas;
 pub mod intern;
 
+use std::fmt;
 pub use {
     arenas::{DroplessArena, TypedArena},
     intern::Interned,
@@ -8,7 +9,12 @@ pub use {
 
 use crate::{
     abi, hir,
-    mir::{ty::List, IntTy, Ty, TyKind},
+    mir::{
+        self,
+        ty::{self, List},
+        IntTy, Ty, TyKind,
+    },
+    sharded::ShardedHashMap,
 };
 
 mod private {
@@ -22,6 +28,7 @@ pub struct CommonTypes<'tcx> {
     pub i16: Ty<'tcx>,
     pub i32: Ty<'tcx>,
     pub i64: Ty<'tcx>,
+    pub isize: Ty<'tcx>,
 }
 
 impl<'tcx> CommonTypes<'tcx> {
@@ -37,7 +44,33 @@ impl<'tcx> CommonTypes<'tcx> {
             i16: mk(Int(IntTy::I16)),
             i32: mk(Int(IntTy::I32)),
             i64: mk(Int(IntTy::I64)),
+            isize: mk(Int(IntTy::Isize)),
         }
+    }
+}
+
+pub struct CommonSigs<'tcx> {
+    pub main: &'tcx [mir::FnSig<'tcx>],
+}
+
+impl<'tcx> CommonSigs<'tcx> {
+    pub fn new(
+        intern: &Intern<'tcx>,
+        arena: &'tcx Arena<'tcx>,
+        types: &CommonTypes<'tcx>,
+    ) -> CommonSigs<'tcx> {
+        let main = arena.dropless.alloc_from_iter([
+            mir::FnSig {
+                inputs_and_output: intern.intern_type_list(arena, &[types.unit]),
+                abi: ty::Abi::Zxc,
+            },
+            mir::FnSig {
+                inputs_and_output: intern
+                    .intern_type_list(arena, &[types.isize, types.isize, types.isize]),
+                abi: ty::Abi::C,
+            },
+        ]);
+        Self { main }
     }
 }
 
@@ -51,7 +84,7 @@ pub struct Arena<'tcx> {
     pub layout: TypedArena<abi::LayoutKind>,
 }
 
-type InternSet<'tcx, T> = intern::Sharded<Interned<'tcx, T>>;
+type InternSet<'tcx, T> = ShardedHashMap<Interned<'tcx, T>, ()>;
 
 #[derive(Default)]
 pub struct Intern<'tcx> {
@@ -88,8 +121,14 @@ impl<'tcx> Intern<'tcx> {
 pub struct TyCtx<'tcx> {
     pub arena: &'tcx Arena<'tcx>,
     pub intern: Intern<'tcx>,
-
     pub types: CommonTypes<'tcx>,
+    pub sigs: CommonSigs<'tcx>,
+}
+
+impl fmt::Debug for TyCtx<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TyCtx {{ todo }}")
+    }
 }
 
 pub struct Session {}
@@ -104,8 +143,9 @@ impl<'tcx> TyCtx<'tcx> {
     pub fn enter(arena: &'tcx Arena<'tcx>, sess: Session) -> Self {
         let intern = Intern::default();
         let types = CommonTypes::new(&intern, arena, &sess);
+        let sigs = CommonSigs::new(&intern, arena, &types);
 
-        Self { arena, intern, types }
+        Self { arena, intern, types, sigs }
     }
 
     pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {

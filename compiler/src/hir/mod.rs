@@ -5,15 +5,17 @@ mod ty;
 use {
     crate::{
         mir::{
-            self, CastKind, ConstValue, Local, LocalDecl, Operand, Place, Rvalue, ScalarRepr,
-            Statement, Terminator,
+            self, ty::Abi, CastKind, ConstValue, DefId, InstanceData, Local, LocalDecl, Operand,
+            Place, Rvalue, ScalarRepr, Statement, Terminator,
         },
+        sym,
         symbol::{Ident, Symbol},
         FxHashMap, Span, Tx,
     },
-    index_vec::index_vec,
+    index_vec::{index_vec, IndexVec},
     lexer::{BinOp, Block, Lit, LitInt, ReturnType, Spanned, UnOp},
-    std::mem,
+    smallvec::SmallVec,
+    std::{collections::hash_map::Entry, mem},
 };
 pub use {
     error::{Error, ReportSettings, Result},
@@ -118,6 +120,12 @@ pub struct FnDecl<'hir> {
     pub name: Symbol,
     pub inputs: &'hir [(Symbol, Ty<'hir>)],
     pub output: FnRetTy<'hir>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct FnSig<'hir> {
+    pub abi: Abi,
+    pub decl: FnDecl<'hir>,
     pub span: Span,
 }
 
@@ -142,6 +150,15 @@ impl<'tcx> FnDecl<'tcx> {
                 }),
                 ReturnType::Type(_, ty) => FnRetTy::Return(analyze_hir_ty(tcx, ty)),
             },
+        }
+    }
+}
+
+impl<'tcx> FnSig<'tcx> {
+    pub fn analyze(tcx: Tx<'tcx>, sig: &lexer::Signature<'tcx>) -> Self {
+        Self {
+            abi: if let Some(_) = &sig.abi { Abi::C } else { Abi::Zxc },
+            decl: FnDecl::analyze(tcx, sig),
             span: sig.span(),
         }
     }
@@ -155,6 +172,7 @@ pub mod expr {
     pub use super::ExprKind::*;
 }
 
+#[derive(Debug)]
 struct AnalyzeCx<'mir, 'hir> {
     tcx: Tx<'hir>,
     block: mir::BasicBlockData<'hir>,
@@ -169,7 +187,8 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
 
     fn enter_scope(&mut self) {
         let parent = self.scope.take();
-        self.scope = Some(self.tcx.arena.scope.alloc(Scope { parent, inner: FxHashMap::default() }))
+        self.scope =
+            Some(self.tcx.arena.scope.alloc(Scope { parent, locals: FxHashMap::default() }))
     }
 
     fn exit_scope(&mut self) {
@@ -268,13 +287,14 @@ fn analyze_expr<'hir>(
         expr::Call(call, args) => {
             assert!(args.len() == 1);
 
-            if ["i64", "i32", "i16", "i8"].contains(call) {
+            if ["isize", "i64", "i32", "i16", "i8"].contains(call) {
                 let (from, place) = analyze_expr(acx, &args[0])?;
                 let cast = match *call {
                     "i8" => acx.tcx.types.i8,
                     "i16" => acx.tcx.types.i16,
                     "i32" => acx.tcx.types.i32,
                     "i64" => acx.tcx.types.i64,
+                    "isize" => acx.tcx.types.isize,
                     _ => todo!(),
                 };
                 let kind = CastKind::from_cast(from.kind, cast)
@@ -378,6 +398,7 @@ fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) ->
 
 pub fn analyze_fn_definition<'hir>(
     tcx: Tx<'hir>,
+    hix: &HirCtx<'hir>,
     sig: FnDecl<'hir>,
     stmts: &[Stmt<'hir>],
 ) -> Result<'hir, mir::Body<'hir>> {
@@ -400,4 +421,77 @@ pub fn analyze_fn_definition<'hir>(
     assert!(acx.block.statements.is_empty());
 
     Ok(body)
+}
+
+#[derive(Debug)]
+pub struct HirCtx<'hir> {
+    pub tcx: Tx<'hir>,
+    pub decls: FxHashMap<Symbol, mir::DefId>, // later use modules
+    pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
+}
+
+impl<'hir> HirCtx<'hir> {
+    pub fn pure(tcx: Tx<'hir>) -> Self {
+        Self { tcx, decls: Default::default(), instances: Default::default() }
+    }
+}
+
+fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<'tcx> {
+    let io = decl
+        .inputs
+        .iter()
+        .map(|(_, ty)| ty.kind)
+        .chain(Some(match decl.output {
+            FnRetTy::Default(_) => tcx.types.unit,
+            FnRetTy::Return(ty) => ty.kind,
+        }))
+        .collect::<SmallVec<_, 8>>();
+    mir::FnSig { inputs_and_output: tcx.mk_type_list(&io), abi }
+}
+
+pub fn analyze_module<'hir>(
+    hix: &mut HirCtx<'hir>,
+    functions: &[(FnSig<'hir>, Box<[Stmt<'hir>]>)],
+) -> Result<'hir, IndexVec<DefId, mir::Body<'hir>>> {
+    let mut defs = Vec::with_capacity(128);
+    for &(FnSig { decl, abi, span }, _) in functions {
+        match hix.decls.entry(decl.name) {
+            Entry::Occupied(prev) => {
+                return Err(Error::DefinedMultiple {
+                    name: decl.name,
+                    definition: hix.instances[*prev.get()].span,
+                });
+            }
+            Entry::Vacant(entry) => {
+                let def = entry.insert(hix.instances.push(InstanceData {
+                    symbol: decl.name,
+                    sig: intern_decl(hix.tcx, decl, abi),
+                    span,
+                }));
+                defs.push(*def);
+            }
+        }
+    }
+
+    match hix.decls.get(&sym::main) {
+        None => {
+            return Err(Error::HasNoMain(Span::splat(
+                0, /* add `span::whole`  to communicate with globals like symbol */
+            )));
+        }
+        Some(&def) => {
+            let InstanceData { sig, span, .. } = hix.instances[def];
+            if !hix.tcx.sigs.main.contains(&sig) {
+                return Err(Error::WrongMainSig { sig, span });
+            }
+        }
+    }
+
+    let mut mir = IndexVec::<DefId, _>::with_capacity(128);
+    for (def, (sig, stmts)) in defs.into_iter().zip(functions) {
+        let body = analyze_fn_definition(hix.tcx, hix, sig.decl, stmts)?;
+        assert_eq!(def, mir.push(body));
+    }
+
+    Ok(mir)
 }

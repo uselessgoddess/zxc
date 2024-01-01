@@ -1,6 +1,12 @@
 use {
-    crate::{hir::Ty, mir, symbol::Ident, util},
-    ariadne::{Color, Label},
+    crate::{
+        hir::Ty,
+        mir,
+        symbol::{Ident, Symbol},
+        util,
+    },
+    ariadne::{Color, Fmt, Label},
+    lexer::Span,
     std::ops::Range,
 };
 
@@ -18,6 +24,9 @@ pub enum Error<'tcx> {
     TypeMismatchOnePlace { expected: Ty<'tcx>, found: mir::Ty<'tcx> },
     ConcreateType { expected: Vec<Ty<'tcx>>, found: Ty<'tcx> },
     NonPrimitiveCast { from: Ty<'tcx>, cast: mir::Ty<'tcx> },
+    DefinedMultiple { name: Symbol, definition: Span },
+    WrongMainSig { sig: mir::FnSig<'tcx>, span: Span },
+    HasNoMain(Span),
 }
 
 type Spanned<'a> = (&'a str, Range<usize>);
@@ -88,6 +97,31 @@ impl<'a> Error<'a> {
                     fmt(from.kind),
                     fmt(*cast)
                 ))],
+            ),
+            Error::DefinedMultiple { name, definition } => (
+                "ELMAO",
+                format!("the name: `{name}` is defined multiple times"),
+                vec![Label::new((src, definition.into_range()))],
+            ),
+            #[rustfmt::skip]
+            Error::WrongMainSig { sig, span } => (
+                "#ERROR_PLACEHOLDER",
+                format!("`main` function has wrong type"),
+                vec![
+                    Label::new((src, span.into_range()))
+                        .with_message(format!(
+                            "expected signature {}", "`fn()`".fg(colors.kw)
+                        )),
+                    Label::new((src, span.into_range())).with_message(format!(
+                        "   found signature {}",
+                        format!("`{sig:?}`").fg(colors.kw)
+                    )),
+                ],
+            ),
+            Error::HasNoMain(span) => (
+                "#ERROR_PLACEHOLDER",
+                format!("`main` function not found in ..."),
+                vec![Label::new((src, span.into_range()))],
             ),
         }
     }

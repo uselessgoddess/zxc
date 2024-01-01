@@ -47,6 +47,7 @@ impl<'cx> Ty<'cx> {
                 "i16" => tcx.types.i16,
                 "i32" => tcx.types.i32,
                 "i64" => tcx.types.i64,
+                "isize" => tcx.types.isize,
                 _ => todo!(),
             },
             Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
@@ -69,6 +70,7 @@ impl fmt::Display for Ty<'_> {
                 IntTy::I16 => f.write_str("i16"),
                 IntTy::I32 => f.write_str("i32"),
                 IntTy::I64 => f.write_str("i64"),
+                IntTy::Isize => f.write_str("isize"),
                 _ => todo!(),
             },
             Tuple(list) => {

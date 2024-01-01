@@ -18,7 +18,10 @@ pub mod mir;
 pub mod tcx;
 
 mod fx;
+
+pub(crate) mod index;
 pub mod sess;
+mod sharded;
 mod symbol;
 mod sync;
 pub(crate) mod util;
@@ -27,5 +30,6 @@ pub use tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx};
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
+    symbol::{sym, Symbol},
     sync::Lock,
 };

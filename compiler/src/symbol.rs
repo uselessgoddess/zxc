@@ -1,10 +1,10 @@
 use {
-    crate::{fx::FxIndexSet, sess::with_session_globals, DroplessArena, Lock},
+    crate::{fx::FxIndexSet, index, sess::with_session_globals, DroplessArena, Lock},
     lexer::Span,
     std::{fmt, mem, str},
 };
 
-index_vec::define_index_type! {
+index::define_index! {
     pub struct Symbol = u32;
 }
 
@@ -24,6 +24,19 @@ impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self.as_str(), f)
     }
+}
+
+impl fmt::Debug for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+pub mod sym {
+    use super::Symbol;
+
+    #[allow(non_upper_case_globals)]
+    pub const main: Symbol = Symbol::from_usize_unchecked(0);
 }
 
 pub(crate) struct Interner(Lock<InternerInner>);

@@ -35,7 +35,7 @@ impl fmt::Debug for FnSig<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.abi {
             Abi::Zxc => (),
-            abi => write!(f, "extern \"{abi:?}\"")?,
+            abi => write!(f, "extern \"{abi:?}\" ")?,
         };
 
         let inputs = self.inputs();
@@ -52,7 +52,7 @@ impl fmt::Debug for FnSig<'_> {
 
         match self.output().kind() {
             ty::Tuple(list) if list.is_empty() => Ok(()),
-            _ => write!(f, " -> {:?}", &self.output()),
+            _ => write!(f, " -> {}", &self.output()),
         }
     }
 }

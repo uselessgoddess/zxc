@@ -92,6 +92,7 @@ pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<typ
             IntTy::I16 => types::I16,
             IntTy::I32 => types::I32,
             IntTy::I64 => types::I64,
+            IntTy::Isize => pointer_ty(tcx),
             _ => todo!(),
         },
         _ => return None,
