@@ -13,3 +13,4 @@ parking_lot = "0.12.1"
 smallvec = { version = "2.0.0-alpha.1", features = ["specialization"] }
 
 lexer = { path = "../lexer" }
+macros = { path = "../macros" }

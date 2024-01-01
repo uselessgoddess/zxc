@@ -6,7 +6,7 @@ pub struct SessionGlobals {
 
 impl Default for SessionGlobals {
     fn default() -> Self {
-        Self { symbol_interner: symbol::Interner::prefill(&["main"]) }
+        Self { symbol_interner: symbol::Interner::fresh() }
     }
 }
 

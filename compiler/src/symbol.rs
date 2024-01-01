@@ -32,13 +32,6 @@ impl fmt::Debug for Symbol {
     }
 }
 
-pub mod sym {
-    use super::Symbol;
-
-    #[allow(non_upper_case_globals)]
-    pub const main: Symbol = Symbol::from_usize_unchecked(0);
-}
-
 pub(crate) struct Interner(Lock<InternerInner>);
 
 struct InternerInner {
@@ -99,26 +92,45 @@ impl fmt::Display for Ident {
     }
 }
 
-// macro_rules! symbols {
-//     // (in $mod:ident { $kw:ident: $str:literal, }) => {$(
-//     //     pub mod $mod {
-// //
-//     //     }
-//     // )*};
-//
-//     ($kw:ident: $str:literal) => {
-//         impl Interner {
-//             pub(crate) fn fresh() -> Self {
-//                 Interner::prefill(&[
-//                     $($str),*
-//                 ])
-//             }
-//         }
-//
-//         $(
-//             pub mod kw {
-//
-//             }
-//         )*
-//     };
-// }
+macros::symbols! {
+    Keywords {
+        Empty:              "",
+        Let:                "let",
+        Loop:               "loop",
+        Fn:                 "fn",
+        For:                "for",
+        If:                 "if",
+        Break:              "break",
+        False:              "false",
+        True:               "true",
+        Return:             "return",
+    }
+
+    Symbols {
+        i16,
+        i32,
+        i64,
+        i8,
+        isize,
+        main,
+    }
+}
+
+pub mod kw {
+    pub use super::kw_generated::*;
+}
+
+pub mod sym {
+    use crate::symbol::Symbol;
+
+    pub use super::sym_generated::*;
+
+    pub fn integer<N: TryInto<usize> + Copy + ToString>(n: N) -> Symbol {
+        if let Ok(idx) = n.try_into() {
+            if idx < 10 {
+                return Symbol::from_raw(super::SYMBOL_DIGITS_BASE + idx as u32);
+            }
+        }
+        Symbol::intern(&n.to_string())
+    }
+}

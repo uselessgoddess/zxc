@@ -1,0 +1,16 @@
+[package]
+name = "macros"
+version = "0.0.0"
+authors = ["uselessgoddess <dodickgod@gmail.com>"]
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1"
+syn = "2.0"
+
+
+
