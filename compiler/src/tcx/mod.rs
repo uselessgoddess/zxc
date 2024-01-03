@@ -143,7 +143,7 @@ impl Session {
 impl<'tcx> TyCtx<'tcx> {
     pub fn enter(arena: &'tcx WorkerLocal<Arena<'tcx>>, sess: &'tcx Session) -> Self {
         let intern = Intern::default();
-        let types = CommonTypes::new(&intern, arena, &sess);
+        let types = CommonTypes::new(&intern, arena, sess);
         let sigs = CommonSigs::new(&intern, arena, &types);
 
         Self { arena, intern, types, sigs, sess }

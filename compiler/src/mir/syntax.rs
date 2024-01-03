@@ -187,14 +187,12 @@ pub struct Body<'tcx> {
 
 impl<'tcx> Body<'tcx> {
     #[inline]
-    pub fn args_iter(&self) -> impl Iterator<Item = Local> + ExactSizeIterator {
+    pub fn args_iter(&self) -> impl ExactSizeIterator<Item = Local> {
         (1..self.argc + 1).map(Local::new)
     }
 
     #[inline]
-    pub fn vars_and_temps_iter(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = Local> + ExactSizeIterator {
+    pub fn vars_and_temps_iter(&self) -> impl ExactSizeIterator<Item = Local> {
         (self.argc + 1..self.local_decls.len()).map(Local::new)
     }
 }

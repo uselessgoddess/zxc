@@ -1,28 +1,24 @@
 use {
-    self::value::{CPlace, CValue, Pointer, PointerBase},
+    self::value::{CPlace, CValue, Pointer},
     compiler::{
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
         hir::HirCtx,
         mir::{
-            self, ty, BasicBlock, BasicBlockData, Body, ConstValue, DefId, InstanceData, IntTy,
-            Local, Operand, Place, Rvalue, Statement, Terminator, Ty,
+            ty, BasicBlock, BasicBlockData, Body, ConstValue, DefId, IntTy, Local, Operand, Place,
+            Rvalue, Statement, Terminator, Ty,
         },
         Session, Tx,
     },
     cranelift::{
-        codegen::{
-            self,
-            ir::{FuncRef, Function, UserFuncName},
-        },
+        codegen::ir::{Function, UserFuncName},
         prelude::{
             isa, types, AbiParam, Block, FunctionBuilder, FunctionBuilderContext, InstBuilder,
             MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
         },
     },
-    cranelift_module::{FuncId, Linkage, Module, ModuleError},
+    cranelift_module::{FuncId, Linkage, Module},
     index_vec::IndexVec,
     lexer::{BinOp, UnOp},
-    std::marker::PhantomData,
     target_lexicon::PointerWidth,
 };
 

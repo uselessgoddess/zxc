@@ -8,7 +8,7 @@ use {
     index_vec::IndexVec,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Scope<'hir> {
     pub(crate) parent: Option<&'hir mut Self>,
     pub(crate) locals: FxHashMap<Symbol, (Ty<'hir>, mir::Place<'hir>)>,

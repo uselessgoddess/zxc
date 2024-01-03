@@ -1,13 +1,12 @@
 use {
     super::{codegen_operand, codegen_place, sig_from_abi, CPlace, CValue, FunctionCx},
     compiler::{
-        abi::{ArgAbi, Conv, PassMode},
-        mir::{self, ty, BasicBlock, InstanceData, Operand, Place},
-        Session,
+        abi::{ArgAbi, PassMode},
+        mir::{ty, BasicBlock, InstanceData, Operand, Place},
     },
     cranelift::{
         codegen::ir::{FuncRef, Inst, SigRef},
-        prelude::{isa, InstBuilder, TrapCode, Value},
+        prelude::{InstBuilder, TrapCode, Value},
     },
     cranelift_module::{FuncId, Linkage, ModuleError},
 };
@@ -31,13 +30,13 @@ impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
                     but it was already declared with signature {prev_sig:?}"
                 ))
             }
-            Err(err) => Err::<_, _>(err).unwrap(),
+            Err(err) => panic!("{err:?}"),
         }
     }
 
     fn get_function_ref(&mut self, inst: &InstanceData<'tcx>) -> FuncRef {
         let func_id = self.import_function(inst);
-        self.module.declare_func_in_func(func_id, &mut self.bcx.func)
+        self.module.declare_func_in_func(func_id, self.bcx.func)
     }
 }
 

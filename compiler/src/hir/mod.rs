@@ -102,7 +102,7 @@ impl<'tcx> Stmt<'tcx> {
                 init: tcx.arena.expr.alloc(Expr::analyze(tcx, &local.expr)),
             }),
             lexer::Stmt::Expr(expr, semi) => {
-                StmtKind::Expr(tcx.arena.expr.alloc(Expr::analyze(tcx, &expr)), semi.is_none())
+                StmtKind::Expr(tcx.arena.expr.alloc(Expr::analyze(tcx, expr)), semi.is_none())
             }
         };
         Self { kind, span }

@@ -43,7 +43,7 @@ impl Parse for Value {
         if let Expr::Lit(expr) = input.parse()?
             && let Lit::Str(lit) = expr.lit
         {
-            return Ok(Value::String(lit));
+            Ok(Value::String(lit))
         } else {
             todo!()
         }

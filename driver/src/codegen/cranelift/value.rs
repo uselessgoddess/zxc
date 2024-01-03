@@ -35,7 +35,7 @@ impl<'tcx> CValue<'tcx> {
         CValue { inner: CValueInner::ByRef(ptr), layout }
     }
 
-    pub(crate) fn try_to_ptr(self) -> Option<(Pointer)> {
+    pub(crate) fn try_to_ptr(self) -> Option<Pointer> {
         match self.inner {
             CValueInner::ByRef(ptr) => Some(ptr),
             CValueInner::ByVal(_) => None,

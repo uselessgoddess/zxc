@@ -92,6 +92,7 @@ impl<T> Sharded<T> {
 
 pub type ShardedHashMap<K, V> = Sharded<FxHashMap<K, V>>;
 
+#[allow(clippy::len_without_is_empty)]
 impl<K: Eq, V> ShardedHashMap<K, V> {
     pub fn len(&self) -> usize {
         todo!()
@@ -107,7 +108,7 @@ impl<K: Eq + Hash + Copy> ShardedHashMap<K, ()> {
     {
         let hash = make_hash(&value);
         let mut shard = self.lock_shard_by_hash(hash);
-        let entry = shard.raw_entry_mut().from_key_hashed_nocheck(hash, &value);
+        let entry = shard.raw_entry_mut().from_key_hashed_nocheck(hash, value);
 
         match entry {
             RawEntryMut::Occupied(e) => *e.key(),

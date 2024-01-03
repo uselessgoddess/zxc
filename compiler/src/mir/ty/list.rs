@@ -41,6 +41,7 @@ impl<T> List<T> {
         unsafe { &*(&EMPTY_SLICE as *const _ as *const List<T>) }
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.len
     }

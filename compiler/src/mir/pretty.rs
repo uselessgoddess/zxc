@@ -5,17 +5,12 @@ use {
             self,
             consts::ConstInt,
             ty::{self, Abi},
-            ConstValue, DefId, IntTy, Mutability, Operand, Rvalue, Statement, Terminator, Ty,
+            ConstValue, Mutability, Operand, Rvalue, Statement, Terminator,
             TyKind::{self},
         },
-        sess, util, Tx,
     },
     lexer::{BinOp, UnOp},
-    std::{
-        fmt,
-        fmt::{Formatter, Write as _},
-        io,
-    },
+    std::fmt::{self, Write as _},
 };
 
 macro_rules! p {
@@ -51,7 +46,7 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
 
     fn print_type(&mut self, ty: mir::Ty<'tcx>) -> fmt::Result;
 
-    fn print_fn_sig(&mut self, inputs: &[Ty<'tcx>], output: Ty<'tcx>) -> fmt::Result {
+    fn print_fn_sig(&mut self, inputs: &[mir::Ty<'tcx>], output: mir::Ty<'tcx>) -> fmt::Result {
         define_scoped_cx!(self);
 
         p!("(", comma_sep(inputs.iter().copied()), ")");
@@ -62,7 +57,7 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
         Ok(())
     }
 
-    fn print_def_path(&mut self, def: DefId) -> fmt::Result {
+    fn print_def_path(&mut self, def: mir::DefId) -> fmt::Result {
         let name = self.hix().instances[def].symbol;
         write!(self, "{name}")
     }
@@ -91,7 +86,7 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
         Ok(())
     }
 
-    fn comma_sep<T>(&mut self, mut elems: impl Iterator<Item = T>) -> fmt::Result
+    fn comma_sep<T>(&mut self, elems: impl Iterator<Item = T>) -> fmt::Result
     where
         T: Print<'tcx>,
     {
@@ -198,7 +193,7 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
         self.hix
     }
 
-    fn print_type(&mut self, ty: Ty<'tcx>) -> fmt::Result {
+    fn print_type(&mut self, ty: mir::Ty<'tcx>) -> fmt::Result {
         define_scoped_cx!(self);
 
         match ty.kind() {
@@ -253,7 +248,7 @@ define_print_and_forward_display! {
             }
             Terminator::Return => p!("return"),
             Terminator::Unreachable => p!("unreachable"),
-            Terminator::Call { func, args, dest, target, fn_span } => {
+            Terminator::Call { func, args, dest, target, .. } => {
                 p!(print(dest), " = ");
                 p!(print(func), "(");
                 for (index, arg) in args.iter().enumerate() {
@@ -351,7 +346,7 @@ pub fn write_mir_pretty<'tcx>(
 ) -> fmt::Result {
     define_scoped_cx!(w);
 
-    let mir::InstanceData { sig, symbol, span, hsig } = w.hix().instances[mir];
+    let mir::InstanceData { sig, hsig, .. } = w.hix().instances[mir];
 
     if sig.abi != Abi::Zxc {
         p!(write("extern \"{:?}\" ", sig.abi));

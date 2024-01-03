@@ -7,7 +7,7 @@ use {
         codegen::{isa, Context},
         prelude::{settings, Configurable},
     },
-    cranelift_module::{self as module, Linkage, Module},
+    cranelift_module::{self as module, Module},
     cranelift_object::{ObjectBuilder, ObjectModule},
 };
 
@@ -25,7 +25,7 @@ use {
     ariadne::{Color, Report, ReportKind},
     chumsky::Parser,
     compiler::{
-        mir::{pretty, ty::Abi},
+        mir::pretty,
         par::{self, WorkerLocal},
         sess,
     },
@@ -49,16 +49,16 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
 
     let mut items = Vec::new();
     while let Ok(ItemFn { sig, block: Block { stmts, .. } }) = input.parse::<ItemFn>() {
-        let sig = FnSig::analyze(&tcx, &sig);
+        let sig = FnSig::analyze(tcx, &sig);
         let stmts = stmts
             .iter()
-            .map(|stmt| Stmt::analyze(&tcx, stmt))
+            .map(|stmt| Stmt::analyze(tcx, stmt))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         items.push((sig, stmts));
     }
 
-    let mut hix = HirCtx::pure(&tcx);
+    let mut hix = HirCtx::pure(tcx);
     let mir = match hir::analyze_module(&mut hix, &items) {
         Ok(mir) => mir,
         Err(err) => {
@@ -101,9 +101,9 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
             "{}",
             Paint::cyan(&format!("MIR --> ({}):", hix.instances[def].symbol))
         )?;
-        mir::write_mir_pretty(def, &mir, &mut printer)?;
+        mir::write_mir_pretty(def, mir, &mut printer)?;
 
-        let (id, func) = codegen::cranelift::compile_fn(&tcx, &hix, def, &mir, &mut module);
+        let (id, func) = codegen::cranelift::compile_fn(tcx, &hix, def, mir, &mut module);
         let mut ctx = Context::for_function(func);
 
         ctx.set_disasm(true);
@@ -119,7 +119,7 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
             ctx.compiled_code().unwrap().vcode.as_ref().unwrap()
         )?;
 
-        println!("{}", printer.into_buf().replace("\n", "\n"));
+        println!("{}", printer.into_buf().replace('\n', "\n    "));
     }
 
     fs::write("zxc.emit", module.finish().emit()?)?;

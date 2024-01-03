@@ -17,6 +17,7 @@ impl ConstInt {
     }
 }
 
+#[allow(clippy::unnecessary_cast)]
 impl std::fmt::Debug for ConstInt {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self { int, signed, is_ptr_sized_integral } = *self;

@@ -10,6 +10,7 @@
     core_intrinsics,
     mem_copy_fn
 )]
+#![allow(clippy::unit_arg)]
 #![allow(internal_features)]
 
 pub mod abi;

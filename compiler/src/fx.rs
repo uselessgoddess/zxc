@@ -34,6 +34,7 @@ impl FxHasher {
     }
 }
 
+#[allow(clippy::len_zero)]
 impl Hasher for FxHasher {
     #[inline]
     fn finish(&self) -> u64 {

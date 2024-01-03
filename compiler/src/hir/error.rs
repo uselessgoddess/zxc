@@ -106,7 +106,7 @@ impl<'a> Error<'a> {
             #[rustfmt::skip]
             Error::WrongMainSig { sig, span } => (
                 "#ERROR_PLACEHOLDER",
-                format!("`main` function has wrong type"),
+                "`main` function has wrong type".into(),
                 vec![
                     Label::new((src, span.into_range()))
                         .with_message(format!(
@@ -120,7 +120,7 @@ impl<'a> Error<'a> {
             ),
             Error::HasNoMain(span) => (
                 "#ERROR_PLACEHOLDER",
-                format!("`main` function not found in ..."),
+                "`main` function not found in ...".into(),
                 vec![Label::new((src, span.into_range()))],
             ),
         }
