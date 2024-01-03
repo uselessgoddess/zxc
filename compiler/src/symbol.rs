@@ -81,6 +81,10 @@ impl Ident {
         Ident { name, span }
     }
 
+    pub fn from_parse(ident: lexer::Ident<'_>) -> Ident {
+        Self::new(Symbol::intern(ident.ident()), ident.span)
+    }
+
     pub fn as_str(&self) -> &str {
         self.name.as_str()
     }

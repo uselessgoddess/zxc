@@ -1,107 +1,374 @@
 use {
     crate::{
-        mir::{self, Operand, Rvalue, Statement, Terminator},
-        Tx,
+        hir::HirCtx,
+        mir::{
+            self,
+            consts::ConstInt,
+            ty::{self, Abi},
+            ConstValue, DefId, IntTy, Mutability, Operand, Rvalue, Statement, Terminator, Ty,
+            TyKind::{self},
+        },
+        sess, util, Tx,
     },
     lexer::{BinOp, UnOp},
-    std::{fmt, fmt::Formatter, io},
+    std::{
+        fmt,
+        fmt::{Formatter, Write as _},
+        io,
+    },
 };
 
-impl fmt::Debug for mir::Place<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        assert!(self.projection.is_empty());
+macro_rules! p {
+    (@$lit:literal) => {
+        write!(scoped_cx!(), $lit)?
+    };
+    (@write($($data:expr),+)) => {
+        write!(scoped_cx!(), $($data),+)?
+    };
+    (@print($x:expr)) => {
+        $x.print(scoped_cx!())?
+    };
+    (@$method:ident($($arg:expr),*)) => {
+        scoped_cx!().$method($($arg),*)?
+    };
+    ($($elem:tt $(($($args:tt)*))?),+) => {{
+        $(p!(@ $elem $(($($args)*))?);)+
+    }};
+}
+macro_rules! define_scoped_cx {
+    ($cx:ident) => {
+        macro_rules! scoped_cx {
+            () => {
+                $cx
+            };
+        }
+    };
+}
 
-        write!(f, "_{}", self.local.raw())
+// TODO: add print macro
+pub trait Printer<'tcx>: fmt::Write + Sized {
+    fn hix<'a>(&'a self) -> &'a HirCtx<'tcx>;
+
+    fn print_type(&mut self, ty: mir::Ty<'tcx>) -> fmt::Result;
+
+    fn print_fn_sig(&mut self, inputs: &[Ty<'tcx>], output: Ty<'tcx>) -> fmt::Result {
+        define_scoped_cx!(self);
+
+        p!("(", comma_sep(inputs.iter().copied()), ")");
+        if !output.is_unit() {
+            p!(" -> ", print(output));
+        }
+
+        Ok(())
+    }
+
+    fn print_def_path(&mut self, def: DefId) -> fmt::Result {
+        let name = self.hix().instances[def].symbol;
+        write!(self, "{name}")
+    }
+
+    fn print_const(&mut self, ct: ConstValue, ty: mir::Ty<'tcx>) -> fmt::Result {
+        match (ct, ty.kind()) {
+            (ConstValue::Scalar(scalar), _) => return self.print_const_scalar(scalar, ty),
+            (ConstValue::Zst, ty::FnDef(def)) => return self.print_def_path(def),
+            _ => {}
+        }
+        write!(self, "{ct:?}: {ty}")
+    }
+
+    fn print_const_scalar(&mut self, int: mir::ScalarRepr, ty: mir::Ty<'tcx>) -> fmt::Result {
+        define_scoped_cx!(self);
+
+        match ty.kind() {
+            TyKind::Int(_) => {
+                let int =
+                    ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized_int());
+                p!(write("{:#?}", int))
+            }
+            _ => todo!(),
+        }
+
+        Ok(())
+    }
+
+    fn comma_sep<T>(&mut self, mut elems: impl Iterator<Item = T>) -> fmt::Result
+    where
+        T: Print<'tcx>,
+    {
+        self.comma_sep_with(elems, |cx, x| x.print(cx))
+    }
+
+    fn comma_sep_with<T>(
+        &mut self,
+        mut elems: impl Iterator<Item = T>,
+        mut with: impl FnMut(&mut Self, T) -> fmt::Result,
+    ) -> fmt::Result {
+        if let Some(first) = elems.next() {
+            with(self, first)?;
+            for elem in elems {
+                self.write_str(", ")?;
+                with(self, elem)?;
+            }
+        }
+        Ok(())
     }
 }
 
-impl fmt::Debug for Operand<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
+pub trait Print<'tcx> {
+    fn print<P: Printer<'tcx>>(&self, cx: &mut P) -> fmt::Result;
+}
+
+impl<'tcx> Print<'tcx> for mir::Ty<'tcx> {
+    fn print<P: Printer<'tcx>>(&self, cx: &mut P) -> fmt::Result {
+        cx.print_type(*self)
+    }
+}
+
+macro_rules! forward_display_to_print {
+    ($($ty:ty),+) => {
+        // TODO: wait lifters or more complex
+        //$(#[allow(unused_lifetimes)] impl<'tcx> fmt::Display for $ty {
+        //    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        //        sess::with(|hix| {
+        //            let mut cx = FmtPrinter::new(hix);
+        //            self
+        //                .print(&mut cx)?;
+        //            f.write_str(&cx.into_buf())?;
+        //            Ok(())
+        //        })
+        //    }
+        //})+
+    };
+}
+
+macro_rules! define_print {
+    (($self:ident, $cx:ident): $($ty:ty $print:block)+) => {
+        $(impl<'tcx> Print<'tcx> for $ty {
+            fn print<P: Printer<'tcx>>(&$self, $cx: &mut P) -> fmt::Result {
+                define_scoped_cx!($cx);
+                let _: () = $print;
+                Ok(())
+            }
+        })+
+    };
+}
+
+macro_rules! define_print_and_forward_display {
+    (($self:ident, $cx:ident): $($ty:ty $print:block)+) => {
+        define_print!(($self, $cx): $($ty $print)*);
+        forward_display_to_print!($($ty),+);
+    };
+}
+
+define_print_and_forward_display! {
+    (self, cx):
+
+    mir::FnSig<'tcx> {
+        if self.abi != Abi::Zxc {
+            p!(write("extern {} ", self.abi));
+        }
+
+        p!("fn", print_fn_sig(self.inputs(), self.output()));
+    }
+}
+
+pub struct FmtPrinter<'a, 'tcx> {
+    pub hix: &'a HirCtx<'tcx>,
+    fmt: String,
+}
+
+impl<'a, 'tcx> FmtPrinter<'a, 'tcx> {
+    pub fn new(hix: &'a HirCtx<'tcx>) -> Self {
+        Self { hix, fmt: String::new() }
+    }
+
+    pub fn into_buf(self) -> String {
+        self.fmt
+    }
+}
+
+impl fmt::Write for FmtPrinter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        Ok(self.fmt.push_str(s))
+    }
+}
+
+impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
+    fn hix<'a>(&'a self) -> &'a HirCtx<'tcx> {
+        self.hix
+    }
+
+    fn print_type(&mut self, ty: Ty<'tcx>) -> fmt::Result {
+        define_scoped_cx!(self);
+
+        match ty.kind() {
+            ty::Int(int) => p!(write("{}", int.name_str())),
+            ty::Tuple(list) => {
+                if list.is_empty() {
+                    p!("@unit")
+                } else {
+                    p!("(", comma_sep(list.iter()));
+                    if list.len() == 1 {
+                        p!(",");
+                    }
+                    p!(")")
+                }
+            }
+            ty::FnDef(def) => {
+                let sig = self.hix.instances[def].sig;
+                p!(print(sig))
+            }
+        }
+
+        Ok(())
+    }
+}
+
+define_print_and_forward_display! {
+    (self, cx):
+
+    mir::Place<'tcx> {
+        p!(write("_{}", self.local.raw()));
+    }
+
+    Operand<'tcx> {
+        match *self {
             Operand::Copy(place) => {
-                write!(f, "{place:?}")
+                p!(print(place))
             }
             Operand::Const(const_, ty) => {
-                write!(f, "Const::<{ty}>({:?})", const_)
-            }
-        }
-    }
-}
-
-impl fmt::Debug for Rvalue<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Rvalue::Use(operand) => write!(f, "{operand:?}"),
-            Rvalue::UseDeref(operand) => write!(f, "*{operand:?}"),
-            Rvalue::UnaryOp(op, operand) => write!(
-                f,
-                "{}({operand:?})",
-                match op {
-                    UnOp::Not(_) => "Not",
-                    UnOp::Neg(_) => "Neg",
+                match ty.kind() {
+                    ty::FnDef(_) => {}
+                    _ => p!(write("const ")),
                 }
-            ),
-            Rvalue::BinaryOp(op, lhs, rhs) => {
-                write!(
-                    f,
-                    "{}({lhs:?}, {rhs:?})",
-                    match op {
-                        BinOp::Add(_) => "Add",
-                        BinOp::Sub(_) => "Sub",
-                        BinOp::Mul(_) => "Mul",
-                        BinOp::Div(_) => "Div",
-                    }
-                )
-            }
-            Rvalue::Cast(kind, from, cast) => {
-                write!(f, "{from:?} as {cast} ({kind:?})")
+                p!(print_const(const_, ty))
             }
         }
     }
-}
 
-impl fmt::Debug for Statement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Statement::Assign(place, rvalue) => write!(f, "{place:?} = {rvalue:?}"),
-            Statement::Nop => write!(f, "Nop"),
-        }
-    }
-}
-
-impl fmt::Debug for Terminator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    Terminator<'tcx> {
         match self {
             Terminator::Goto { target } => {
-                write!(f, "goto -> bb{}", target.raw())
+                p!(write("goto -> bb{}", target.raw()));
             }
-            Terminator::Return => write!(f, "return"),
-            Terminator::Unreachable => write!(f, "unreachable"),
+            Terminator::Return => p!("return"),
+            Terminator::Unreachable => p!("unreachable"),
+            Terminator::Call { func, args, dest, target, fn_span } => {
+                p!(print(dest), " = ");
+                p!(print(func), "(");
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        p!(", ");
+                    }
+                    p!(print(arg));
+                }
+                p!(")");
+                if let Some(target) = target {
+                    p!(write(" -> [return: bb{}]", target.raw()))
+                }
+            }
+        }
+    }
+
+    Rvalue<'tcx> {
+        match self {
+            Rvalue::Use(operand) => p!(print(operand)),
+            Rvalue::UseDeref(operand) =>p!("*", print(operand)),
+            Rvalue::UnaryOp(op, operand) => {
+                let op = match op {
+                    UnOp::Not(_) => "Not",
+                    UnOp::Neg(_) => "Neg",
+                };
+                p!(write("{op}"), "(", print(operand), ")")
+            }
+            Rvalue::BinaryOp(op, lhs, rhs) => {
+                let op = match op {
+                    BinOp::Add(_) => "Add",
+                    BinOp::Sub(_) => "Sub",
+                    BinOp::Mul(_) => "Mul",
+                    BinOp::Div(_) => "Div",
+                };
+                p!(write("{op}"), "(", print(lhs), ", ", print(rhs), ")")
+            }
+            Rvalue::Cast(kind, from, cast) => {
+                p!(print(from), " as ", print(cast), write(" ({kind:?})"))
+            }
+        }
+    }
+
+    Statement<'tcx> {
+        match self {
+            Statement::Assign(place, rvalue) => p!(print(place), " = ", print(rvalue)),
+            Statement::Nop => p!("Nop"),
         }
     }
 }
 
 pub fn write_mir_body_pretty<'tcx>(
-    _: Tx<'tcx>,
     body: &mir::Body<'tcx>,
-    w: &mut dyn io::Write,
-) -> io::Result<()> {
-    for local in body.args_iter() {
-        writeln!(w, "let _{}: {}", local.raw(), body.local_decls[local].ty)?;
+    in_fn: bool,
+    w: &mut impl Printer<'tcx>,
+) -> fmt::Result {
+    define_scoped_cx!(w);
+
+    let tab = if in_fn { "    " } else { "" };
+
+    let ret = Some(mir::Local::RETURN_PLACE).into_iter();
+    for local in ret.chain(body.vars_and_temps_iter()) {
+        let decl = body.local_decls[local];
+        let m = match decl.mutability {
+            Mutability::Not => " ",
+            Mutability::Mut => " mut ",
+        };
+        p!(write("{tab}let{m}_{}: ", local.raw()), print(decl.ty), ";\n");
     }
+    p!("\n");
 
     for (bb, block) in body.basic_blocks.iter_enumerated() {
-        writeln!(w, "bb{}: {{", bb.raw())?;
+        writeln!(w, "{tab}bb{}: {{", bb.raw())?;
 
         for stmt in &block.statements {
-            write!(w, "    {stmt:?};")?;
+            p!("    {tab}", print(stmt), ";");
             writeln!(w)?;
         }
 
-        writeln!(w, "    {:?};", block.terminator())?;
-        writeln!(w, "}}")?;
-        writeln!(w)?;
+        let terminator = block.terminator();
+        p!("    {tab}", print(terminator), ";");
+        writeln!(w, "\n{tab}}}")?;
+
+        if bb != body.basic_blocks.len() - 1 {
+            writeln!(w)?;
+        }
     }
+
+    Ok(())
+}
+
+pub fn write_mir_pretty<'tcx>(
+    mir: mir::DefId,
+    body: &mir::Body<'tcx>,
+    w: &mut impl Printer<'tcx>,
+) -> fmt::Result {
+    define_scoped_cx!(w);
+
+    let mir::InstanceData { sig, symbol, span, hsig } = w.hix().instances[mir];
+
+    if sig.abi != Abi::Zxc {
+        p!(write("extern \"{:?}\" ", sig.abi));
+    }
+    p!(write("fn {}", hsig.decl.name));
+
+    p!("(");
+    w.comma_sep_with(sig.inputs().iter().enumerate(), |cx, ((local, ty))| {
+        write!(cx, "_{}: ", local + 1)?;
+        ty.print(cx)
+    })?;
+    p!(")");
+    p!(" -> ", print(sig.output()));
+
+    p!(" {{\n");
+    write_mir_body_pretty(body, true, w)?;
+    p!("}}\n\n");
 
     Ok(())
 }

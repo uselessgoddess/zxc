@@ -1,38 +1,41 @@
 use {
     self::value::{CPlace, CValue, Pointer, PointerBase},
     compiler::{
-        abi::{self, Abi, ArgAbi, Integer, PassMode, Scalar, TyAbi},
+        abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
+        hir::HirCtx,
         mir::{
-            self, ty, BasicBlock, BasicBlockData, Body, ConstValue, IntTy, Local, Operand, Place,
-            Rvalue, Statement, Terminator, Ty,
+            self, ty, BasicBlock, BasicBlockData, Body, ConstValue, DefId, InstanceData, IntTy,
+            Local, Operand, Place, Rvalue, Statement, Terminator, Ty,
         },
-        Tx,
+        Session, Tx,
     },
     cranelift::{
         codegen::{
             self,
-            ir::{Function, UserFuncName},
+            ir::{FuncRef, Function, UserFuncName},
         },
         prelude::{
             isa, types, AbiParam, Block, FunctionBuilder, FunctionBuilderContext, InstBuilder,
             MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
         },
     },
-    cranelift_module::Module,
+    cranelift_module::{FuncId, Linkage, Module, ModuleError},
     index_vec::IndexVec,
     lexer::{BinOp, UnOp},
     std::marker::PhantomData,
     target_lexicon::PointerWidth,
 };
 
+mod abi;
 mod cast;
 mod ssa;
 mod value;
 
 pub struct FunctionCx<'m, 'cl, 'tcx: 'm> {
     tcx: Tx<'tcx>,
+    hix: &'cl HirCtx<'tcx>,
+    mir: &'cl Body<'tcx>,
     bcx: FunctionBuilder<'cl>,
-    mir: &'tcx Body<'tcx>,
 
     block_map: IndexVec<BasicBlock, Block>,
     local_map: IndexVec<Local, CPlace<'tcx>>,
@@ -41,7 +44,7 @@ pub struct FunctionCx<'m, 'cl, 'tcx: 'm> {
     ptr_type: types::Type,
 
     next_ssa: u32,
-    module: PhantomData<&'m ()>,
+    module: &'m mut dyn Module,
 }
 
 impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
@@ -224,11 +227,11 @@ pub(crate) fn codegen_place<'tcx>(
 
 pub(crate) fn codegen_operand<'tcx>(
     fx: &mut FunctionCx<'_, '_, 'tcx>,
-    operand: &Operand<'tcx>,
+    operand: Operand<'tcx>,
 ) -> CValue<'tcx> {
-    match *operand {
-        Operand::Copy(ref place) => {
-            let place = codegen_place(fx, *place);
+    match operand {
+        Operand::Copy(place) => {
+            let place = codegen_place(fx, place);
             place.to_cvalue(fx)
         }
         Operand::Const(const_, ty) => codegen_const_value(fx, const_, ty),
@@ -245,19 +248,19 @@ fn codegen_stmt<'tcx>(
             let place = codegen_place(fx, *place);
             let dst_ty = place.layout();
             match *rvalue {
-                Rvalue::Use(ref operand) => {
+                Rvalue::Use(operand) => {
                     let val = codegen_operand(fx, operand);
                     place.write_cvalue(fx, val);
                 }
                 Rvalue::UseDeref(_) => todo!(),
-                Rvalue::BinaryOp(op, ref lhs, ref rhs) => {
+                Rvalue::BinaryOp(op, lhs, rhs) => {
                     let lhs = codegen_operand(fx, lhs);
                     let rhs = codegen_operand(fx, rhs);
 
                     let val = codegen_int_binop(fx, op, lhs, rhs);
                     place.write_cvalue(fx, val);
                 }
-                Rvalue::UnaryOp(op, ref operand) => {
+                Rvalue::UnaryOp(op, operand) => {
                     let operand = codegen_operand(fx, operand);
                     let layout = operand.layout();
                     let val = operand.load_scalar(fx);
@@ -273,7 +276,7 @@ fn codegen_stmt<'tcx>(
                     };
                     place.write_cvalue(fx, res);
                 }
-                Rvalue::Cast(kind, ref operand, cast_ty) => {
+                Rvalue::Cast(kind, operand, cast_ty) => {
                     let operand = codegen_operand(fx, operand);
                     let from_ty = operand.layout().ty;
 
@@ -289,7 +292,7 @@ fn codegen_stmt<'tcx>(
     }
 }
 
-fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: abi::FnAbi<'tcx>) {
+fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: FnAbi<'tcx>) {
     for (bb, bb_data @ BasicBlockData { statements, .. }) in fx.mir.basic_blocks.iter_enumerated() {
         let block = fx.block(bb);
         fx.bcx.switch_to_block(block);
@@ -298,7 +301,7 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: abi::FnAbi<'tcx>)
             codegen_stmt(fx, block, stmt);
         }
 
-        match bb_data.terminator() {
+        match *bb_data.terminator() {
             Terminator::Goto { target } => {
                 let block = fx.block(target);
                 fx.bcx.ins().jump(block, &[]);
@@ -306,6 +309,9 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: abi::FnAbi<'tcx>)
             Terminator::Return => codegen_fn_return(fx, abi.ret),
             Terminator::Unreachable => {
                 fx.bcx.ins().trap(TrapCode::UnreachableCodeReached);
+            }
+            Terminator::Call { func, ref args, dest, target, .. } => {
+                abi::codegen_terminator_call(fx, func, args, dest, target)
             }
         }
     }
@@ -353,23 +359,42 @@ fn param_from_abi<'tcx>(tcx: Tx<'tcx>, abi: ArgAbi<'tcx>) -> Option<AbiParam> {
     }
 }
 
-fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, abi: &abi::FnAbi<'tcx>) -> Signature {
+fn conv_to_call_conv(sess: &Session, c: Conv, default_call_conv: isa::CallConv) -> isa::CallConv {
+    default_call_conv
+}
+
+fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, default: isa::CallConv, abi: &FnAbi<'tcx>) -> Signature {
+    let call_conv = conv_to_call_conv(tcx.sess, abi.conv, default);
     Signature {
         params: abi.args.iter().flat_map(|&arg| param_from_abi(tcx, arg)).collect(),
         returns: Vec::from_iter(param_from_abi(tcx, abi.ret)),
-        call_conv: isa::CallConv::SystemV,
+        call_conv,
     }
 }
 
 pub(crate) fn compile_fn<'tcx>(
     tcx: Tx<'tcx>,
-    sig: mir::FnSig<'tcx>,
-    mir: &'tcx Body<'tcx>,
-) -> Function {
-    let fn_abi = tcx.fn_abi_of_sig(sig);
+    hix: &HirCtx<'tcx>,
+    def: DefId,
+    mir: &Body<'tcx>,
+    module: &mut dyn Module,
+) -> (FuncId, Function) {
+    let fn_abi = tcx.fn_abi_of_sig(hix.instances[def].sig);
     let mut fn_ctx = FunctionBuilderContext::new();
-    let mut fn_ =
-        Function::with_name_signature(UserFuncName::user(0, 0), sig_from_abi(tcx, &fn_abi));
+
+    let sig = sig_from_abi(tcx, module.target_config().default_call_conv, &fn_abi);
+    let id = module
+        .declare_function(
+            hix.instances[def].symbol.as_str(),
+            if hix.instances[def].sig.abi == ty::Abi::Zxc {
+                Linkage::Local
+            } else {
+                Linkage::Export
+            },
+            &sig,
+        )
+        .expect("lmao bro, fake mir generation");
+    let mut fn_ = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), sig);
 
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
 
@@ -383,6 +408,7 @@ pub(crate) fn compile_fn<'tcx>(
     };
     let mut fx = FunctionCx {
         tcx,
+        hix,
         bcx,
         mir,
         block_map,
@@ -390,9 +416,10 @@ pub(crate) fn compile_fn<'tcx>(
         local_map: IndexVec::with_capacity(mir.local_decls.len()),
         ptr_type: types::I64,
         next_ssa: 0,
-        module: PhantomData,
+        module,
     };
 
+    let fn_sig = hix.instances[def].sig;
     {
         fx.bcx.append_block_params_for_function_params(start_block);
         fx.bcx.switch_to_block(start_block);
@@ -415,7 +442,7 @@ pub(crate) fn compile_fn<'tcx>(
             })
             .collect::<Vec<_>>();
 
-        let ret = sig.output();
+        let ret = fn_sig.output();
         let ret = make_local_place(
             fx,
             Local::RETURN_PLACE,
@@ -463,5 +490,5 @@ pub(crate) fn compile_fn<'tcx>(
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
 
-    fn_
+    (id, fn_)
 }

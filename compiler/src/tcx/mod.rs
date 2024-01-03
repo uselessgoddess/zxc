@@ -14,7 +14,7 @@ use crate::{
         ty::{self, List},
         IntTy, Ty, TyKind,
     },
-    sharded::ShardedHashMap,
+    par::{ShardedHashMap, WorkerLocal},
 };
 
 mod private {
@@ -119,10 +119,11 @@ impl<'tcx> Intern<'tcx> {
 }
 
 pub struct TyCtx<'tcx> {
-    pub arena: &'tcx Arena<'tcx>,
+    pub arena: &'tcx WorkerLocal<Arena<'tcx>>,
     pub intern: Intern<'tcx>,
     pub types: CommonTypes<'tcx>,
     pub sigs: CommonSigs<'tcx>,
+    pub sess: &'tcx Session,
 }
 
 impl fmt::Debug for TyCtx<'_> {
@@ -140,12 +141,12 @@ impl Session {
 }
 
 impl<'tcx> TyCtx<'tcx> {
-    pub fn enter(arena: &'tcx Arena<'tcx>, sess: Session) -> Self {
+    pub fn enter(arena: &'tcx WorkerLocal<Arena<'tcx>>, sess: &'tcx Session) -> Self {
         let intern = Intern::default();
         let types = CommonTypes::new(&intern, arena, &sess);
         let sigs = CommonSigs::new(&intern, arena, &types);
 
-        Self { arena, intern, types, sigs }
+        Self { arena, intern, types, sigs, sess }
     }
 
     pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {
@@ -163,6 +164,10 @@ impl<'tcx> TyCtx<'tcx> {
     pub fn fatal(&self, msg: impl Into<String>) -> ! {
         // TODO: Add diagnostic handler
         panic!("{}", msg.into())
+    }
+
+    pub fn intern_ty(&self, kind: TyKind<'tcx>) -> Ty<'tcx> {
+        self.intern.intern_ty(self.arena, kind)
     }
 }
 

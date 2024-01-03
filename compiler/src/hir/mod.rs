@@ -5,8 +5,8 @@ mod ty;
 use {
     crate::{
         mir::{
-            self, ty::Abi, CastKind, ConstValue, DefId, InstanceData, Local, LocalDecl, Operand,
-            Place, Rvalue, ScalarRepr, Statement, Terminator,
+            self, ty::Abi, CastKind, ConstValue, DefId, InstanceData, Local, LocalDecl, Mutability,
+            Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
         },
         sym,
         symbol::{Ident, Symbol},
@@ -23,13 +23,13 @@ pub use {
     ty::Ty,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ExprKind<'tcx> {
     Lit(Lit<'tcx>),
     Local(Ident),
     Unary(UnOp, &'tcx Expr<'tcx>),
     Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
-    Call(&'tcx str, &'tcx [Expr<'tcx>]),
+    Call(Ident, &'tcx [Expr<'tcx>]),
     Block(&'tcx [Stmt<'tcx>], Span),
 }
 
@@ -62,7 +62,7 @@ impl<'tcx> Expr<'tcx> {
                 assert!(args.is_none());
 
                 expr::Call(
-                    func.ident(),
+                    Ident::from_parse(*func),
                     tcx.arena.expr.alloc_from_iter([Self::analyze(tcx, receiver)]),
                 )
             }
@@ -118,7 +118,7 @@ pub enum FnRetTy<'hir> {
 #[derive(Debug, Clone, Copy)]
 pub struct FnDecl<'hir> {
     pub name: Symbol,
-    pub inputs: &'hir [(Symbol, Ty<'hir>)],
+    pub inputs: &'hir [(Mutability, Symbol, Ty<'hir>)],
     pub output: FnRetTy<'hir>,
 }
 
@@ -129,6 +129,16 @@ pub struct FnSig<'hir> {
     pub span: Span,
 }
 
+impl<'hir> FnSig<'hir> {
+    #[deprecated(note = "temp solution")]
+    pub fn ret_span(&self) -> Span {
+        match self.decl.output {
+            FnRetTy::Default(span) => span,
+            FnRetTy::Return(ty) => ty.span,
+        }
+    }
+}
+
 fn analyze_hir_ty<'tcx>(tcx: Tx<'tcx>, ty: &lexer::Type<'tcx>) -> Ty<'tcx> {
     Ty::new(ty.span(), mir::Ty::analyze(tcx, ty))
 }
@@ -137,11 +147,9 @@ impl<'tcx> FnDecl<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, sig: &lexer::Signature<'tcx>) -> Self {
         Self {
             name: Symbol::intern(sig.ident.ident()),
-            inputs: tcx.arena.dropless.alloc_from_iter(
-                sig.inputs
-                    .iter()
-                    .map(|arg| (Symbol::intern(arg.pat.ident()), analyze_hir_ty(tcx, &arg.ty))),
-            ),
+            inputs: tcx.arena.dropless.alloc_from_iter(sig.inputs.iter().map(|arg| {
+                (Mutability::Not, Symbol::intern(arg.pat.ident()), analyze_hir_ty(tcx, &arg.ty))
+            })),
             output: match &sig.output {
                 ReturnType::Default => FnRetTy::Default({
                     // Let the place of return type be implied just next of parentheses
@@ -175,6 +183,7 @@ pub mod expr {
 #[derive(Debug)]
 struct AnalyzeCx<'mir, 'hir> {
     tcx: Tx<'hir>,
+    hix: &'mir HirCtx<'hir>,
     block: mir::BasicBlockData<'hir>,
     body: &'mir mut mir::Body<'hir>,
     scope: Option<&'hir mut Scope<'hir>>,
@@ -203,7 +212,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         ret
     }
 
-    pub fn end_of_block(&mut self, terminator: Terminator) -> mir::BasicBlock {
+    pub fn end_of_block(&mut self, terminator: Terminator<'hir>) -> mir::BasicBlock {
         self.block.terminator = Some(terminator);
         self.body.basic_blocks.push(mem::replace(
             &mut self.block,
@@ -215,21 +224,39 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         mir::BasicBlock::new(self.body.basic_blocks.len() + 1)
     }
 
-    pub fn push_rvalue(&mut self, ty: Ty<'hir>, rvalue: Rvalue<'hir>) -> (Ty<'hir>, Place<'hir>) {
+    pub fn push_rvalue(
+        &mut self,
+        ty: Ty<'hir>,
+        rvalue: Rvalue<'hir>,
+        mutability: Mutability,
+    ) -> (Ty<'hir>, Place<'hir>) {
         // Simple one-level optimization of MIR
         match rvalue {
             Rvalue::Use(Operand::Copy(place)) => (ty, place),
             _ => {
-                let place = Place::pure(self.body.local_decls.push(LocalDecl { ty: ty.kind }));
+                let place =
+                    Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
                 self.block.statements.push(Statement::Assign(place, rvalue));
                 (ty, place)
             }
         }
     }
 
+    pub fn push_temp_rvalue(
+        &mut self,
+        ty: Ty<'hir>,
+        rvalue: Rvalue<'hir>,
+    ) -> (Ty<'hir>, Place<'hir>) {
+        self.push_rvalue(ty, rvalue, Mutability::Not)
+    }
+
+    pub fn typed_place(&mut self, ty: mir::Ty<'hir>) -> Place<'hir> {
+        Place::pure(self.body.local_decls.push(LocalDecl { mutability: Mutability::Not, ty }))
+    }
+
     pub fn unit_place(&mut self, span: Span) -> (Ty<'hir>, Place<'hir>) {
         let unit = Ty { kind: self.tcx.types.unit, span };
-        self.push_rvalue(unit, Rvalue::Use(Operand::Const(ConstValue::Zst, unit.kind)))
+        self.push_temp_rvalue(unit, Rvalue::Use(Operand::Const(ConstValue::Zst, unit.kind)))
     }
 }
 
@@ -237,7 +264,7 @@ fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
     if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) }
 }
 
-fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator {
+fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
     Terminator::Goto { target: acx.next_block() }
 }
 
@@ -245,22 +272,21 @@ fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
 ) -> Result<'hir, (Ty<'hir>, Place<'hir>)> {
-    let (ty, rvalue) = match &expr.kind {
+    let (ty, rvalue) = match expr.kind {
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
             let ty = acx.tcx.types.i64;
             acx.push_rvalue(
-                Ty::new(*span, ty),
-                Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from(*lit)), ty)),
+                Ty::new(span, ty),
+                Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit)), ty)),
+                Mutability::Not,
             )
         }
-        expr::Local(ident) => {
-            acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(*ident))?
-        }
+        expr::Local(ident) => acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?,
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
                 let (ty, place) = analyze_expr(acx, expr)?;
 
-                acx.push_rvalue(ty, Rvalue::UnaryOp(*op, Operand::Copy(place)))
+                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(op, Operand::Copy(place)))
             }
             _ => todo!(),
         },
@@ -268,9 +294,9 @@ fn analyze_expr<'hir>(
             let (lhs, a) = analyze_expr(acx, lhs)?;
             let (rhs, b) = analyze_expr(acx, rhs)?;
 
-            acx.push_rvalue(
+            acx.push_temp_rvalue(
                 assert_same_types(lhs, rhs)?,
-                Rvalue::BinaryOp(*op, Operand::Copy(a), Operand::Copy(b)),
+                Rvalue::BinaryOp(op, Operand::Copy(a), Operand::Copy(b)),
             )
         }
         expr::Block(stmts, span) => {
@@ -278,33 +304,52 @@ fn analyze_expr<'hir>(
                 acx.scoped(|acx| {
                     analyze_local_block_unclosed(acx, stmts)?;
                     Ok(analyze_stmt(acx, tail, Some(goto_next))?
-                        .unwrap_or_else(|| acx.unit_place(*span)))
+                        .unwrap_or_else(|| acx.unit_place(span)))
                 })?
             } else {
-                acx.unit_place(*span)
+                acx.unit_place(span)
             }
         }
         expr::Call(call, args) => {
-            assert!(args.len() == 1);
+            if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
+                assert!(args.len() == 1);
 
-            if ["isize", "i64", "i32", "i16", "i8"].contains(call) {
                 let (from, place) = analyze_expr(acx, &args[0])?;
-                let cast = match *call {
-                    "i8" => acx.tcx.types.i8,
-                    "i16" => acx.tcx.types.i16,
-                    "i32" => acx.tcx.types.i32,
-                    "i64" => acx.tcx.types.i64,
-                    "isize" => acx.tcx.types.isize,
+                let cast = match call.name {
+                    sym::i8 => acx.tcx.types.i8,
+                    sym::i16 => acx.tcx.types.i16,
+                    sym::i32 => acx.tcx.types.i32,
+                    sym::i64 => acx.tcx.types.i64,
+                    sym::isize => acx.tcx.types.isize,
                     _ => todo!(),
                 };
                 let kind = CastKind::from_cast(from.kind, cast)
                     .ok_or(Error::NonPrimitiveCast { from, cast })?;
-                acx.push_rvalue(
+                acx.push_temp_rvalue(
                     Ty::new(from.span, cast),
                     Rvalue::Cast(kind, Operand::Copy(place), cast),
                 )
             } else {
-                todo!()
+                if let Some(&def) = acx.hix.decls.get(&call.name) {
+                    let InstanceData { sig, span, symbol, hsig } = acx.hix.instances[def];
+                    assert_eq!(symbol, call.name); // todo: impossible?
+
+                    let (_, arg) = analyze_expr(acx, &args[0])?; // TODO: add sig comparison
+                    let dest = acx.typed_place(sig.output());
+                    acx.end_of_block(Terminator::Call {
+                        func: Operand::Const(
+                            ConstValue::Zst,
+                            acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
+                        ), // now functions are ZSTs
+                        args: vec![Operand::Copy(arg)],
+                        dest,
+                        target: Some(acx.next_block()),
+                        fn_span: span,
+                    });
+                    (Ty::new(hsig.ret_span(), sig.output()), dest)
+                } else {
+                    return Err(Error::NotFoundLocal(call));
+                }
             }
         }
         panic => todo!("{panic:?}"),
@@ -316,7 +361,7 @@ fn analyze_expr<'hir>(
 fn analyze_stmt<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmt: &Stmt<'hir>,
-    terminator: Option<fn(&mut AnalyzeCx) -> Terminator>,
+    terminator: Option<fn(&mut AnalyzeCx) -> Terminator<'hir>>,
 ) -> Result<'hir, Option<(Ty<'hir>, Place<'hir>)>> {
     Ok(match stmt.kind {
         ref stmt @ (stmt::Local(LocalStmt { init: expr, .. }) | stmt::Expr(expr, _)) => {
@@ -387,8 +432,8 @@ fn analyze_body<'hir>(
 
 fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) -> Result<'hir, ()> {
     acx.body.argc = sig.inputs.len();
-    for &(pat, ty) in sig.inputs {
-        let local = acx.body.local_decls.push(LocalDecl { ty: ty.kind });
+    for &(mutability, pat, ty) in sig.inputs {
+        let local = acx.body.local_decls.push(LocalDecl { mutability, ty: ty.kind });
         acx.scope().declare_var(pat, (ty, Place::pure(local)));
     }
     // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
@@ -406,10 +451,14 @@ pub fn analyze_fn_definition<'hir>(
         FnRetTy::Default(span) => Ty::new(span, tcx.types.unit),
         FnRetTy::Return(ty) => ty,
     };
-    let mut body =
-        mir::Body { local_decls: index_vec![LocalDecl { ty: ret.kind }], ..Default::default() };
+    let mut body = mir::Body {
+        // RETURN_PLACE now is only possible mutable place
+        local_decls: index_vec![LocalDecl { mutability: Mutability::Mut, ty: ret.kind }],
+        ..Default::default()
+    };
     let mut acx = AnalyzeCx {
-        tcx: &tcx,
+        tcx,
+        hix,
         block: mir::BasicBlockData { statements: vec![], terminator: None },
         body: &mut body,
         scope: Some(tcx.empty_hir_scope()),
@@ -440,7 +489,7 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
     let io = decl
         .inputs
         .iter()
-        .map(|(_, ty)| ty.kind)
+        .map(|(_, _, ty)| ty.kind)
         .chain(Some(match decl.output {
             FnRetTy::Default(_) => tcx.types.unit,
             FnRetTy::Return(ty) => ty.kind,
@@ -454,7 +503,7 @@ pub fn analyze_module<'hir>(
     functions: &[(FnSig<'hir>, Box<[Stmt<'hir>]>)],
 ) -> Result<'hir, IndexVec<DefId, mir::Body<'hir>>> {
     let mut defs = Vec::with_capacity(128);
-    for &(FnSig { decl, abi, span }, _) in functions {
+    for &(hsig @ FnSig { decl, abi, span }, _) in functions {
         match hix.decls.entry(decl.name) {
             Entry::Occupied(prev) => {
                 return Err(Error::DefinedMultiple {
@@ -467,6 +516,7 @@ pub fn analyze_module<'hir>(
                     symbol: decl.name,
                     sig: intern_decl(hix.tcx, decl, abi),
                     span,
+                    hsig,
                 }));
                 defs.push(*def);
             }

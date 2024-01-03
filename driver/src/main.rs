@@ -13,8 +13,8 @@ use {
 
 use {
     compiler::{
-        hir::{self, FnDecl, FnRetTy, FnSig, HirCtx, ReportSettings, Stmt},
-        mir::{self, ty::Abi},
+        hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
+        mir::{self},
         sess::SessionGlobals,
         Arena, Session, TyCtx,
     },
@@ -24,30 +24,28 @@ use {
 use {
     ariadne::{Color, Report, ReportKind},
     chumsky::Parser,
-    std::{
-        error::Error,
-        fs,
-        io::{self, Write},
-        process::Command,
+    compiler::{
+        mir::{pretty, ty::Abi},
+        par::{self, WorkerLocal},
+        sess,
     },
+    std::{error::Error, fmt::Write, fs, process::Command},
     yansi::Paint,
 };
 
-fn driver() -> Result<(), Box<dyn Error>> {
+fn driver<'tcx>(tcx: &'tcx TyCtx<'tcx>) -> Result<(), Box<dyn Error>> {
     let src = r#"
+fn narrow(x: i64) -> isize {
+    x.i8.isize
+}
+
 extern "C" fn main(argc: isize, argv: isize) -> isize {
-    argc + 200.isize
+    argc + 12.narrow
 }
         "#;
     println!("{}", Paint::magenta(src));
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
     // let Block { stmts, .. } = input.parse()?;
-
-    let arena = Arena::default();
-    let tcx = {
-        let sess = Session {};
-        TyCtx::enter(&arena, sess)
-    };
 
     let mut items = Vec::new();
     while let Ok(ItemFn { sig, block: Block { stmts, .. } }) = input.parse::<ItemFn>() {
@@ -87,7 +85,7 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
     };
 
     let mut builder = settings::builder();
-    // builder.set("opt_level", "speed_and_size")?;
+    builder.set("opt_level", "speed_and_size")?;
     let flags = settings::Flags::new(builder);
     //
     let isa = isa::lookup(target_lexicon::HOST)?;
@@ -97,38 +95,31 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
         ObjectModule::new(ObjectBuilder::new(isa, "main.object", module::default_libcall_names())?);
 
     for (def, mir) in mir.iter_enumerated() {
-        let mut place = Vec::new();
-
-        let symbol = hix.instances[def].symbol;
+        let mut printer = pretty::FmtPrinter::new(&hix);
         writeln!(
-            &mut place,
+            &mut printer,
             "{}",
             Paint::cyan(&format!("MIR --> ({}):", hix.instances[def].symbol))
         )?;
-        mir::write_mir_body_pretty(&tcx, &mir, &mut place)?;
+        mir::write_mir_pretty(def, &mir, &mut printer)?;
 
-        let func = codegen::cranelift::compile_fn(&tcx, hix.instances[def].sig, &mir);
+        let (id, func) = codegen::cranelift::compile_fn(&tcx, &hix, def, &mir, &mut module);
         let mut ctx = Context::for_function(func);
 
         ctx.set_disasm(true);
+        ctx.optimize(module.isa())?;
 
-        let _ = ctx.optimize(module.isa())?;
-        writeln!(&mut place, "{} \n{}", Paint::cyan("Cranelift IR -->:"), &ctx.func)?;
-        let id = module.declare_function(
-            symbol.as_str(),
-            if hix.instances[def].sig.abi == Abi::Zxc { Linkage::Local } else { Linkage::Export },
-            &ctx.func.signature,
-        )?;
+        writeln!(&mut printer, "{} \n{}", Paint::cyan("Cranelift IR -->:"), &ctx.func)?;
         module.define_function(id, &mut ctx)?;
 
         writeln!(
-            &mut place,
+            &mut printer,
             "{}\n{}",
             Paint::cyan("Assembly -->:"),
             ctx.compiled_code().unwrap().vcode.as_ref().unwrap()
         )?;
 
-        println!("{}", String::from_utf8_lossy(&place).replace("\n", "\n    "));
+        println!("{}", printer.into_buf().replace("\n", "\n"));
     }
 
     fs::write("zxc.emit", module.finish().emit()?)?;
@@ -143,8 +134,15 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
 
 fn main() {
     unsafe {
-        compiler::sess::in_session_globals(SessionGlobals::default(), || {
-            driver().unwrap();
+        sess::in_session_globals(SessionGlobals::default(), || {
+            // add each registry for each rayon thread
+            par::Registry::register(&par::Registry::new(32)); // better case is 1
+
+            let sess = Session {};
+            let arena = WorkerLocal::new(|_| Arena::default());
+            let tcx = TyCtx::enter(&arena, &sess);
+
+            driver(&tcx).unwrap()
         });
     }
 }

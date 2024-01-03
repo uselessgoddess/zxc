@@ -16,6 +16,28 @@ pub enum IntTy {
     I64,
 }
 
+impl IntTy {
+    pub fn name_str(&self) -> &'static str {
+        match *self {
+            IntTy::Isize => "isize",
+            IntTy::I8 => "i8",
+            IntTy::I16 => "i16",
+            IntTy::I32 => "i32",
+            IntTy::I64 => "i64",
+        }
+    }
+
+    pub fn name(&self) -> Symbol {
+        match *self {
+            IntTy::Isize => sym::isize,
+            IntTy::I8 => sym::i8,
+            IntTy::I16 => sym::i16,
+            IntTy::I32 => sym::i32,
+            IntTy::I64 => sym::i64,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum UintTy {
     Usize,
@@ -25,10 +47,34 @@ pub enum UintTy {
     U64,
 }
 
+impl UintTy {
+    pub fn name_str(&self) -> &'static str {
+        match *self {
+            UintTy::Usize => "usize",
+            UintTy::U8 => "u8",
+            UintTy::U16 => "u16",
+            UintTy::U32 => "u32",
+            UintTy::U64 => "u64",
+        }
+    }
+
+    pub fn name(&self) -> Symbol {
+        todo!()
+        // match *self {
+        //     UintTy::Usize => sym::usize,
+        //     UintTy::U8 => sym::u8,
+        //     UintTy::U16 => sym::u16,
+        //     UintTy::U32 => sym::u32,
+        //     UintTy::U64 => sym::u64,
+        // }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TyKind<'cx> {
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
+    FnDef(mir::DefId), // has no generics now
 }
 
 pub type Ty<'cx> = Interned<'cx, TyKind<'cx>>;
@@ -60,6 +106,24 @@ impl<'cx> Ty<'cx> {
             ),
         }
     }
+
+    pub fn fn_sig(self, hix: &HirCtx<'cx>) -> FnSig<'cx> {
+        match self.kind() {
+            FnDef(def) => hix.instances[def].sig,
+            _ => panic!("Ty::fn_sig() called on non-fn type: {:?}", self),
+        }
+    }
+
+    pub fn is_unit(&self) -> bool {
+        match self.kind() {
+            Tuple(list) => list.is_empty(),
+            _ => false,
+        }
+    }
+
+    pub fn is_ptr_sized_int(&self) -> bool {
+        matches!(self.kind(), Int(IntTy::Isize) /* | Uint(ty::UintTy::Usize)*/)
+    }
 }
 
 impl fmt::Display for Ty<'_> {
@@ -80,9 +144,18 @@ impl fmt::Display for Ty<'_> {
                     write!(f, "({})", util::join_fmt(list, Ty::to_string))
                 }
             }
+            FnDef(def) => {
+                write!(f, "{def:?}")
+            }
         }
     }
 }
 
-use crate::{tcx::Interned, util, Tx};
+use crate::{
+    hir::HirCtx,
+    mir,
+    symbol::{sym, Symbol},
+    tcx::Interned,
+    util, Tx,
+};
 pub use {list::List, sty::*, TyKind::*};

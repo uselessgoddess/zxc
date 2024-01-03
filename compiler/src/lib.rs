@@ -20,9 +20,9 @@ pub mod tcx;
 mod fx;
 
 pub(crate) mod index;
+pub mod par;
 pub mod sess;
-mod sharded;
-mod symbol;
+pub mod symbol;
 mod sync;
 pub(crate) mod util;
 

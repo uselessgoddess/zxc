@@ -14,6 +14,13 @@ impl<'tcx> TyCtx<'tcx> {
             shape: FieldsShape::Primitive,
         };
 
+        pub const ZST_LAYOUT: LayoutKind = LayoutKind {
+            abi: Abi::Aggregate,
+            size: Size::ZERO,
+            align: if let Some(align) = Align::from_bytes(1) { align } else { todo!() },
+            shape: FieldsShape::Primitive,
+        };
+
         // Safety: compiler intrinsics
         let layout = self.intern.intern_layout(
             self.arena,
@@ -28,16 +35,12 @@ impl<'tcx> TyCtx<'tcx> {
                 },
                 TyKind::Tuple(list) => {
                     if list.is_empty() {
-                        LayoutKind {
-                            abi: Abi::Aggregate,
-                            size: Size::ZERO,
-                            align: Align::from_bytes(1).expect("compiler query"),
-                            shape: FieldsShape::Primitive,
-                        }
+                        ZST_LAYOUT
                     } else {
                         todo!()
                     }
                 }
+                TyKind::FnDef(_) => ZST_LAYOUT,
             },
         );
         TyAbi { ty, layout }
@@ -55,6 +58,7 @@ impl<'tcx> TyCtx<'tcx> {
                         PassMode::Direct
                     }
                 }
+                TyKind::FnDef(_) => PassMode::Ignore,
             },
         };
 
@@ -62,6 +66,10 @@ impl<'tcx> TyCtx<'tcx> {
         FnAbi {
             args: sig.inputs().iter().map(|&ty| probe_abi(self, ty)).collect(),
             ret: probe_abi(self, sig.output()),
+            conv: match sig.abi {
+                mir::ty::Abi::Zxc => Conv::Zxc,
+                mir::ty::Abi::C => Conv::C,
+            },
         }
     }
 }

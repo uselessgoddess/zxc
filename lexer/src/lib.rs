@@ -1,8 +1,4 @@
-#![feature(
-    let_chains,
-    slice_ptr_len,
-    slice_ptr_get,
-)]
+#![feature(let_chains, slice_ptr_len, slice_ptr_get)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
 #[macro_use]
@@ -41,5 +37,4 @@ mod util {
     pub(crate) use lex_it;
 }
 
-pub use lexer::*;
-pub use parse::*;
+pub use {lexer::*, parse::*};

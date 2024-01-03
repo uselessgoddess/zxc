@@ -1,13 +1,18 @@
+mod consts;
 pub mod pretty;
 mod syntax;
 pub mod ty;
 
-use {crate::symbol::Symbol, lexer::Span, std::marker::PhantomData};
+use {
+    crate::{hir, symbol::Symbol},
+    lexer::Span,
+    std::marker::PhantomData,
+};
 pub use {
-    pretty::write_mir_body_pretty,
+    pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
-        BasicBlock, BasicBlockData, Body, CastKind, ConstValue, Local, LocalDecl, Operand, Place,
-        PlaceElem, Rvalue, ScalarRepr, Statement, Terminator,
+        BasicBlock, BasicBlockData, Body, CastKind, ConstValue, Local, LocalDecl, Mutability,
+        Operand, Place, PlaceElem, Rvalue, ScalarRepr, Statement, Terminator,
     },
     ty::{cast, FnSig, IntTy, Ty, TyKind, UintTy},
 };
@@ -34,4 +39,5 @@ pub struct InstanceData<'tcx> {
 
     // hir data
     pub span: Span,
+    pub hsig: hir::FnSig<'tcx>,
 }

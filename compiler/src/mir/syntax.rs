@@ -2,9 +2,10 @@ use {
     crate::{
         abi::Size,
         mir::{ty::List, Ty},
+        Tx,
     },
-    index_vec::IndexVec,
-    lexer::{BinOp, UnOp},
+    index_vec::{IndexSlice, IndexVec},
+    lexer::{BinOp, Span, UnOp},
     std::num::NonZeroU8,
 };
 
@@ -24,11 +25,20 @@ impl Local {
     pub const RETURN_PLACE: Self = Self::from_usize_unchecked(0);
 }
 
-#[derive(Copy, Clone)]
-pub enum Terminator {
-    Goto { target: BasicBlock },
+#[derive(Debug, Clone)]
+pub enum Terminator<'tcx> {
+    Goto {
+        target: BasicBlock,
+    },
     Return,
     Unreachable,
+    Call {
+        func: Operand<'tcx>,
+        args: Vec<Operand<'tcx>>, // SmallVec?
+        dest: Place<'tcx>,
+        target: Option<BasicBlock>,
+        fn_span: Span,
+    },
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -36,7 +46,7 @@ pub enum PlaceElem<'tcx> {
     Subtype(Ty<'tcx>), // also applicable for non-transmuting types
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Place<'tcx> {
     pub local: Local,
     pub projection: &'tcx List<PlaceElem<'tcx>>,
@@ -48,16 +58,26 @@ impl<'tcx> Place<'tcx> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum Operand<'tcx> {
     Copy(Place<'tcx>),
     Const(ConstValue, Ty<'tcx>),
 }
 
+impl<'tcx> Operand<'tcx> {
+    pub fn ty(&self, decls: &IndexVec<Local, LocalDecl<'tcx>>, tcx: Tx<'tcx>) -> Ty<'tcx> {
+        // TODO: later also use `projection`
+        match *self {
+            Operand::Copy(place) => decls[place.local].ty,
+            Operand::Const(_, ty) => ty,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct ScalarRepr {
-    data: u128,
-    size: NonZeroU8,
+    pub(crate) data: u128,
+    pub(crate) size: NonZeroU8,
 }
 
 impl ScalarRepr {
@@ -119,7 +139,7 @@ pub enum CastKind {
     IntToInt,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Rvalue<'tcx> {
     Use(Operand<'tcx>),
     UseDeref(Place<'tcx>),
@@ -128,7 +148,7 @@ pub enum Rvalue<'tcx> {
     Cast(CastKind, Operand<'tcx>, Ty<'tcx>),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Statement<'tcx> {
     Assign(Place<'tcx>, Rvalue<'tcx>),
     Nop,
@@ -137,17 +157,24 @@ pub enum Statement<'tcx> {
 #[derive(Debug, Clone)]
 pub struct BasicBlockData<'tcx> {
     pub statements: Vec<Statement<'tcx>>,
-    pub terminator: Option<Terminator>,
+    pub terminator: Option<Terminator<'tcx>>,
 }
 
-impl BasicBlockData<'_> {
-    pub fn terminator(&self) -> Terminator {
-        self.terminator.expect("invalid hir analyzing")
+impl<'tcx> BasicBlockData<'tcx> {
+    pub fn terminator(&self) -> &Terminator<'tcx> {
+        self.terminator.as_ref().expect("invalid hir analyzing")
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Copy)]
+pub enum Mutability {
+    Not, // `Not` less than `Mut`
+    Mut,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct LocalDecl<'tcx> {
+    pub mutability: Mutability,
     pub ty: Ty<'tcx>,
 }
 

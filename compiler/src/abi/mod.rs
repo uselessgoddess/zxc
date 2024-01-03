@@ -43,7 +43,7 @@ impl Align {
     pub const ONE: Align = Align { pow2: 0 };
     pub const MAX: Align = Align { pow2: 29 };
 
-    pub fn from_bytes(align: u64) -> Option<Self> {
+    pub const fn from_bytes(align: u64) -> Option<Self> {
         if align == 0 {
             return Some(Align::ONE);
         }
@@ -175,10 +175,17 @@ pub struct ArgAbi<'tcx> {
 pub struct FnAbi<'tcx> {
     pub args: Box<[ArgAbi<'tcx>]>,
     pub ret: ArgAbi<'tcx>,
+    pub conv: Conv,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct TyAbi<'tcx> {
     pub ty: mir::Ty<'tcx>,
     pub layout: Layout<'tcx>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum Conv {
+    C,
+    Zxc,
 }
