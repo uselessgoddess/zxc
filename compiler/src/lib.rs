@@ -24,13 +24,14 @@ pub(crate) mod index;
 pub mod par;
 pub mod sess;
 pub mod symbol;
-mod sync;
 pub(crate) mod util;
 
 pub use tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx};
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
+    par::Lock,
     symbol::{sym, Symbol},
-    sync::Lock,
 };
+
+pub use {rayon, rayon_core};

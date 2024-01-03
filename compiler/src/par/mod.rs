@@ -8,6 +8,9 @@ pub use {
     worker::{Registry, WorkerLocal},
 };
 
+pub type Lock<T> = parking_lot::Mutex<T>;
+pub type LockGuard<'a, T> = parking_lot::MutexGuard<'a, T>;
+
 pub fn assert_sync<T: Sync>() {}
 pub fn assert_send<T: Sync>() {}
 

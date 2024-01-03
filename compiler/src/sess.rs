@@ -19,11 +19,11 @@ where
 
 scoped_tls::scoped_thread_local!(static SESSION_GLOBALS: SessionGlobals);
 
-pub unsafe fn in_session_globals(globals: SessionGlobals, f: impl FnOnce()) {
+pub unsafe fn in_session_globals(globals: &SessionGlobals, f: impl FnOnce()) {
     assert!(
         !SESSION_GLOBALS.is_set(),
         "SESSION_GLOBALS should never be overwritten! \
          Use another thread if you need another SessionGlobals"
     );
-    SESSION_GLOBALS.set(&globals, f);
+    SESSION_GLOBALS.set(globals, f);
 }

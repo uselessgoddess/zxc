@@ -1,7 +1,6 @@
 use {
     crate::{
-        par::CachePadded,
-        sync::{Lock, LockGuard},
+        par::{CachePadded, Lock, LockGuard},
         FxHashMap, FxHasher,
     },
     std::{

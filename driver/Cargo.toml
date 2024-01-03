@@ -18,3 +18,4 @@ compiler = { path = "../compiler" }
 lexer = { path = "../lexer" }
 
 yansi = "1.0.0-rc.1"
+num_cpus = "1.16.0"
