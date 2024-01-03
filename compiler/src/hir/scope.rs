@@ -1,11 +1,9 @@
 use {
-    super::{Error, Result, Ty},
+    super::Ty,
     crate::{
-        mir::{self, InstanceData},
-        symbol::Symbol,
-        FxHashMap,
+        mir::{self},
+        FxHashMap, Symbol,
     },
-    index_vec::IndexVec,
 };
 
 #[derive(Debug, Default)]

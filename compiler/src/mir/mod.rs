@@ -4,7 +4,7 @@ mod syntax;
 pub mod ty;
 
 use {
-    crate::{hir, symbol::Symbol},
+    crate::{hir, Symbol},
     lexer::Span,
     std::marker::PhantomData,
 };

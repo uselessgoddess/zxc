@@ -2,15 +2,12 @@ use {
     crate::{
         abi::LayoutKind,
         mir::{ty::List, TyKind},
-        sync::Lock,
-        FxHashMap,
     },
     std::{
         borrow::Borrow,
         cmp::Ordering,
-        collections::hash_map::RawEntryMut,
         fmt,
-        hash::{BuildHasher, Hash, Hasher},
+        hash::{Hash, Hasher},
         ops::Deref,
         ptr,
     },

@@ -51,7 +51,7 @@ impl<T, P> Punctuated<T, P> {
     }
 
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &T> {
-        self.inner.iter().map(|(item, _)| item).chain(self.last.as_ref().map(Box::deref))
+        self.inner.iter().map(|(item, _)| item).chain(self.last.as_deref())
     }
 
     pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {

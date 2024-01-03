@@ -47,7 +47,7 @@ impl<'tcx> TyCtx<'tcx> {
     }
 
     pub fn fn_abi_of_sig(&self, sig: mir::FnSig<'tcx>) -> FnAbi<'tcx> {
-        let probe_abi = |tcx, ty| ArgAbi {
+        let probe_abi = |_tcx, ty| ArgAbi {
             ty: self.layout_of(ty),
             mode: match ty.kind() {
                 TyKind::Int(_) => PassMode::Direct,

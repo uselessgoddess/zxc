@@ -4,7 +4,7 @@ use {
         mir::{ty::List, Ty},
         Tx,
     },
-    index_vec::{IndexSlice, IndexVec},
+    index_vec::{IndexVec},
     lexer::{BinOp, Span, UnOp},
     std::num::NonZeroU8,
 };
@@ -65,7 +65,7 @@ pub enum Operand<'tcx> {
 }
 
 impl<'tcx> Operand<'tcx> {
-    pub fn ty(&self, decls: &IndexVec<Local, LocalDecl<'tcx>>, tcx: Tx<'tcx>) -> Ty<'tcx> {
+    pub fn ty(&self, decls: &IndexVec<Local, LocalDecl<'tcx>>, _tcx: Tx<'tcx>) -> Ty<'tcx> {
         // TODO: later also use `projection`
         match *self {
             Operand::Copy(place) => decls[place.local].ty,

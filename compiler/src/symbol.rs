@@ -125,7 +125,7 @@ pub mod kw {
 }
 
 pub mod sym {
-    use crate::symbol::Symbol;
+    use crate::Symbol;
 
     pub use super::sym_generated::*;
 

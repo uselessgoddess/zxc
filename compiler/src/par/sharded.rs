@@ -9,7 +9,6 @@ use {
         collections::hash_map::RawEntryMut,
         hash::{Hash, Hasher},
         mem,
-        ops::{Deref, DerefMut},
     },
 };
 

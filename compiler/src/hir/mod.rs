@@ -13,7 +13,7 @@ use {
         FxHashMap, Span, Tx,
     },
     index_vec::{index_vec, IndexVec},
-    lexer::{BinOp, Block, Lit, LitInt, ReturnType, Spanned, UnOp},
+    lexer::{BinOp, Lit, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
     std::{collections::hash_map::Entry, mem},
 };
@@ -165,7 +165,7 @@ impl<'tcx> FnDecl<'tcx> {
 impl<'tcx> FnSig<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, sig: &lexer::Signature<'tcx>) -> Self {
         Self {
-            abi: if let Some(_) = &sig.abi { Abi::C } else { Abi::Zxc },
+            abi: if sig.abi.is_some() { Abi::C } else { Abi::Zxc },
             decl: FnDecl::analyze(tcx, sig),
             span: sig.span(),
         }
@@ -329,27 +329,25 @@ fn analyze_expr<'hir>(
                     Ty::new(from.span, cast),
                     Rvalue::Cast(kind, Operand::Copy(place), cast),
                 )
-            } else {
-                if let Some(&def) = acx.hix.decls.get(&call.name) {
-                    let InstanceData { sig, span, symbol, hsig } = acx.hix.instances[def];
-                    assert_eq!(symbol, call.name); // todo: impossible?
+            } else if let Some(&def) = acx.hix.decls.get(&call.name) {
+                let InstanceData { sig, span, symbol, hsig } = acx.hix.instances[def];
+                assert_eq!(symbol, call.name); // todo: impossible?
 
-                    let (_, arg) = analyze_expr(acx, &args[0])?; // TODO: add sig comparison
-                    let dest = acx.typed_place(sig.output());
-                    acx.end_of_block(Terminator::Call {
-                        func: Operand::Const(
-                            ConstValue::Zst,
-                            acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
-                        ), // now functions are ZSTs
-                        args: vec![Operand::Copy(arg)],
-                        dest,
-                        target: Some(acx.next_block()),
-                        fn_span: span,
-                    });
-                    (Ty::new(hsig.ret_span(), sig.output()), dest)
-                } else {
-                    return Err(Error::NotFoundLocal(call));
-                }
+                let (_, arg) = analyze_expr(acx, &args[0])?; // TODO: add sig comparison
+                let dest = acx.typed_place(sig.output());
+                acx.end_of_block(Terminator::Call {
+                    func: Operand::Const(
+                        ConstValue::Zst,
+                        acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
+                    ), // now functions are ZSTs
+                    args: vec![Operand::Copy(arg)],
+                    dest,
+                    target: Some(acx.next_block()),
+                    fn_span: span,
+                });
+                (Ty::new(hsig.ret_span(), sig.output()), dest)
+            } else {
+                return Err(Error::NotFoundLocal(call));
             }
         }
         panic => todo!("{panic:?}"),
@@ -399,7 +397,7 @@ fn analyze_local_block_unclosed<'hir>(
     Ok(())
 }
 
-fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, ty: Ty<'hir>, place: Place<'hir>) {
+fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, place: Place<'hir>) {
     acx.block.statements.push(Statement::Assign(
         Place::pure(Local::RETURN_PLACE),
         Rvalue::Use(Operand::Copy(place)),

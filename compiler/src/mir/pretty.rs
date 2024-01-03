@@ -354,7 +354,7 @@ pub fn write_mir_pretty<'tcx>(
     p!(write("fn {}", hsig.decl.name));
 
     p!("(");
-    w.comma_sep_with(sig.inputs().iter().enumerate(), |cx, ((local, ty))| {
+    w.comma_sep_with(sig.inputs().iter().enumerate(), |cx, (local, ty)| {
         write!(cx, "_{}: ", local + 1)?;
         ty.print(cx)
     })?;
