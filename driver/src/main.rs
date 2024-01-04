@@ -17,7 +17,7 @@ use {
         hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
         mir::{self},
         sess::SessionGlobals,
-        Arena, Session, TyCtx,
+        Arena, Session, Tx, TyCtx,
     },
     lexer::{Block, ItemFn, ParseBuffer},
 };
@@ -36,9 +36,9 @@ use {
 
 pub type Error = Box<dyn std::error::Error + Sync + Send>;
 
-fn driver<'tcx>(tcx: &'tcx TyCtx<'tcx>) -> Result<(), Error> {
+fn driver(tcx: Tx) -> Result<(), Error> {
     let src = r#"
-fn narrow(x: i64) -> isize {
+fn narrow(x: i32) -> isize {
     x.i8.isize
 }
 
@@ -75,7 +75,7 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
         Err(err) => {
             let settings =
                 ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
-            let (code, reason, labels) = err.report("src/sample.src", settings);
+            let (code, reason, labels) = err.report(&hix, "src/sample.src", settings);
             let mut report = Report::build(ReportKind::Error, "src/sample.src", 5)
                 .with_code(code)
                 .with_message(reason);
@@ -145,7 +145,7 @@ extern "C" fn main(argc: isize, argv: isize) -> isize {
     Ok(())
 }
 
-use compiler::rayon::{self, prelude::*, ThreadPool, ThreadPoolBuilder};
+use compiler::rayon::{prelude::*, ThreadPoolBuilder};
 
 pub fn run_compiler() {
     let threads = num_cpus::get();

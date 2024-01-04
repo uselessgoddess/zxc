@@ -70,7 +70,7 @@ impl UintTy {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TyKind<'cx> {
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
@@ -126,7 +126,7 @@ impl<'cx> Ty<'cx> {
     }
 }
 
-impl fmt::Display for Ty<'_> {
+impl fmt::Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.kind() {
             Int(int) => match int {
@@ -141,11 +141,11 @@ impl fmt::Display for Ty<'_> {
                 if list.is_empty() {
                     f.write_str("@unit")
                 } else {
-                    write!(f, "({})", util::join_fmt(list, Ty::to_string))
+                    write!(f, "({})", util::join_fmt_debug(list))
                 }
             }
             FnDef(def) => {
-                write!(f, "{def:?}")
+                write!(f, "fn({def:?})")
             }
         }
     }

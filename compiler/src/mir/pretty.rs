@@ -68,7 +68,8 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
             (ConstValue::Zst, ty::FnDef(def)) => return self.print_def_path(def),
             _ => {}
         }
-        write!(self, "{ct:?}: {ty}")
+        write!(self, "{ct:?}: ")?;
+        ty.print(self)
     }
 
     fn print_const_scalar(&mut self, int: mir::ScalarRepr, ty: mir::Ty<'tcx>) -> fmt::Result {
@@ -116,6 +117,18 @@ pub trait Print<'tcx> {
 impl<'tcx> Print<'tcx> for mir::Ty<'tcx> {
     fn print<P: Printer<'tcx>>(&self, cx: &mut P) -> fmt::Result {
         cx.print_type(*self)
+    }
+}
+
+pub trait DisplayCtx<'tcx> {
+    fn to_string(&self, hix: &HirCtx<'tcx>) -> String;
+}
+
+impl<'tcx, All: Print<'tcx>> DisplayCtx<'tcx> for All {
+    fn to_string(&self, hix: &HirCtx<'tcx>) -> String {
+        let mut fmt = FmtPrinter::new(hix);
+        self.print(&mut fmt).expect("an error occurred when formatting");
+        fmt.into_buf()
     }
 }
 

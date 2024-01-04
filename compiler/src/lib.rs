@@ -26,12 +26,15 @@ pub mod sess;
 pub mod symbol;
 pub(crate) mod util;
 
-pub use tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx};
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
     par::Lock,
     symbol::{sym, Symbol},
+};
+pub use {
+    mir::pretty,
+    tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx},
 };
 
 pub use {rayon, rayon_core};

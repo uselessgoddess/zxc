@@ -51,14 +51,14 @@ impl fmt::Debug for FnSig<'_> {
         } else {
             let (last, inputs) = inputs.split_last().unwrap();
             for ty in inputs {
-                write!(f, "{ty}, ")?;
+                write!(f, "{ty:?}, ")?;
             }
-            write!(f, "{last})")?;
+            write!(f, "{last:?})")?;
         }
 
         match self.output().kind() {
             ty::Tuple(list) if list.is_empty() => Ok(()),
-            _ => write!(f, " -> {}", &self.output()),
+            _ => write!(f, " -> {:?}", &self.output()),
         }
     }
 }

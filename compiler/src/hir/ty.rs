@@ -35,9 +35,3 @@ impl PartialEq for Ty<'_> {
 }
 
 impl Eq for Ty<'_> {}
-
-impl fmt::Display for Ty<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.kind.fmt(f)
-    }
-}
