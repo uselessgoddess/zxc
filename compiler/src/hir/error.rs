@@ -2,13 +2,13 @@ use {
     crate::{
         hir::{self, Ty},
         mir,
-        pretty::DisplayCtx,
+        pretty::{self, DisplayCtx, Print, Printer},
         symbol::{Ident, Symbol},
         util,
     },
     ariadne::{Color, Fmt, Label},
     lexer::Span,
-    std::ops::Range,
+    std::{fmt, ops::Range},
 };
 
 pub struct ReportSettings {
@@ -21,12 +21,36 @@ pub type Result<'tcx, T> = std::result::Result<T, Error<'tcx>>;
 
 pub enum Error<'tcx> {
     NotFoundLocal(Ident),
-    TypeMismatch { expected: Ty<'tcx>, found: Ty<'tcx> },
-    TypeMismatchOnePlace { expected: Ty<'tcx>, found: mir::Ty<'tcx> },
-    ConcreteType { expected: Vec<Ty<'tcx>>, found: Ty<'tcx> },
-    NonPrimitiveCast { from: Ty<'tcx>, cast: mir::Ty<'tcx> },
-    DefinedMultiple { name: Symbol, definition: Span },
-    WrongMainSig { sig: mir::FnSig<'tcx>, span: Span },
+    TypeMismatch {
+        expected: Ty<'tcx>,
+        found: Ty<'tcx>,
+    },
+    TypeMismatchOnePlace {
+        expected: Ty<'tcx>,
+        found: mir::Ty<'tcx>,
+    },
+    ConcreteType {
+        expected: Vec<Ty<'tcx>>,
+        found: Ty<'tcx>,
+    },
+    NonPrimitiveCast {
+        from: Ty<'tcx>,
+        cast: mir::Ty<'tcx>,
+    },
+    DefinedMultiple {
+        name: Symbol,
+        definition: Span,
+    },
+    WrongMainSig {
+        sig: mir::FnSig<'tcx>,
+        span: Span,
+    },
+    WrongFnArgs {
+        expect: Vec<mir::Ty<'tcx>>,
+        found: Vec<Ty<'tcx>>,
+        caller: Span,
+        target: Option<Span>,
+    },
     HasNoMain(Span),
 }
 
@@ -40,6 +64,7 @@ impl<'a> Error<'a> {
         colors: ReportSettings,
     ) -> (&str, String, Vec<Label<Spanned<'a>>>) {
         let fmt = |hx, ty: mir::Ty<'a>| format!("`{}`", ty.to_string(hx)).fg(colors.err_kw);
+        let s = |span: &Span| (src_loc, span.into_range());
 
         use ariadne::Fmt;
 
@@ -126,6 +151,41 @@ impl<'a> Error<'a> {
                 "`main` function not found in ...".into(),
                 vec![Label::new((src_loc, span.into_range()))],
             ),
+            Error::WrongFnArgs { expect, found, caller, target } => {
+                let location = target.unwrap_or(*caller);
+                (
+                    "#ERROR_PLACEHOLDER",
+                    "function has another signature".into(),
+                    vec![
+                        Label::new(s(&location)).with_message(format!(
+                            "expected: {}",
+                            format_sig(hx, expect.iter()).fg(colors.kw)
+                        )),
+                        Label::new(s(caller)).with_message(format!(
+                            "{}found: {}",
+                            if target.is_some() { "" } else { "   " }, // tabulation when has no target
+                            format_sig(hx, found.iter().map(|ty| &**ty)).fg(colors.kw)
+                        )),
+                    ],
+                )
+            }
         }
     }
+}
+
+fn format_sig<'a, 'tcx: 'a>(
+    hx: &hir::HirCtx<'tcx>,
+    args: impl Iterator<Item = &'a mir::Ty<'tcx>>,
+) -> String {
+    use fmt::Write;
+    let mut fmt = pretty::FmtPrinter::new(hx);
+
+    let buf: std::result::Result<_, fmt::Error> = try {
+        write!(fmt, "(")?;
+        fmt.comma_sep_with(args, |cx, arg| arg.print(cx))?;
+        write!(fmt, ")")?;
+
+        fmt.into_buf()
+    };
+    format!("`{}`", buf.unwrap())
 }

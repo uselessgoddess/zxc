@@ -9,7 +9,7 @@ use {
     },
     cranelift_module::{self as module, Module},
     cranelift_object::{ObjectBuilder, ObjectModule},
-    std::time::Instant,
+    std::{ops::Range, time::Instant},
 };
 
 use {
@@ -23,9 +23,9 @@ use {
 };
 
 use {
-    ariadne::{Color, Report, ReportKind},
     chumsky::Parser,
     compiler::{
+        ariadne::{self, Color, Report, ReportKind},
         mir::pretty,
         par::{self, WorkerLocal},
         sess,
@@ -38,12 +38,14 @@ pub type Error = Box<dyn std::error::Error + Sync + Send>;
 
 fn driver(tcx: Tx) -> Result<(), Error> {
     let src = r#"
-fn narrow(x: i32) -> isize {
-    (x + 123).i8.isize
+fn sum(a: i32, b: i32) -> i32 {
+    a + b
 }
-
-extern "C" fn main(argc: isize, argv: isize) -> isize {
-    argc + 12.narrow
+fn narrow(x: isize) -> isize {
+    x.i8.isize
+}
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    argc.narrow.i32.sum(1).isize
 }
         "#;
     println!("{}", Paint::magenta(src));
@@ -158,7 +160,7 @@ pub fn run_compiler() {
         .build_scoped(
             |thread| {
                 registry.register();
-                unsafe { sess::in_session_globals(globals.clone(), || thread.run()) }
+                unsafe { sess::in_session_globals(globals, || thread.run()) }
             },
             |pool| {
                 pool.install(|| {

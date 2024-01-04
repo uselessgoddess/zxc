@@ -15,7 +15,7 @@ use {
     index_vec::{index_vec, IndexVec},
     lexer::{BinOp, Lit, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
-    std::{collections::hash_map::Entry, mem},
+    std::{collections::hash_map::Entry, iter, mem},
 };
 pub use {
     error::{Error, ReportSettings, Result},
@@ -59,11 +59,17 @@ impl<'tcx> Expr<'tcx> {
                 expr::Local(Ident::new(Symbol::intern(str.ident()), str.span))
             }
             lexer::Expr::TailCall(TailCall { receiver, func, args, .. }) => {
-                assert!(args.is_none());
-
+                let recv = Self::analyze(tcx, receiver);
                 expr::Call(
                     Ident::from_parse(*func),
-                    tcx.arena.expr.alloc_from_iter([Self::analyze(tcx, receiver)]),
+                    if let Some((_, args)) = args {
+                        tcx.arena.expr.alloc_from_iter(
+                            iter::once(recv)
+                                .chain(args.iter().map(|expr| Self::analyze(tcx, expr))),
+                        )
+                    } else {
+                        tcx.arena.expr.alloc_from_iter([recv])
+                    },
                 )
             }
             lexer::Expr::Block(block @ Block { stmts, .. }) => expr::Block(
@@ -310,33 +316,56 @@ fn analyze_expr<'hir>(
             }
         }
         expr::Call(call, args) => {
-            if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
-                assert!(args.len() == 1);
+            let operands =
+                args.iter().map(|expr| analyze_expr(acx, expr)).collect::<Result<Vec<_>>>()?;
+            let types: Vec<_> = operands.iter().map(|(t, _)| *t).collect();
+            let args: Vec<_> = operands.iter().map(|(_, o)| *o).collect();
 
-                let (from, operand) = analyze_expr(acx, &args[0])?;
+            if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
                 let cast = match call.name {
                     sym::i8 => acx.tcx.types.i8,
                     sym::i16 => acx.tcx.types.i16,
                     sym::i32 => acx.tcx.types.i32,
                     sym::i64 => acx.tcx.types.i64,
                     sym::isize => acx.tcx.types.isize,
-                    _ => todo!(),
+                    _ => unreachable!(),
                 };
-                let kind = CastKind::from_cast(from.kind, cast)
-                    .ok_or(Error::NonPrimitiveCast { from, cast })?;
-                acx.push_temp_rvalue(Ty::new(from.span, cast), Rvalue::Cast(kind, operand, cast))
+
+                if let [(from, operand)] = operands[..] {
+                    let kind = CastKind::from_cast(from.kind, cast)
+                        .ok_or(Error::NonPrimitiveCast { from, cast })?;
+                    acx.push_temp_rvalue(
+                        Ty::new(from.span, cast),
+                        Rvalue::Cast(kind, operand, cast),
+                    )
+                } else {
+                    return Err(Error::WrongFnArgs {
+                        expect: vec![cast],
+                        found: types,
+                        caller: call.span,
+                        target: None,
+                    });
+                }
             } else if let Some(&def) = acx.hix.decls.get(&call.name) {
                 let InstanceData { sig, span, symbol, hsig } = acx.hix.instances[def];
                 assert_eq!(symbol, call.name); // todo: impossible?
 
-                let (_, arg) = analyze_expr(acx, &args[0])?; // TODO: add sig comparison
+                if !types.iter().eq_by(sig.inputs(), |hir, mir| &hir.kind == mir) {
+                    return Err(Error::WrongFnArgs {
+                        expect: sig.inputs().iter().copied().collect(),
+                        found: types,
+                        caller: call.span,
+                        target: Some(span),
+                    });
+                }
+
                 let dest = acx.typed_place(sig.output());
                 acx.end_of_block(Terminator::Call {
                     func: Operand::Const(
                         ConstValue::Zst,
                         acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
                     ), // now functions are ZSTs
-                    args: vec![arg],
+                    args,
                     dest,
                     target: Some(acx.next_block()),
                     fn_span: span,

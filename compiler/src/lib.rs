@@ -1,5 +1,6 @@
 #![feature(
     let_chains,
+    try_blocks,
     vec_into_raw_parts,
     dropck_eyepatch,
     extern_types,
@@ -10,6 +11,7 @@
     core_intrinsics,
     mem_copy_fn
 )]
+#![feature(iter_order_by)]
 #![allow(clippy::unit_arg)]
 #![allow(internal_features)]
 
@@ -26,15 +28,16 @@ pub mod sess;
 pub mod symbol;
 pub(crate) mod util;
 
+pub use {
+    ariadne,
+    mir::pretty,
+    tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx},
+};
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
     par::Lock,
     symbol::{sym, Symbol},
-};
-pub use {
-    mir::pretty,
-    tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx},
 };
 
 pub use {rayon, rayon_core};

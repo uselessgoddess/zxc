@@ -1,6 +1,6 @@
 use {
     crate::{mir, Span},
-    std::{fmt, fmt::Formatter},
+    std::ops::Deref,
 };
 
 #[derive(Debug)]
@@ -35,3 +35,11 @@ impl PartialEq for Ty<'_> {
 }
 
 impl Eq for Ty<'_> {}
+
+impl<'hir> Deref for Ty<'hir> {
+    type Target = mir::Ty<'hir>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.kind
+    }
+}
