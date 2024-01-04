@@ -5,7 +5,7 @@ mod ty;
 use {
     crate::{
         mir::{
-            self, ty::Abi, CastKind, ConstValue, DefId, InstanceData, Local, LocalDecl, Mutability,
+            self, ty::Abi, CastKind, ConstValue, InstanceData, Local, LocalDecl, Mutability,
             Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
         },
         sym,
@@ -524,7 +524,7 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
 pub fn analyze_module<'hir>(
     hix: &mut HirCtx<'hir>,
     functions: &[(FnSig<'hir>, Box<[Stmt<'hir>]>)],
-) -> Result<'hir, IndexVec<DefId, mir::Body<'hir>>> {
+) -> Result<'hir, IndexVec<mir::DefId, mir::Body<'hir>>> {
     let mut defs = Vec::with_capacity(128);
     for &(hsig @ FnSig { decl, abi, span }, _) in functions {
         match hix.decls.entry(decl.name) {
@@ -560,7 +560,7 @@ pub fn analyze_module<'hir>(
         }
     }
 
-    let mut mir = IndexVec::<DefId, _>::with_capacity(128);
+    let mut mir = IndexVec::<mir::DefId, _>::with_capacity(128);
     for (def, (sig, stmts)) in defs.into_iter().zip(functions) {
         let body = analyze_fn_definition(hix.tcx, hix, sig.decl, stmts)?;
         assert_eq!(def, mir.push(body));
