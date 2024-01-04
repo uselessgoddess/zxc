@@ -4,7 +4,7 @@ use {
         mir::{ty::List, Ty},
         Tx,
     },
-    index_vec::{IndexVec},
+    index_vec::IndexVec,
     lexer::{BinOp, Span, UnOp},
     std::num::NonZeroU8,
 };

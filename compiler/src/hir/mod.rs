@@ -246,17 +246,18 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         &mut self,
         ty: Ty<'hir>,
         rvalue: Rvalue<'hir>,
-    ) -> (Ty<'hir>, Place<'hir>) {
-        self.push_rvalue(ty, rvalue, Mutability::Not)
+    ) -> (Ty<'hir>, Operand<'hir>) {
+        let (ty, place) = self.push_rvalue(ty, rvalue, Mutability::Not);
+        (ty, Operand::Copy(place))
     }
 
     pub fn typed_place(&mut self, ty: mir::Ty<'hir>) -> Place<'hir> {
         Place::pure(self.body.local_decls.push(LocalDecl { mutability: Mutability::Not, ty }))
     }
 
-    pub fn unit_place(&mut self, span: Span) -> (Ty<'hir>, Place<'hir>) {
+    pub fn unit_place(&mut self, span: Span) -> (Ty<'hir>, Operand<'hir>) {
         let unit = Ty { kind: self.tcx.types.unit, span };
-        self.push_temp_rvalue(unit, Rvalue::Use(Operand::Const(ConstValue::Zst, unit.kind)))
+        (unit, Operand::Const(ConstValue::Zst, unit.kind))
     }
 }
 
@@ -271,22 +272,23 @@ fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
 fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
-) -> Result<'hir, (Ty<'hir>, Place<'hir>)> {
+) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
     let (ty, rvalue) = match expr.kind {
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
-            let ty = acx.tcx.types.i64;
-            acx.push_rvalue(
+            let ty = acx.tcx.types.i32;
+            (
                 Ty::new(span, ty),
-                Rvalue::Use(Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit)), ty)),
-                Mutability::Not,
+                Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit as u32)), ty),
             )
         }
-        expr::Local(ident) => acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?,
+        expr::Local(ident) => {
+            let (ty, place) = acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?;
+            (ty, Operand::Copy(place))
+        }
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
-                let (ty, place) = analyze_expr(acx, expr)?;
-
-                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(op, Operand::Copy(place)))
+                let (ty, operand) = analyze_expr(acx, expr)?;
+                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(op, operand))
             }
             _ => todo!(),
         },
@@ -294,10 +296,7 @@ fn analyze_expr<'hir>(
             let (lhs, a) = analyze_expr(acx, lhs)?;
             let (rhs, b) = analyze_expr(acx, rhs)?;
 
-            acx.push_temp_rvalue(
-                assert_same_types(lhs, rhs)?,
-                Rvalue::BinaryOp(op, Operand::Copy(a), Operand::Copy(b)),
-            )
+            acx.push_temp_rvalue(assert_same_types(lhs, rhs)?, Rvalue::BinaryOp(op, a, b))
         }
         expr::Block(stmts, span) => {
             if let Some((tail, stmts)) = stmts.split_last() {
@@ -314,7 +313,7 @@ fn analyze_expr<'hir>(
             if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
                 assert!(args.len() == 1);
 
-                let (from, place) = analyze_expr(acx, &args[0])?;
+                let (from, operand) = analyze_expr(acx, &args[0])?;
                 let cast = match call.name {
                     sym::i8 => acx.tcx.types.i8,
                     sym::i16 => acx.tcx.types.i16,
@@ -325,10 +324,7 @@ fn analyze_expr<'hir>(
                 };
                 let kind = CastKind::from_cast(from.kind, cast)
                     .ok_or(Error::NonPrimitiveCast { from, cast })?;
-                acx.push_temp_rvalue(
-                    Ty::new(from.span, cast),
-                    Rvalue::Cast(kind, Operand::Copy(place), cast),
-                )
+                acx.push_temp_rvalue(Ty::new(from.span, cast), Rvalue::Cast(kind, operand, cast))
             } else if let Some(&def) = acx.hix.decls.get(&call.name) {
                 let InstanceData { sig, span, symbol, hsig } = acx.hix.instances[def];
                 assert_eq!(symbol, call.name); // todo: impossible?
@@ -340,12 +336,12 @@ fn analyze_expr<'hir>(
                         ConstValue::Zst,
                         acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
                     ), // now functions are ZSTs
-                    args: vec![Operand::Copy(arg)],
+                    args: vec![arg],
                     dest,
                     target: Some(acx.next_block()),
                     fn_span: span,
                 });
-                (Ty::new(hsig.ret_span(), sig.output()), dest)
+                (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
             } else {
                 return Err(Error::NotFoundLocal(call));
             }
@@ -360,10 +356,10 @@ fn analyze_stmt<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmt: &Stmt<'hir>,
     terminator: Option<fn(&mut AnalyzeCx) -> Terminator<'hir>>,
-) -> Result<'hir, Option<(Ty<'hir>, Place<'hir>)>> {
+) -> Result<'hir, Option<(Ty<'hir>, Operand<'hir>)>> {
     Ok(match stmt.kind {
         ref stmt @ (stmt::Local(LocalStmt { init: expr, .. }) | stmt::Expr(expr, _)) => {
-            let (ty, place) = analyze_expr(acx, expr)?;
+            let (ty, operand) = analyze_expr(acx, expr)?;
 
             // Skip block termination of it is empty
             if !acx.block.statements.is_empty()
@@ -375,10 +371,11 @@ fn analyze_stmt<'hir>(
 
             match stmt {
                 StmtKind::Local(LocalStmt { pat, .. }) => {
+                    let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), Mutability::Not);
                     acx.scope().declare_var(pat.name, (ty, place));
                     None
                 }
-                StmtKind::Expr(_, _) => Some((ty, place)),
+                StmtKind::Expr(_, _) => Some((ty, operand)),
             }
         }
     })
@@ -397,11 +394,10 @@ fn analyze_local_block_unclosed<'hir>(
     Ok(())
 }
 
-fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, place: Place<'hir>) {
-    acx.block.statements.push(Statement::Assign(
-        Place::pure(Local::RETURN_PLACE),
-        Rvalue::Use(Operand::Copy(place)),
-    ))
+fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
+    acx.block
+        .statements
+        .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
 }
 
 fn analyze_body<'hir>(

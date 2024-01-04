@@ -39,7 +39,7 @@ pub type Error = Box<dyn std::error::Error + Sync + Send>;
 fn driver(tcx: Tx) -> Result<(), Error> {
     let src = r#"
 fn narrow(x: i32) -> isize {
-    x.i8.isize
+    (x + 123).i8.isize
 }
 
 extern "C" fn main(argc: isize, argv: isize) -> isize {
