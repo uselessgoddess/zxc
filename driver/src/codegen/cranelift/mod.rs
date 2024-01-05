@@ -4,8 +4,8 @@ use {
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
         hir::HirCtx,
         mir::{
-            ty, BasicBlock, BasicBlockData, Body, ConstValue, DefId, IntTy, Local, Operand, Place,
-            Rvalue, Statement, Terminator, Ty,
+            ty, BasicBlock, BasicBlockData, BinOp, Body, ConstValue, DefId, IntTy, Local, Operand,
+            Place, Rvalue, Statement, Terminator, Ty,
         },
         Session, Tx,
     },
@@ -18,12 +18,13 @@ use {
     },
     cranelift_module::{FuncId, Linkage, Module},
     index_vec::IndexVec,
-    lexer::{BinOp, UnOp},
+    lexer::UnOp,
     target_lexicon::PointerWidth,
 };
 
 mod abi;
 mod cast;
+mod num;
 mod ssa;
 mod value;
 
@@ -86,6 +87,7 @@ impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
 
 pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<types::Type> {
     Some(match ty.kind() {
+        ty::Bool => types::I8,
         ty::Int(size) => match size {
             IntTy::I8 => types::I8,
             IntTy::I16 => types::I16,
@@ -141,34 +143,29 @@ pub(crate) fn scalar_to_clif(tcx: Tx<'_>, scalar: Scalar) -> types::Type {
     }
 }
 
-pub fn codegen_int_binop<'tcx>(
+pub fn codegen_binop<'tcx>(
     fx: &mut FunctionCx<'_, '_, 'tcx>,
     bin_op: BinOp,
     lhs: CValue<'tcx>,
     rhs: CValue<'tcx>,
 ) -> CValue<'tcx> {
-    assert_eq!(lhs.layout().ty, rhs.layout().ty, "int binop requires lhs and rhs of same type");
+    if let BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt = bin_op
+        && let ty::Bool | ty::Int(_) = lhs.layout().ty.kind()
+    {
+        let signed = type_sign(lhs.layout().ty);
+        let lhs = lhs.load_scalar(fx);
+        let rhs = rhs.load_scalar(fx);
 
-    let signed = type_sign(lhs.layout().ty);
-    let layout = lhs.layout();
-    let lhs = lhs.load_scalar(fx);
-    let rhs = rhs.load_scalar(fx);
-    let b = fx.bcx.ins();
-    // FIXME trap on overflow for the Unchecked versions
-    let val = match bin_op {
-        BinOp::Add(_) => b.iadd(lhs, rhs),
-        BinOp::Sub(_) => b.isub(lhs, rhs),
-        BinOp::Mul(_) => b.imul(lhs, rhs),
-        BinOp::Div(_) => {
-            if signed {
-                b.sdiv(lhs, rhs)
-            } else {
-                b.udiv(lhs, rhs)
-            }
-        }
-        _ => todo!(),
-    };
-    CValue::by_val(val, layout)
+        let int_cc = num::bin_op_to_int_cc(bin_op, signed).unwrap();
+        let val = fx.bcx.ins().icmp(int_cc, lhs, rhs);
+        return CValue::by_val(val, fx.tcx.layout_of(fx.tcx.types.bool));
+    }
+
+    match lhs.layout().ty.kind() {
+        ty::Bool => num::codegen_bool_binop(fx, bin_op, lhs, rhs),
+        ty::Int(_) => num::codegen_int_binop(fx, bin_op, lhs, rhs),
+        _ => unreachable!("{:?}({:?}, {:?})", bin_op, lhs.layout().ty, rhs.layout().ty),
+    }
 }
 
 pub(crate) fn codegen_const_value<'tcx>(
@@ -201,6 +198,8 @@ pub(crate) fn codegen_const_value<'tcx>(
                     }
                     _ => unreachable!(),
                 };
+
+                panic!();
 
                 // FIXME avoid this extra copy to the stack and directly write to the final
                 // destination
@@ -253,7 +252,7 @@ fn codegen_stmt<'tcx>(
                     let lhs = codegen_operand(fx, lhs);
                     let rhs = codegen_operand(fx, rhs);
 
-                    let val = codegen_int_binop(fx, op, lhs, rhs);
+                    let val = codegen_binop(fx, op, lhs, rhs);
                     place.write_cvalue(fx, val);
                 }
                 Rvalue::UnaryOp(op, operand) => {
@@ -308,6 +307,29 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: FnAbi<'tcx>) {
             }
             Terminator::Call { func, ref args, dest, target, .. } => {
                 abi::codegen_terminator_call(fx, func, args, dest, target)
+            }
+            Terminator::SwitchInt { discr, ref targets } => {
+                let discr = codegen_operand(fx, discr);
+                let discr = discr.load_scalar(fx);
+
+                if let Some((test, then, otherwise)) = targets.as_static_if() {
+                    let then_block = fx.block(then);
+                    let else_block = fx.block(otherwise);
+
+                    let test_zero = match test {
+                        0 => true,
+                        1 => false,
+                        _ => unreachable!("{targets:?}"),
+                    };
+
+                    if test_zero {
+                        fx.bcx.ins().brif(discr, else_block, &[], then_block, &[]);
+                    } else {
+                        fx.bcx.ins().brif(discr, then_block, &[], else_block, &[]);
+                    }
+                } else {
+                    todo!("complex switches")
+                }
             }
         }
     }

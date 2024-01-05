@@ -6,7 +6,7 @@ mod surround;
 pub mod ty;
 
 pub use {
-    expr::{BinOp, Block, Expr, Local, Stmt, UnOp},
+    expr::{BinOp, Block, Expr, If, Local, Stmt, UnOp},
     item::{Abi, FnArg, ItemFn, ReturnType, Signature},
     punct::Punctuated,
     ty::Type,

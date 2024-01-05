@@ -99,6 +99,8 @@ impl fmt::Display for Ident {
 macros::symbols! {
     Keywords {
         Empty:              "",
+
+        Else:               "else",
         Let:                "let",
         Loop:               "loop",
         Fn:                 "fn",

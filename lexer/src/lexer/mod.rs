@@ -90,6 +90,8 @@ pub mod ast {
             "extern" => Extern
             "let" => Let
             "fn" => Fn
+            "if" => If
+            "else" => Else
         }
 
         Punct(&str) {
@@ -100,7 +102,11 @@ pub mod ast {
 
             "=" => Eq
             "==" => EqEq
-            "!=" => NotEq
+            "!=" => Ne
+            "<" => Lt
+            "<=" => Le
+            ">" => Gt
+            ">=" => Ge
 
             "!" => Not
             "|" => Or

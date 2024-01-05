@@ -29,6 +29,12 @@ impl Precedence {
         match op {
             BinOp::Add(_) | BinOp::Sub(_) => Precedence::Arithmetic,
             BinOp::Mul(_) | BinOp::Div(_) => Precedence::Term,
+            BinOp::Eq(_)
+            | BinOp::Lt(_)
+            | BinOp::Le(_)
+            | BinOp::Ne(_)
+            | BinOp::Ge(_)
+            | BinOp::Gt(_) => Precedence::Compare,
         }
     }
 }
@@ -39,6 +45,13 @@ pub enum BinOp {
     Sub(Token![-]),
     Mul(Token![*]),
     Div(Token![/]),
+
+    Eq(Token![==]),
+    Ne(Token![!=]),
+    Le(Token![<=]),
+    Lt(Token![<]),
+    Ge(Token![>=]),
+    Gt(Token![>]),
 }
 
 macro_rules! select_op {
@@ -61,8 +74,13 @@ impl<'lex> Parse<'lex> for BinOp {
             Token![-] => BinOp::Sub,
             Token![*] => BinOp::Mul,
             Token![/] => BinOp::Div,
-            // Token![|] => BinOp::Or,
-            // Token![||] => BinOp::BitOr,
+
+            Token![==] => BinOp::Eq,
+            Token![!=] => BinOp::Ne,
+            Token![<=] => BinOp::Le,
+            Token![<] => BinOp::Lt,
+            Token![>=] => BinOp::Ge,
+            Token![>] => BinOp::Gt,
             _ => lookahead.error()
         }
     }
@@ -98,6 +116,7 @@ ast_enum_of_structs! {
         Unary(Unary<'a>),
         Binary(Binary<'a>),
         TailCall(TailCall<'a>),
+        If(If<'a>),
     }
 }
 
@@ -136,6 +155,14 @@ pub struct TailCall<'a> {
     pub args: Option<(token::Paren, Punctuated<Expr<'a>, Token![,]>)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct If<'a> {
+    pub if_token: Token![if],
+    pub cond: Box<Expr<'a>>,
+    pub then_branch: Block<'a>,
+    pub else_branch: Option<(Token![else], Box<Expr<'a>>)>,
+}
+
 impl<'lex> Parse<'lex> for Expr<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         let lhs = unary_expr(input)?;
@@ -167,6 +194,38 @@ impl<'lex> Parse<'lex> for Unary<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         Ok(Self { op: input.parse()?, expr: Box::new(unary_expr(input)?) })
     }
+}
+
+impl<'lex> Parse<'lex> for If<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(Self {
+            if_token: input.parse()?,
+            cond: Box::new(input.parse()?),
+            then_branch: input.parse()?,
+            else_branch: if input.peek(Token![else]) {
+                Some((input.parse()?, input.parse()?))
+            } else {
+                None
+            },
+        })
+    }
+}
+
+fn else_block<'lex>(
+    input: &mut ParseBuffer<'lex>,
+) -> parse::Result<(Token![else], Box<Expr<'lex>>)> {
+    let else_token: Token![else] = input.parse()?;
+
+    let mut lookahead = input.lookahead();
+    let else_branch = if lookahead.peek(Token![if]) {
+        input.parse().map(Expr::If)?
+    } else if lookahead.peek(token::Brace) {
+        Expr::Block(input.parse()?)
+    } else {
+        return Err(lookahead.error());
+    };
+
+    Ok((else_token, Box::new(else_branch)))
 }
 
 fn expr_paren<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Paren<'lex>> {
@@ -260,6 +319,8 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
         input.custom(expr_paren).map(Expr::Paren)
     } else if input.peek(token::Brace) {
         input.custom(Block::parse).map(Expr::Block)
+    } else if input.peek(Token![if]) {
+        input.parse().map(Expr::If)
     } else if input.is_empty() {
         Err(input.error("expected an expression"))
     } else {
@@ -390,4 +451,13 @@ fn tail_call() {
 
         println!("{expr:#?}");
     }
+}
+
+#[test]
+fn if_expr() {
+    let expr: If = lex_it!("if x + 1 == y * 2 {  }").parse().unwrap();
+    assert!(expr.else_branch.is_none());
+
+    let expr: If = lex_it!("if x {} else {}").parse().unwrap();
+    assert!(expr.else_branch.is_some());
 }

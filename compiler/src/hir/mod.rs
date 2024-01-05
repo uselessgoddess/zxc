@@ -6,14 +6,14 @@ use {
     crate::{
         mir::{
             self, ty::Abi, CastKind, ConstValue, InstanceData, Local, LocalDecl, Mutability,
-            Operand, Place, Rvalue, ScalarRepr, Statement, Terminator,
+            Operand, Place, Rvalue, ScalarRepr, Statement, SwitchTargets, Terminator,
         },
         sym,
         symbol::{Ident, Symbol},
         FxHashMap, Span, Tx,
     },
     index_vec::{index_vec, IndexVec},
-    lexer::{BinOp, Lit, LitInt, ReturnType, Spanned, UnOp},
+    lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
     std::{collections::hash_map::Entry, iter, mem},
 };
@@ -31,6 +31,7 @@ pub enum ExprKind<'tcx> {
     Binary(BinOp, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
     Call(Ident, &'tcx [Expr<'tcx>]),
     Block(&'tcx [Stmt<'tcx>], Span),
+    If(&'tcx Expr<'tcx>, &'tcx Expr<'tcx>, Option<&'tcx Expr<'tcx>>),
 }
 
 #[derive(Debug, Clone)]
@@ -39,9 +40,19 @@ pub struct Expr<'tcx> {
     pub span: Span,
 }
 
+fn analyze_block<'tcx>(tcx: Tx<'tcx>, block: &lexer::Block<'tcx>) -> Expr<'tcx> {
+    Expr {
+        kind: expr::Block(
+            tcx.arena.stmt.alloc_from_iter(block.stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt))),
+            block.span(),
+        ),
+        span: block.span(),
+    }
+}
+
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &lexer::Expr<'tcx>) -> Self {
-        use lexer::expr::{Binary, Block, Paren, TailCall, Unary};
+        use lexer::expr::{Binary, Block, If, Paren, TailCall, Unary};
 
         let span = expr.span();
         let kind = match expr {
@@ -72,9 +83,13 @@ impl<'tcx> Expr<'tcx> {
                     },
                 )
             }
-            lexer::Expr::Block(block @ Block { stmts, .. }) => expr::Block(
-                tcx.arena.stmt.alloc_from_iter(stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt))),
-                block.span(),
+            lexer::Expr::Block(block) => return analyze_block(tcx, block),
+            lexer::Expr::If(If { cond, then_branch, else_branch, .. }) => expr::If(
+                tcx.arena.expr.alloc(Self::analyze(tcx, cond)),
+                tcx.arena.expr.alloc(analyze_block(tcx, then_branch)),
+                else_branch
+                    .as_ref()
+                    .map(|(_, block)| &*tcx.arena.expr.alloc(Self::analyze(tcx, &block))),
             ),
         };
         Self { kind, span }
@@ -226,8 +241,24 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         ))
     }
 
+    pub fn end_of_block_dummy(&mut self) -> mir::BasicBlock {
+        self.block.terminator = None;
+        self.body.basic_blocks.push(mem::replace(
+            &mut self.block,
+            mir::BasicBlockData { statements: vec![], terminator: None },
+        ))
+    }
+
+    pub fn current_block(&self) -> mir::BasicBlock {
+        mir::BasicBlock::new(self.body.basic_blocks.len())
+    }
+
     pub fn next_block(&self) -> mir::BasicBlock {
         mir::BasicBlock::new(self.body.basic_blocks.len() + 1)
+    }
+
+    pub fn assign_rvalue(&mut self, place: Place<'hir>, val: Rvalue<'hir>) {
+        self.block.statements.push(Statement::Assign(place, val))
     }
 
     pub fn push_rvalue(
@@ -274,6 +305,51 @@ fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
     Terminator::Goto { target: acx.next_block() }
 }
+fn analyze_branch_expr<'hir>(
+    acx: &mut AnalyzeCx<'_, 'hir>,
+    cond: &'hir Expr<'hir>,
+    then_expr: &'hir Expr<'hir>,
+    else_expr: Option<&'hir Expr<'hir>>,
+) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
+    const DUMMY_BLOCK: mir::BasicBlock = mir::BasicBlock::START_BLOCK;
+
+    let (ty, discr) = analyze_expr(acx, cond)?;
+
+    let bool = acx.tcx.types.bool;
+    assert_same_types(Ty::new(cond.span, bool), ty)?;
+
+    let ret_place = acx.typed_place(acx.tcx.types.unit);
+    let cond_block = acx.end_of_block_dummy();
+
+    let then_entry = acx.current_block();
+    let (then_ty, then) = analyze_expr(acx, then_expr)?;
+    acx.assign_rvalue(ret_place, Rvalue::Use(then));
+    let then_block = acx.end_of_block_dummy();
+
+    let else_entry = acx.current_block();
+    let else_ty = if let Some(else_) = else_expr {
+        let (ty, else_) = analyze_expr(acx, else_)?;
+        acx.assign_rvalue(ret_place, Rvalue::Use(else_));
+        ty
+    } else {
+        Ty::new(then_expr.span, acx.tcx.types.unit)
+    };
+
+    // All the if blocks converge to this block
+    let next_block = acx.next_block();
+    acx.end_of_block(Terminator::Goto { target: next_block });
+    acx.body.basic_blocks[then_block].terminator = Some(Terminator::Goto { target: next_block });
+
+    let ret_ty = assert_same_types(else_ty, then_ty)?;
+    acx.body.local_decls[ret_place.local].ty = ret_ty.kind;
+
+    acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
+        discr,
+        targets: SwitchTargets::static_if(0, else_entry, then_entry),
+    });
+
+    Ok((ret_ty, Operand::Copy(ret_place)))
+}
 
 fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
@@ -285,6 +361,16 @@ fn analyze_expr<'hir>(
             (
                 Ty::new(span, ty),
                 Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit as u32)), ty),
+            )
+        }
+        expr::Lit(Lit::Bool(LitBool { lit, span })) => {
+            let ty = acx.tcx.types.bool;
+            (
+                Ty::new(span, ty),
+                Operand::Const(
+                    ConstValue::Scalar(if lit { ScalarRepr::TRUE } else { ScalarRepr::FALSE }),
+                    ty,
+                ),
             )
         }
         expr::Local(ident) => {
@@ -302,7 +388,13 @@ fn analyze_expr<'hir>(
             let (lhs, a) = analyze_expr(acx, lhs)?;
             let (rhs, b) = analyze_expr(acx, rhs)?;
 
-            acx.push_temp_rvalue(assert_same_types(lhs, rhs)?, Rvalue::BinaryOp(op, a, b))
+            if let Some(op) = mir::BinOp::from_parse(op) {
+                let _ = assert_same_types(lhs, rhs)?;
+                let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
+                acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
+            } else {
+                todo!("And, Or operators")
+            }
         }
         expr::Block(stmts, span) => {
             if let Some((tail, stmts)) = stmts.split_last() {
@@ -375,6 +467,7 @@ fn analyze_expr<'hir>(
                 return Err(Error::NotFoundLocal(call));
             }
         }
+        expr::If(cond, then, else_) => analyze_branch_expr(acx, cond, then, else_)?,
         panic => todo!("{panic:?}"),
     };
 
@@ -567,4 +660,11 @@ pub fn analyze_module<'hir>(
     }
 
     Ok(mir)
+}
+
+mod size_asserts {
+    use {super::*, crate::assert_size};
+
+    assert_size!(Expr<'_> as 64);
+    assert_size!(ExprKind<'_> as 48);
 }

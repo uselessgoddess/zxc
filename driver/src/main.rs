@@ -38,14 +38,11 @@ pub type Error = Box<dyn std::error::Error + Sync + Send>;
 
 fn driver(tcx: Tx) -> Result<(), Error> {
     let src = r#"
-fn sum(a: i32, b: i32) -> i32 {
-    a + b
-}
-fn narrow(x: isize) -> isize {
-    x.i8.isize
+fn max(a: i32, b: i32) -> i32 {
+    if a >= b { if a == b { 228 } else { a } } else { b }
 }
 extern "C" fn main(argc: isize, _: isize) -> isize {
-    argc.narrow.i32.sum(1).isize
+    argc.i32.max(3).isize
 }
         "#;
     println!("{}", Paint::magenta(src));

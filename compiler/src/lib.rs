@@ -1,6 +1,8 @@
 #![feature(
     let_chains,
     try_blocks,
+    iter_order_by,
+    type_alias_impl_trait,
     vec_into_raw_parts,
     dropck_eyepatch,
     extern_types,
@@ -9,9 +11,9 @@
     strict_provenance,
     hash_raw_entry,
     core_intrinsics,
-    mem_copy_fn
+    mem_copy_fn,
+    const_option
 )]
-#![feature(iter_order_by)]
 #![allow(clippy::unit_arg)]
 #![allow(internal_features)]
 
@@ -41,3 +43,14 @@ pub(crate) use {
 };
 
 pub use {rayon, rayon_core};
+
+macro_rules! assert_size {
+    ($ty:ty as $size:literal) => {
+        const _: () = {
+            const _: [(); $size] = [(); std::mem::size_of::<$ty>()];
+            // assert!(std::mem::size_of::<$ty>() == $size)
+        };
+    };
+}
+
+pub(crate) use assert_size;

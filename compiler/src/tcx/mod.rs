@@ -24,6 +24,7 @@ mod private {
 
 pub struct CommonTypes<'tcx> {
     pub unit: Ty<'tcx>,
+    pub bool: Ty<'tcx>,
     pub i8: Ty<'tcx>,
     pub i16: Ty<'tcx>,
     pub i32: Ty<'tcx>,
@@ -40,6 +41,7 @@ impl<'tcx> CommonTypes<'tcx> {
 
         Self {
             unit: mk(Tuple(List::empty())),
+            bool: mk(Bool),
             i8: mk(Int(IntTy::I8)),
             i16: mk(Int(IntTy::I16)),
             i32: mk(Int(IntTy::I32)),

@@ -5,11 +5,11 @@ use {
             self,
             consts::ConstInt,
             ty::{self, Abi},
-            ConstValue, Mutability, Operand, Rvalue, Statement, Terminator,
+            BinOp, ConstValue, Mutability, Operand, Rvalue, Statement, Terminator,
             TyKind::{self},
         },
     },
-    lexer::{BinOp, UnOp},
+    lexer::UnOp,
     std::fmt::{self, Write as _},
 };
 
@@ -76,7 +76,9 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
         define_scoped_cx!(self);
 
         match ty.kind() {
-            TyKind::Int(_) => {
+            ty::Bool if int == mir::ScalarRepr::FALSE => p!("false"),
+            ty::Bool if int == mir::ScalarRepr::TRUE => p!("true"),
+            ty::Int(_) => {
                 let int =
                     ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized_int());
                 p!(write("{:#?}", int))
@@ -210,6 +212,7 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
         define_scoped_cx!(self);
 
         match ty.kind() {
+            TyKind::Bool => p!("bool"),
             ty::Int(int) => p!(write("{}", int.name_str())),
             ty::Tuple(list) => {
                 if list.is_empty() {
@@ -225,6 +228,32 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
             ty::FnDef(def) => {
                 let sig = self.hix.instances[def].sig;
                 p!(print(sig))
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'tcx> Terminator<'tcx> {
+    fn print_head(&self, cx: &mut impl Printer<'tcx>) -> fmt::Result {
+        define_scoped_cx!(cx);
+
+        match self {
+            Terminator::Goto { .. } => p!("goto"),
+            Terminator::SwitchInt { discr, .. } => p!("switchInt(", print(discr), ")"),
+            Terminator::Return => p!("return"),
+            Terminator::Unreachable => p!("unreachable"),
+            Terminator::Call { func, args, dest, .. } => {
+                p!(print(dest), " = ");
+                p!(print(func), "(");
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        p!(", ");
+                    }
+                    p!(print(arg));
+                }
+                p!(")");
             }
         }
 
@@ -255,25 +284,24 @@ define_print_and_forward_display! {
     }
 
     Terminator<'tcx> {
-        match self {
-            Terminator::Goto { target } => {
-                p!(write("goto -> bb{}", target.raw()));
+        self.print_head(cx)?;
+
+        let successor_count = self.successors().count();
+        let labels = self.fmt_successor_labels();
+        assert_eq!(successor_count, labels.len());
+
+        match successor_count {
+            0 => (),
+            1 if !matches!(self, Terminator::Call { .. }) => {
+                p!(write(" -> {:?}", self.successors().next().unwrap()))
             }
-            Terminator::Return => p!("return"),
-            Terminator::Unreachable => p!("unreachable"),
-            Terminator::Call { func, args, dest, target, .. } => {
-                p!(print(dest), " = ");
-                p!(print(func), "(");
-                for (index, arg) in args.iter().enumerate() {
-                    if index > 0 {
-                        p!(", ");
-                    }
-                    p!(print(arg));
+            _ => {
+                p!(" -> [");
+                for (i, target) in self.successors().enumerate() {
+                    if i > 0 { p!(", "); }
+                    p!(write("{}: {target:?}", labels[i]));
                 }
-                p!(")");
-                if let Some(target) = target {
-                    p!(write(" -> [return: bb{}]", target.raw()))
-                }
+                p!("]")
             }
         }
     }
@@ -291,10 +319,19 @@ define_print_and_forward_display! {
             }
             Rvalue::BinaryOp(op, lhs, rhs) => {
                 let op = match op {
-                    BinOp::Add(_) => "Add",
-                    BinOp::Sub(_) => "Sub",
-                    BinOp::Mul(_) => "Mul",
-                    BinOp::Div(_) => "Div",
+                    BinOp::Add => "Add",
+                    BinOp::Sub => "Sub",
+                    BinOp::Mul => "Mul",
+                    BinOp::Div => "Div",
+                    BinOp::Eq => "Eq",
+                    BinOp::Ne => "Ne",
+                    BinOp::Le => "Le",
+                    BinOp::Lt => "Lt",
+                    BinOp::Ge => "Ge",
+                    BinOp::Gt => "Gt",
+                    BinOp::AddUnchecked => "UncheckedAdd",
+                    BinOp::SubUnchecked => "UncheckedSub",
+                    BinOp::MulUnchecked => "UncheckedMul",
                 };
                 p!(write("{op}"), "(", print(lhs), ", ", print(rhs), ")")
             }

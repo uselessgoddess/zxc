@@ -1,16 +1,30 @@
 use {
     crate::{
         abi::Size,
-        mir::{ty::List, Ty},
+        index,
+        mir::{self, ty::List, Ty},
         Tx,
     },
     index_vec::IndexVec,
-    lexer::{BinOp, Span, UnOp},
-    std::num::NonZeroU8,
+    lexer::{Span, UnOp},
+    smallvec::{smallvec, SmallVec},
+    std::{
+        borrow::Cow,
+        fmt::{self, Formatter},
+        io::Read,
+        iter,
+        num::NonZeroU8,
+    },
 };
 
-index_vec::define_index_type! {
+index::define_index! {
     pub struct BasicBlock = u32;
+}
+
+impl fmt::Debug for BasicBlock {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "bb{}", self.raw())
+    }
 }
 
 index_vec::define_index_type! {
@@ -25,10 +39,41 @@ impl Local {
     pub const RETURN_PLACE: Self = Self::from_usize_unchecked(0);
 }
 
+// SmallVec values for usages `SwitchTargets` as `if`
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchTargets {
+    pub values: SmallVec<u128, 1>,
+    pub targets: SmallVec<BasicBlock, 2>,
+}
+
+impl SwitchTargets {
+    pub fn static_if(value: u128, then: BasicBlock, else_: BasicBlock) -> Self {
+        Self { values: smallvec![value], targets: smallvec![then, else_] }
+    }
+
+    pub fn as_static_if(&self) -> Option<(u128, BasicBlock, BasicBlock)> {
+        if let &[value] = &self.values[..]
+            && let &[then, else_] = &self.targets[..]
+        {
+            Some((value, then, else_))
+        } else {
+            None
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u128, BasicBlock)> + ExactSizeIterator + '_ {
+        iter::zip(&self.values, &self.targets).map(|(a, b)| (*a, *b))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Terminator<'tcx> {
     Goto {
         target: BasicBlock,
+    },
+    SwitchInt {
+        discr: Operand<'tcx>,
+        targets: SwitchTargets,
     },
     Return,
     Unreachable,
@@ -39,6 +84,42 @@ pub enum Terminator<'tcx> {
         target: Option<BasicBlock>,
         fn_span: Span,
     },
+}
+
+pub type Successors<'a> = impl DoubleEndedIterator<Item = BasicBlock> + 'a;
+
+impl<'tcx> Terminator<'tcx> {
+    pub fn successors(&self) -> Successors<'_> {
+        use Terminator::*;
+
+        let tail_slice = (&[]).into_iter().copied();
+        match *self {
+            Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
+            Goto { target: t } => Some(t).into_iter().chain(tail_slice),
+            Return | Unreachable | Call { target: None, .. } => None.into_iter().chain(tail_slice),
+            SwitchInt { ref targets, .. } => {
+                None.into_iter().chain(targets.targets.iter().copied())
+            }
+        }
+    }
+
+    pub fn fmt_successor_labels(&self) -> Vec<Cow<'static, str>> {
+        use Terminator::*;
+
+        match *self {
+            Return | Unreachable => vec![],
+            Goto { .. } => vec!["".into()],
+            SwitchInt { ref targets, .. } => targets
+                .values
+                .iter()
+                .map(u128::to_string)
+                .map(Cow::Owned)
+                .chain(iter::once("otherwise".into()))
+                .collect(),
+            Call { target: Some(_), .. } => vec!["return".into()],
+            Call { target: None, .. } => vec![],
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -74,13 +155,16 @@ impl<'tcx> Operand<'tcx> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct ScalarRepr {
     pub(crate) data: u128,
     pub(crate) size: NonZeroU8,
 }
 
 impl ScalarRepr {
+    pub const TRUE: ScalarRepr = ScalarRepr { data: 1_u128, size: NonZeroU8::new(1).unwrap() };
+    pub const FALSE: ScalarRepr = ScalarRepr { data: 0_u128, size: NonZeroU8::new(1).unwrap() };
+
     pub fn size(&self) -> Size {
         Size::from_bytes(self.size.get() as u64)
     }
@@ -137,6 +221,57 @@ pub enum ConstValue {
 #[derive(Clone, Copy, Debug)]
 pub enum CastKind {
     IntToInt,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum BinOp {
+    Add,
+    AddUnchecked,
+    Sub,
+    SubUnchecked,
+    Mul,
+    MulUnchecked,
+    Div,
+    Eq,
+    Lt,
+    Le,
+    Ne,
+    Ge,
+    Gt,
+}
+
+impl BinOp {
+    pub fn from_parse(op: lexer::BinOp) -> Option<Self> {
+        use lexer::BinOp;
+        Some(match op {
+            BinOp::Add(_) => Self::Add,
+            BinOp::Sub(_) => Self::Sub,
+            BinOp::Mul(_) => Self::Mul,
+            BinOp::Div(_) => Self::Div,
+            BinOp::Eq(_) => Self::Eq,
+            BinOp::Ne(_) => Self::Ne,
+            BinOp::Le(_) => Self::Le,
+            BinOp::Lt(_) => Self::Lt,
+            BinOp::Ge(_) => Self::Ge,
+            BinOp::Gt(_) => Self::Gt,
+        })
+    }
+
+    pub fn ty<'tcx>(&self, tcx: Tx<'tcx>, lhs: Ty<'tcx>, rhs: Ty<'tcx>) -> Ty<'tcx> {
+        match *self {
+            BinOp::Add
+            | BinOp::AddUnchecked
+            | BinOp::Sub
+            | BinOp::SubUnchecked
+            | BinOp::Mul
+            | BinOp::MulUnchecked
+            | BinOp::Div => {
+                assert_eq!(lhs, rhs);
+                lhs
+            }
+            BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => tcx.types.bool,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

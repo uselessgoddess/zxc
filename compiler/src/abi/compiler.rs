@@ -25,6 +25,7 @@ impl<'tcx> TyCtx<'tcx> {
         let layout = self.intern.intern_layout(
             self.arena,
             match ty.kind() {
+                TyKind::Bool => scalar(Integer::I8, false, (1, 1)),
                 TyKind::Int(int) => match int {
                     IntTy::I8 => scalar(Integer::I8, true, (1, 1)),
                     IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
@@ -50,7 +51,7 @@ impl<'tcx> TyCtx<'tcx> {
         let probe_abi = |_tcx, ty| ArgAbi {
             ty: self.layout_of(ty),
             mode: match ty.kind() {
-                TyKind::Int(_) => PassMode::Direct,
+                TyKind::Bool | TyKind::Int(_) => PassMode::Direct,
                 TyKind::Tuple(types) => {
                     if types.is_empty() {
                         PassMode::Ignore

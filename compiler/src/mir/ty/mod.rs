@@ -72,6 +72,7 @@ impl UintTy {
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TyKind<'cx> {
+    Bool,
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
     FnDef(mir::DefId), // has no generics now
@@ -129,6 +130,7 @@ impl<'cx> Ty<'cx> {
 impl fmt::Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.kind() {
+            Bool => f.write_str("bool"),
             Int(int) => match int {
                 IntTy::I8 => f.write_str("i8"),
                 IntTy::I16 => f.write_str("i16"),

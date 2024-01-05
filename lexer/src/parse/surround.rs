@@ -1,6 +1,6 @@
 use crate::{
     parse::{self, expr, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
-    token, Span,
+    token, If, Span,
 };
 
 pub trait Spanned {
@@ -119,6 +119,17 @@ impl Spanned for Signature<'_> {
             ReturnType::Type(_, ty) => ty.span(),
         };
         lookahead_span(lo, hi)
+    }
+}
+
+impl Spanned for If<'_> {
+    fn span(&self) -> Span {
+        let hi = if let Some((_, expr)) = &self.else_branch {
+            expr.span()
+        } else {
+            self.then_branch.span()
+        };
+        lookahead_span(self.if_token.span, hi)
     }
 }
 
