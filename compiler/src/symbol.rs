@@ -1,5 +1,5 @@
 use {
-    crate::{fx::FxIndexSet, index, sess::with_session_globals, DroplessArena, Lock},
+    crate::{fx::FxIndexSet, index, tls::with_session_globals, DroplessArena, Lock},
     lexer::Span,
     std::{fmt, mem, str},
 };

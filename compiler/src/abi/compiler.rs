@@ -17,7 +17,7 @@ impl<'tcx> TyCtx<'tcx> {
         pub const ZST_LAYOUT: LayoutKind = LayoutKind {
             abi: Abi::Aggregate,
             size: Size::ZERO,
-            align: if let Some(align) = Align::from_bytes(1) { align } else { todo!() },
+            align: if let Ok(align) = Align::from_bytes(1) { align } else { todo!() },
             shape: FieldsShape::Primitive,
         };
 

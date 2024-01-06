@@ -163,7 +163,8 @@ impl<'a> Error<'a> {
                         )),
                         Label::new(s(caller)).with_message(format!(
                             "{}found: {}",
-                            if target.is_some() { "" } else { "   " }, // tabulation when has no target
+                            // tabulation when has no target
+                            if target.is_some() { "" } else { "   " },
                             format_sig(hx, found.iter().map(|ty| &**ty)).fg(colors.kw)
                         )),
                     ],

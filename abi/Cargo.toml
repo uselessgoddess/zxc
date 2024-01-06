@@ -1,0 +1,7 @@
+[package]
+name = "abi"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+index_vec = { version = "0.1.3" }

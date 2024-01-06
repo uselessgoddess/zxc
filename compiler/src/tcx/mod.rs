@@ -15,6 +15,7 @@ use crate::{
         IntTy, Ty, TyKind,
     },
     par::{ShardedHashMap, WorkerLocal},
+    Session,
 };
 
 mod private {
@@ -131,14 +132,6 @@ pub struct TyCtx<'tcx> {
 impl fmt::Debug for TyCtx<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TyCtx {{ todo }}")
-    }
-}
-
-pub struct Session {}
-
-impl Session {
-    pub fn fake() -> Self {
-        Self {}
     }
 }
 

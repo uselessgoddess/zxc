@@ -27,13 +27,16 @@ mod fx;
 pub(crate) mod index;
 pub mod par;
 pub mod sess;
+pub mod spec;
 pub mod symbol;
+pub mod tls;
 pub(crate) mod util;
 
 pub use {
     ariadne,
     mir::pretty,
-    tcx::{Arena, DroplessArena, Intern, Session, Tx, TyCtx},
+    sess::Session,
+    tcx::{Arena, DroplessArena, Intern, Tx, TyCtx},
 };
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},

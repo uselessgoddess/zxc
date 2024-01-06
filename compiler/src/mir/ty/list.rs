@@ -1,5 +1,5 @@
 use {
-    crate::{Arena},
+    crate::Arena,
     std::{
         alloc::Layout,
         cmp::Ordering,
