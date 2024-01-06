@@ -32,7 +32,7 @@ pub fn lexer<'src>()
         .map_with(|str, e| Lex::Lit(Lit::Str(LitStr { lit: str, span: e.span() })));
 
     // A parser for operators
-    let punct = one_of("+*-/!=|<>") // TODO: make extendable
+    let punct = one_of("+*-/!=|&<>") // TODO: make extendable
         .repeated()
         .at_least(1)
         .to_slice()

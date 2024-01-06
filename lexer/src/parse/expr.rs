@@ -12,8 +12,8 @@ enum Precedence {
     Any,
     Assign,
     // Range,
-    // Or,
-    // And,
+    Or,
+    And,
     Compare,
     // BitOr,
     // BitXor,
@@ -35,6 +35,8 @@ impl Precedence {
             | BinOp::Ne(_)
             | BinOp::Ge(_)
             | BinOp::Gt(_) => Precedence::Compare,
+            BinOp::Or(_) => Precedence::Or,
+            BinOp::And(_) => Precedence::And,
         }
     }
 }
@@ -45,6 +47,9 @@ pub enum BinOp {
     Sub(Token![-]),
     Mul(Token![*]),
     Div(Token![/]),
+
+    And(Token![&&]),
+    Or(Token![||]),
 
     Eq(Token![==]),
     Ne(Token![!=]),
@@ -74,6 +79,9 @@ impl<'lex> Parse<'lex> for BinOp {
             Token![-] => BinOp::Sub,
             Token![*] => BinOp::Mul,
             Token![/] => BinOp::Div,
+
+            Token![&&] => BinOp::And,
+            Token![||] => BinOp::Or,
 
             Token![==] => BinOp::Eq,
             Token![!=] => BinOp::Ne,
@@ -460,4 +468,18 @@ fn if_expr() {
 
     let expr: If = lex_it!("if x {} else {}").parse().unwrap();
     assert!(expr.else_branch.is_some());
+}
+
+#[test]
+fn bool_expr() {
+    let expr: Expr = lex_it!("true && false").parse().unwrap();
+
+    if let Expr::Binary(Binary { left, op, right }) = expr
+        && let Expr::Lit(_) = &*left
+        && let BinOp::And(_) = op
+        && let Expr::Lit(_) = &*right
+    {
+    } else {
+        panic!()
+    }
 }

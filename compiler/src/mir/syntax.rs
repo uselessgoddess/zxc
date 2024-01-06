@@ -254,6 +254,7 @@ impl BinOp {
             BinOp::Lt(_) => Self::Lt,
             BinOp::Ge(_) => Self::Ge,
             BinOp::Gt(_) => Self::Gt,
+            _ => return None,
         })
     }
 

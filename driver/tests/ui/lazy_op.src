@@ -1,0 +1,17 @@
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    let a = if true  && true  { 0 } else { 1 };
+    let b = if true  && false { 1 } else { 0 };
+    let c = if false && true  { 1 } else { 0 };
+    let d = if false && false { 1 } else { 0 };
+
+    let part1 = a + b + c + d;
+
+    let a = if true  || true  { 0 } else { 1 };
+    let b = if true  || false { 0 } else { 1 };
+    let c = if false || true  { 0 } else { 1 };
+    let d = if false || false { 1 } else { 0 };
+
+    let part2 = a + b + c + d;
+
+    (part1 + part2).isize
+}

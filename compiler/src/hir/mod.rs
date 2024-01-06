@@ -296,6 +296,13 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         let unit = Ty { kind: self.tcx.types.unit, span };
         (unit, Operand::Const(ConstValue::Zst, unit.kind))
     }
+
+    pub fn bool(&self, discr: bool) -> Operand<'hir> {
+        Operand::Const(
+            ConstValue::Scalar(if discr { ScalarRepr::TRUE } else { ScalarRepr::FALSE }),
+            self.tcx.types.bool,
+        )
+    }
 }
 
 fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
@@ -305,11 +312,23 @@ fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
     Terminator::Goto { target: acx.next_block() }
 }
+
+/// Lazy mir operand
+// type Lazy<'hir> =
+//      impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>;
+
+macro_rules! lazy {
+    (|$acx:ident| $expr:expr) => {{ (|$acx: &mut AnalyzeCx<'_, 'hir>| $expr) }};
+}
+
+// TODO: add opaque alias
 fn analyze_branch_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     cond: &'hir Expr<'hir>,
-    then_expr: &'hir Expr<'hir>,
-    else_expr: Option<&'hir Expr<'hir>>,
+    then_expr: impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>,
+    else_expr: Option<
+        impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>,
+    >,
 ) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
     let (ty, discr) = analyze_expr(acx, cond)?;
 
@@ -320,17 +339,17 @@ fn analyze_branch_expr<'hir>(
     let cond_block = acx.end_of_block_dummy();
 
     let then_entry = acx.current_block();
-    let (then_ty, then) = analyze_expr(acx, then_expr)?;
+    let (then_ty, then) = then_expr(acx)?;
     acx.assign_rvalue(ret_place, Rvalue::Use(then));
     let then_block = acx.end_of_block_dummy();
 
     let else_entry = acx.current_block();
     let else_ty = if let Some(else_) = else_expr {
-        let (ty, else_) = analyze_expr(acx, else_)?;
+        let (ty, else_) = else_(acx)?;
         acx.assign_rvalue(ret_place, Rvalue::Use(else_));
         ty
     } else {
-        Ty::new(then_expr.span, acx.tcx.types.unit)
+        Ty::new(then_ty.span, acx.tcx.types.unit)
     };
 
     // All the if blocks converge to this block
@@ -383,15 +402,31 @@ fn analyze_expr<'hir>(
             _ => todo!(),
         },
         expr::Binary(op, lhs, rhs) => {
-            let (lhs, a) = analyze_expr(acx, lhs)?;
-            let (rhs, b) = analyze_expr(acx, rhs)?;
-
             if let Some(op) = mir::BinOp::from_parse(op) {
+                let (lhs, a) = analyze_expr(acx, lhs)?;
+                let (rhs, b) = analyze_expr(acx, rhs)?;
+
                 let _ = assert_same_types(lhs, rhs)?;
                 let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
                 acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
             } else {
-                todo!("And, Or operators")
+                let bool = Ty::new(rhs.span, acx.tcx.types.bool);
+
+                match op {
+                    BinOp::And(_) => analyze_branch_expr(
+                        acx,
+                        lhs,
+                        lazy!(|acx| analyze_expr(acx, rhs)),
+                        Some(lazy!(|acx| { Ok((bool, acx.bool(false))) })),
+                    )?,
+                    BinOp::Or(_) => analyze_branch_expr(
+                        acx,
+                        lhs,
+                        lazy!(|acx| { Ok((bool, acx.bool(true),)) }),
+                        Some(lazy!(|acx| analyze_expr(acx, rhs))),
+                    )?,
+                    _ => unreachable!(),
+                }
             }
         }
         expr::Block(stmts, span) => {
@@ -465,7 +500,12 @@ fn analyze_expr<'hir>(
                 return Err(Error::NotFoundLocal(call));
             }
         }
-        expr::If(cond, then, else_) => analyze_branch_expr(acx, cond, then, else_)?,
+        expr::If(cond, then, else_) => analyze_branch_expr(
+            acx,
+            cond,
+            lazy!(|acx| analyze_expr(acx, then)),
+            else_.map(|else_| lazy!(|acx| analyze_expr(acx, else_))),
+        )?,
         panic => todo!("{panic:?}"),
     };
 

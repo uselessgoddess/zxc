@@ -17,6 +17,7 @@ use {
         collections::HashMap,
         fs::File,
         path::{Path, PathBuf},
+        process,
     },
 };
 
@@ -41,14 +42,10 @@ use {
 
 pub type Error = anyhow::Error;
 
-fn driver_impl<'tcx>(
-    tcx: Tx<'tcx>,
-    (src, name): (&'tcx str, &'tcx str),
-    out: &Path,
-    artifact: &Path,
-) -> Result<Vec<u8>, Error> {
-    let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
-
+fn parse_items<'lex>(
+    tcx: Tx<'lex>,
+    input: &mut ParseBuffer<'lex>,
+) -> Result<Vec<(FnSig<'lex>, Box<[Stmt<'lex>]>)>, lexer::Error> {
     let mut items = Vec::new();
     while !input.is_empty() {
         let ItemFn { sig, block: Block { stmts, .. } } = input.parse()?;
@@ -60,6 +57,26 @@ fn driver_impl<'tcx>(
             .into_boxed_slice();
         items.push((sig, stmts));
     }
+    Ok(items)
+}
+
+fn driver_impl<'tcx>(
+    tcx: Tx<'tcx>,
+    (src, name): (&'tcx str, &'tcx str),
+    out: &Path,
+    artifact: &Path,
+) -> Result<Vec<u8>, Error> {
+    let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
+
+    let items = parse_items(tcx, &mut input).unwrap_or_else(|err| {
+        Report::build(ReportKind::Error, name, 5)
+            .with_message(err.to_string())
+            .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
+            .finish()
+            .print((name, ariadne::Source::from(src)))
+            .unwrap();
+        process::exit(0)
+    });
 
     let mut hix = HirCtx::pure(tcx);
     let mir = match hir::analyze_module(&mut hix, &items) {
@@ -82,7 +99,7 @@ fn driver_impl<'tcx>(
                 .finish()
                 .print((name, ariadne::Source::from(src)))
                 .unwrap();
-            return Err(anyhow!("error guaranteed"));
+            process::exit(0)
         }
     };
 
@@ -197,7 +214,10 @@ use {
         error::EarlyErrorHandler,
         interface::Config,
     },
-    compiler::sess::{self, Options},
+    compiler::{
+        ariadne::Label,
+        sess::{self, Options},
+    },
 };
 
 fn main() {
