@@ -1,0 +1,16 @@
+extern "C" fn main(_: isize, _: isize) -> isize {
+
+    let _ = if true { 1 } else { 2 };
+
+
+    // a && b
+    let a = true;
+    let b = true;
+    let _ = if a { if b { true } else { false } } else { false };
+
+    if false {
+        1 // error code
+    } else {
+        0
+    }.isize
+}

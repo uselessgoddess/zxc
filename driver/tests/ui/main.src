@@ -1,0 +1,1 @@
+extern "C" fn main(_: isize, _: isize) -> isize { 0.isize }
