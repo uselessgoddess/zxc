@@ -1,7 +1,7 @@
-fn max(a: i32, b: i32) -> i32 {
-    if a >= b { if a == b { 228 } else { a } } else { b }
+fn max(a: isize, b: isize) -> isize {
+    if a >= b { if a == b { 228.isize } else { a } } else { b }
 }
 extern "C" fn main(argc: isize, _: isize) -> isize {
-    let x = argc.i32.max(3).isize;
+    let x = argc.max(3);
     0.isize
 }

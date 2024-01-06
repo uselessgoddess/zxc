@@ -73,9 +73,9 @@ fn driver_impl<'tcx>(
             .with_message(err.to_string())
             .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
             .finish()
-            .print((name, ariadne::Source::from(src)))
+            .eprint((name, ariadne::Source::from(src)))
             .unwrap();
-        process::exit(0)
+        process::exit(1)
     });
 
     let mut hix = HirCtx::pure(tcx);
@@ -97,9 +97,9 @@ fn driver_impl<'tcx>(
                         .with_underlines(true),
                 )
                 .finish()
-                .print((name, ariadne::Source::from(src)))
+                .eprint((name, ariadne::Source::from(src)))
                 .unwrap();
-            process::exit(0)
+            process::exit(1)
         }
     };
 
