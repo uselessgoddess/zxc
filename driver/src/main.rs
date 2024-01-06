@@ -6,7 +6,7 @@ mod error;
 mod interface;
 
 use {
-    anyhow::Context as _,
+    anyhow::{anyhow, Context as _},
     cranelift::{
         codegen::{isa, Context},
         prelude::{settings, Configurable},
@@ -82,7 +82,7 @@ fn driver_impl<'tcx>(
                 .finish()
                 .print((name, ariadne::Source::from(src)))
                 .unwrap();
-            panic!();
+            return Err(anyhow!("error guaranteed"));
         }
     };
 
@@ -95,6 +95,20 @@ fn driver_impl<'tcx>(
 
     let mut module =
         ObjectModule::new(ObjectBuilder::new(isa, "main.object", module::default_libcall_names())?);
+
+    use sess::Emit;
+
+    if tcx.sess.opts.emit.contains(Emit::MIR) {
+        let path = out.join(artifact.with_extension("mir"));
+        let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
+
+        for (def, mir) in mir.iter_enumerated() {
+            let mut printer = pretty::FmtPrinter::new(&hix);
+            mir::write_mir_pretty(def, mir, &mut printer)?;
+
+            write!(file, "{}", printer.into_buf())?;
+        }
+    }
 
     let emit_clif = tcx.sess.opts.emit.contains(Emit::IR);
     let mut contexts = HashMap::with_capacity(128);
@@ -109,20 +123,6 @@ fn driver_impl<'tcx>(
 
         if emit_clif {
             contexts.insert(id, ctx.func);
-        }
-    }
-
-    use sess::Emit;
-
-    if tcx.sess.opts.emit.contains(Emit::MIR) {
-        let path = out.join(artifact.with_extension("mir"));
-        let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
-
-        for (def, mir) in mir.iter_enumerated() {
-            let mut printer = pretty::FmtPrinter::new(&hix);
-            mir::write_mir_pretty(def, mir, &mut printer)?;
-
-            write!(file, "{}", printer.into_buf())?;
         }
     }
 
@@ -154,7 +154,7 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
     let tcx = TyCtx::enter(&arena, &compiler.sess);
 
     let input = &tcx.sess.io.input;
-    let src = fs::read_to_string(input)?;
+    let src = fs::read_to_string(input).with_context(|| format!("{}", input.display()))?;
 
     println!("{}", Paint::magenta(&src));
 
@@ -162,20 +162,26 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
     let art = PathBuf::from(input.file_name().unwrap());
     let out =
         if let Some(out) = &sess.io.output_file { out.clone() } else { art.with_extension("out") };
+    let art = PathBuf::from(out.file_stem().unwrap());
+
     let out_dir = if let Some(dir) = &sess.io.output_dir {
-        fs::create_dir_all(dir)?;
+        fs::create_dir_all(dir).with_context(|| format!("{}", dir.display()))?;
         dir.clone()
     } else {
         parent_dir(&out).into()
     };
     let temps = sess.opts.Z.temps_dir.as_ref().map(PathBuf::from).unwrap_or(out_dir.clone());
-    fs::create_dir_all(&temps)?;
+    fs::create_dir_all(&temps).with_context(|| format!("{}", temps.display()))?;
     let out = out_dir.join(out);
 
+    let name = input
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap_or_else(|| early.early_fatal("non UTF-8 file name"));
     let emit = temps.join(art.with_extension("emit"));
-    let name =
-        input.as_os_str().to_str().unwrap_or_else(|| early.early_fatal("non UTF-8 file name"));
-    fs::write(&emit, driver_impl(&tcx, (&src, name), &out_dir, &art)?)?;
+    fs::write(&emit, driver_impl(&tcx, (&src, name), &out_dir, &art)?)
+        .with_context(|| format!("{}", emit.display()))?;
 
     let out = Command::new("gcc").arg(emit).arg("-o").arg(out).output()?;
     if !out.stderr.is_empty() {

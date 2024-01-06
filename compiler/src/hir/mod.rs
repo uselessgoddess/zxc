@@ -89,7 +89,7 @@ impl<'tcx> Expr<'tcx> {
                 tcx.arena.expr.alloc(analyze_block(tcx, then_branch)),
                 else_branch
                     .as_ref()
-                    .map(|(_, block)| &*tcx.arena.expr.alloc(Self::analyze(tcx, &block))),
+                    .map(|(_, block)| &*tcx.arena.expr.alloc(analyze_block(tcx, block))),
             ),
         };
         Self { kind, span }

@@ -74,7 +74,7 @@ impl<'tcx> CValue<'tcx> {
         // }
 
         let val = match abi.ty.kind() {
-            ty::Int(_) => {
+            ty::Bool | ty::Int(_) => {
                 let raw_val =
                     const_val.size().truncate(const_val.to_bits(abi.layout.size).unwrap());
                 fx.bcx.ins().iconst(clif_ty, raw_val as i64)

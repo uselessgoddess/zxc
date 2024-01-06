@@ -1,0 +1,3 @@
+[submodule "driver/trybuild"]
+	path = driver/trybuild
+	url = https://github.com/uselessgoddess/trybuild.git

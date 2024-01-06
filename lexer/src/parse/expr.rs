@@ -160,7 +160,7 @@ pub struct If<'a> {
     pub if_token: Token![if],
     pub cond: Box<Expr<'a>>,
     pub then_branch: Block<'a>,
-    pub else_branch: Option<(Token![else], Box<Expr<'a>>)>,
+    pub else_branch: Option<(Token![else], Block<'a>)>,
 }
 
 impl<'lex> Parse<'lex> for Expr<'lex> {
