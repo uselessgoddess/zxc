@@ -71,5 +71,5 @@ pub fn build_options<O: Default>(
             None => handler.early_fatal(format!("unknown {output_name} option: `{key}`")),
         }
     }
-    return op;
+    op
 }

@@ -199,8 +199,6 @@ pub(crate) fn codegen_const_value<'tcx>(
                     _ => unreachable!(),
                 };
 
-                panic!();
-
                 // FIXME avoid this extra copy to the stack and directly write to the final
                 // destination
                 let place = CPlace::new_stack_slot(fx, abi);
@@ -377,7 +375,7 @@ fn param_from_abi<'tcx>(tcx: Tx<'tcx>, abi: ArgAbi<'tcx>) -> Option<AbiParam> {
     }
 }
 
-fn conv_to_call_conv(sess: &Session, c: Conv, default_call_conv: isa::CallConv) -> isa::CallConv {
+fn conv_to_call_conv(_: &Session, _: Conv, default_call_conv: isa::CallConv) -> isa::CallConv {
     default_call_conv
 }
 
@@ -446,6 +444,7 @@ pub(crate) fn compile_fn<'tcx>(
         let fx = &mut fx;
         let ssa_analyzed = ssa::analyze(fx);
 
+        #[allow(clippy::unnecessary_to_owned)]
         let mut block_params_iter = fx.bcx.func.dfg.block_params(start_block).to_vec().into_iter();
         let func_params = fx
             .mir

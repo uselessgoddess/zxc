@@ -1,9 +1,6 @@
-use {
-    crate::{
-        abi,
-        abi::{Endian, TargetDataLayout},
-    },
-    std::borrow::Cow,
+use crate::{
+    abi,
+    abi::{Endian, TargetDataLayout},
 };
 
 mod base;
@@ -28,11 +25,13 @@ pub enum LinkerFlavor {
     Gnu(Cc, Lld),
 }
 
+type Cow<T> = std::borrow::Cow<'static, T>;
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct Target {
     pub pointer_width: u32,
-    pub triple: &'static str,
-    pub arch: &'static str,
+    pub triple: Cow<str>,
+    pub arch: Cow<str>,
     pub data_layout: TargetDataLayout,
     pub options: TargetOptions,
 }
@@ -40,12 +39,12 @@ pub struct Target {
 #[derive(PartialEq, Clone, Debug)]
 pub struct TargetOptions {
     pub endian: Endian,
-    pub os: Cow<'static, str>,
-    pub env: Cow<'static, str>,
-    pub vendor: Cow<'static, str>,
-    pub linker: Option<Cow<'static, str>>,
+    pub os: Cow<str>,
+    pub env: Cow<str>,
+    pub vendor: Cow<str>,
+    pub linker: Option<Cow<str>>,
     pub linker_flavor: LinkerFlavor,
-    pub cpu: Cow<'static, str>,
+    pub cpu: Cow<str>,
 }
 
 impl Default for TargetOptions {

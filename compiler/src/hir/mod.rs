@@ -311,8 +311,6 @@ fn analyze_branch_expr<'hir>(
     then_expr: &'hir Expr<'hir>,
     else_expr: Option<&'hir Expr<'hir>>,
 ) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
-    const DUMMY_BLOCK: mir::BasicBlock = mir::BasicBlock::START_BLOCK;
-
     let (ty, discr) = analyze_expr(acx, cond)?;
 
     let bool = acx.tcx.types.bool;

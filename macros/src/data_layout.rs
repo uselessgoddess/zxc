@@ -6,7 +6,7 @@ pub fn imp(input: TokenStream) -> TokenStream {
     let (input, span) = match syn::parse2::<LitStr>(input) {
         Ok(data) => (data.value(), data.span()),
         Err(err) => {
-            return TokenStream::from(err.to_compile_error());
+            return err.to_compile_error();
         }
     };
 

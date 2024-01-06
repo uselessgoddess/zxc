@@ -89,13 +89,10 @@ pub fn codegen_terminator_call<'tcx>(
             let func_ref = fx.get_function_ref(instance);
             CallTarget::Direct(func_ref)
         }
-
         None => {
             let func = func.load_scalar(fx);
             let sig = sig_from_abi(fx.tcx, fx.target_config.default_call_conv, &fn_abi);
             let sig = fx.bcx.import_signature(sig);
-
-            todo!();
 
             CallTarget::Indirect(sig, func)
         }

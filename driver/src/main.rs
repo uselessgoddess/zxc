@@ -15,7 +15,6 @@ use {
     cranelift_object::{ObjectBuilder, ObjectModule},
     std::{
         collections::HashMap,
-        env,
         fs::File,
         path::{Path, PathBuf},
     },
@@ -44,7 +43,7 @@ pub type Error = anyhow::Error;
 
 fn driver_impl<'tcx>(
     tcx: Tx<'tcx>,
-    (src, name): (&'tcx str, &str),
+    (src, name): (&'tcx str, &'tcx str),
     out: &Path,
     artifact: &Path,
 ) -> Result<Vec<u8>, Error> {
@@ -68,10 +67,9 @@ fn driver_impl<'tcx>(
         Err(err) => {
             let settings =
                 ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
-            let (code, reason, labels) = err.report(&hix, "src/sample.src", settings);
-            let mut report = Report::build(ReportKind::Error, "src/sample.src", 5)
-                .with_code(code)
-                .with_message(reason);
+            let (code, reason, labels) = err.report(&hix, name, settings);
+            let mut report =
+                Report::build(ReportKind::Error, name, 5).with_code(code).with_message(reason);
             for label in labels {
                 report = report.with_label(label.with_color(Color::Red));
             }
@@ -82,7 +80,7 @@ fn driver_impl<'tcx>(
                         .with_underlines(true),
                 )
                 .finish()
-                .print(("src/sample.src", ariadne::Source::from(src)))
+                .print((name, ariadne::Source::from(src)))
                 .unwrap();
             panic!();
         }
@@ -151,7 +149,7 @@ fn parent_dir(path: &Path) -> &Path {
     if let Some(parent) = path.parent() { parent } else { path }
 }
 
-fn driver<'tcx>(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(), Error> {
+fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(), Error> {
     let arena = WorkerLocal::new(|_| Default::default());
     let tcx = TyCtx::enter(&arena, &compiler.sess);
 
@@ -170,7 +168,7 @@ fn driver<'tcx>(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Re
     } else {
         parent_dir(&out).into()
     };
-    let mut temps = sess.opts.Z.temps_dir.as_ref().map(PathBuf::from).unwrap_or(out_dir.clone());
+    let temps = sess.opts.Z.temps_dir.as_ref().map(PathBuf::from).unwrap_or(out_dir.clone());
     fs::create_dir_all(&temps)?;
     let out = out_dir.join(out);
 

@@ -4,10 +4,7 @@ use {
         parse::{surround::lookahead_span, Parse, ParseBuffer, Spanned},
         Span,
     },
-    std::{
-        fmt,
-        ops::{Deref, Index},
-    },
+    std::{fmt, ops::Index},
 };
 
 pub enum Pair<T, P> {

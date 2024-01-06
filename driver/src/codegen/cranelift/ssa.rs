@@ -16,6 +16,7 @@ impl SsaKind {
     }
 }
 
+#[allow(clippy::single_match, clippy::match_single_binding)]
 // Now by default all values is possible to be ssa
 pub(crate) fn analyze(fx: &FunctionCx<'_, '_, '_>) -> IndexVec<Local, SsaKind> {
     let mut flag_map =
