@@ -15,7 +15,7 @@ use {
     index_vec::{index_vec, IndexVec},
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
-    std::{collections::hash_map::Entry, iter, mem},
+    std::{collections::hash_map::Entry, iter, mem, num::NonZeroU8},
 };
 pub use {
     error::{Error, ReportSettings, Result},
@@ -368,6 +368,62 @@ fn analyze_branch_expr<'hir>(
     Ok((ret_ty, Operand::Copy(ret_place)))
 }
 
+fn const_eval_operand(
+    op: mir::BinOp,
+    ScalarRepr { data: a, size }: ScalarRepr,
+    ScalarRepr { data: b, .. }: ScalarRepr,
+    signed: bool,
+) -> Option<ScalarRepr> {
+    use mir::BinOp::*;
+
+    fn bool(s: bool) -> ScalarRepr {
+        if s { ScalarRepr::TRUE } else { ScalarRepr::FALSE }
+    }
+
+    let scalar = match op {
+        Add | AddUnchecked => ScalarRepr { data: a.checked_add(b)?, size },
+        Sub | SubUnchecked => ScalarRepr { data: a.checked_sub(b)?, size },
+        Mul | MulUnchecked => ScalarRepr { data: a.checked_mul(b)?, size },
+        Div => ScalarRepr { data: a.checked_div(b)?, size },
+        Eq => bool(a == b),
+        Lt => bool(a > b),
+        Le => bool(a >= b),
+        Ne => bool(a != b),
+        Gt => bool(a < b),
+        Ge => bool(a <= b),
+    };
+
+    let max = if signed {
+        match size.get() {
+            1 => i8::MAX as u128,
+            2 => i16::MAX as u128,
+            4 => i32::MAX as u128,
+            8 => i64::MAX as u128,
+            _ => unreachable!(),
+        }
+    } else {
+        match size.get() {
+            1 => u8::MAX as u128,
+            2 => u16::MAX as u128,
+            4 => u32::MAX as u128,
+            8 => u64::MAX as u128,
+            _ => unreachable!(),
+        }
+    };
+    if scalar.data > max { None } else { Some(scalar) }
+}
+
+fn coerce_const_scalar<'tcx>(
+    tcx: Tx<'tcx>,
+    mut scalar: ScalarRepr,
+    ty: mir::Ty<'tcx>,
+) -> Operand<'tcx> {
+    let size = tcx.layout_of(ty).layout.size;
+
+    scalar.size = NonZeroU8::new(size.bytes() as u8).unwrap();
+    Operand::Const(ConstValue::Scalar(scalar), ty)
+}
+
 fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
@@ -406,7 +462,61 @@ fn analyze_expr<'hir>(
                 let (lhs, a) = analyze_expr(acx, lhs)?;
                 let (rhs, b) = analyze_expr(acx, rhs)?;
 
-                let _ = assert_same_types(lhs, rhs)?;
+                let (a, b) = if lhs.is_integer() && rhs.is_integer() {
+                    match (a, b) {
+                        (
+                            Operand::Const(ConstValue::Scalar(a), ty),
+                            Operand::Const(ConstValue::Scalar(b), _),
+                        ) => {
+                            assert_eq!(lhs.kind, ty);
+                            assert_same_types(lhs, rhs)?;
+
+                            if op == mir::BinOp::Div && b.is_null() {
+                                return Err(Error::ConstArithmetic {
+                                    case: "this arithmetic operation will trapped at runtime",
+                                    note: Some(format!(
+                                        "attempt to divide {:#?} by zero",
+                                        mir::consts::ConstInt::new(
+                                            a,
+                                            ty.is_signed(),
+                                            ty.is_ptr_sized_int(),
+                                        )
+                                    )),
+                                    span: expr.span,
+                                });
+                            }
+
+                            return if let Some(s) = const_eval_operand(op, a, b, ty.is_signed()) {
+                                Ok((lhs, Operand::Const(ConstValue::Scalar(s), ty)))
+                            } else {
+                                Err(Error::ConstArithmetic {
+                                    case: "this arithmetic operation will overflow",
+                                    note: None,
+                                    span: expr.span,
+                                })
+                            };
+                        }
+                        // it should be unreachable
+                        (a @ Operand::Const(_, _), b @ Operand::Const(_, _)) => {
+                            assert_same_types(lhs, rhs)?;
+                            (a, b) // add simple const evaluation
+                        }
+                        (Operand::Const(ConstValue::Scalar(a), _), b) => {
+                            (coerce_const_scalar(acx.tcx, a, rhs.kind), b)
+                        }
+                        (a, Operand::Const(ConstValue::Scalar(b), _)) => {
+                            (a, coerce_const_scalar(acx.tcx, b, lhs.kind))
+                        }
+                        (a, b) => {
+                            assert_same_types(lhs, rhs)?;
+                            (a, b)
+                        }
+                    }
+                } else {
+                    assert_same_types(lhs, rhs)?;
+                    (a, b)
+                };
+
                 let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
                 acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
             } else {
@@ -555,9 +665,13 @@ fn analyze_local_block_unclosed<'hir>(
 }
 
 fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
-    acx.block
-        .statements
-        .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
+    if let Some(Statement::Assign(place, rvalue)) = acx.block.statements.last_mut() {
+        place.local = Local::RETURN_PLACE;
+    } else {
+        acx.block
+            .statements
+            .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
+    }
 }
 
 fn analyze_body<'hir>(

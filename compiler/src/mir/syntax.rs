@@ -194,6 +194,11 @@ impl ScalarRepr {
             self.size
         );
     }
+
+    #[inline]
+    pub fn is_null(self) -> bool {
+        self.data == 0
+    }
 }
 
 macro_rules! from {

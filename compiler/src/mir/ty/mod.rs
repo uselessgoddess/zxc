@@ -115,11 +115,26 @@ impl<'cx> Ty<'cx> {
         }
     }
 
+    #[inline]
     pub fn is_unit(&self) -> bool {
         match self.kind() {
             Tuple(list) => list.is_empty(),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub fn is_primitive(&self) -> bool {
+        matches!(self.kind(), Bool | Int(_))
+    }
+
+    #[inline]
+    pub fn is_integer(&self) -> bool {
+        matches!(self.kind(), Int(_))
+    }
+
+    pub fn is_signed(self) -> bool {
+        matches!(self.kind(), Int(_))
     }
 
     pub fn is_ptr_sized_int(&self) -> bool {

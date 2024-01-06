@@ -51,6 +51,11 @@ pub enum Error<'tcx> {
         caller: Span,
         target: Option<Span>,
     },
+    ConstArithmetic {
+        case: &'static str,
+        note: Option<String>,
+        span: Span,
+    },
     HasNoMain(Span),
 }
 
@@ -169,6 +174,14 @@ impl<'a> Error<'a> {
                         )),
                     ],
                 )
+            }
+            Error::ConstArithmetic { case, note, span } => {
+                let mut label = Label::new(s(span));
+
+                if let Some(note) = note {
+                    label = label.with_message(note);
+                }
+                ("#ERROR_PLACEHOLDER", case.to_string(), vec![label])
             }
         }
     }

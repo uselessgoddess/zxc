@@ -15,6 +15,7 @@ pub enum CastTy {
 impl CastKind {
     fn cast_ty(t: Ty) -> Option<CastTy> {
         match t.kind() {
+            ty::Bool => Some(CastTy::Int(IntTy::Bool)),
             ty::Int(_) => Some(CastTy::Int(IntTy::I)),
             _ => None,
         }

@@ -114,6 +114,7 @@ fn make_local_place<'tcx>(
 
 pub(crate) fn type_sign(ty: Ty<'_>) -> bool {
     match ty.kind() {
+        ty::Bool => false,
         ty::Int(..) => true,
         _ => todo!(),
     }

@@ -1,4 +1,4 @@
-mod consts;
+pub mod consts;
 pub mod pretty;
 mod syntax;
 pub mod ty;
