@@ -1,0 +1,10 @@
+#[test]
+fn ui() {
+    let t = trybuild::TestCases::new();
+    t.pass("../tests/ui/if.src");
+    t.pass("../tests/ui/lazy_op.src");
+    t.pass("../tests/ui/main.src");
+    t.pass("../tests/ui/sample.src");
+
+    t.compile_fail("../tests/ui/max.src");
+}
