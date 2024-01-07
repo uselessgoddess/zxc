@@ -76,6 +76,7 @@ pub enum TyKind<'cx> {
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
     FnDef(mir::DefId), // has no generics now
+    Never,
 }
 
 pub type Ty<'cx> = Interned<'cx, TyKind<'cx>>;
@@ -116,11 +117,21 @@ impl<'cx> Ty<'cx> {
     }
 
     #[inline]
+    pub fn is_never(&self) -> bool {
+        matches!(self.kind(), Never)
+    }
+
+    #[inline]
     pub fn is_unit(&self) -> bool {
         match self.kind() {
             Tuple(list) => list.is_empty(),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub fn is_zst(&self) -> bool {
+        self.is_unit() || self.is_never()
     }
 
     #[inline]
@@ -152,7 +163,6 @@ impl fmt::Debug for Ty<'_> {
                 IntTy::I32 => f.write_str("i32"),
                 IntTy::I64 => f.write_str("i64"),
                 IntTy::Isize => f.write_str("isize"),
-                _ => todo!(),
             },
             Tuple(list) => {
                 if list.is_empty() {
@@ -164,6 +174,7 @@ impl fmt::Debug for Ty<'_> {
             FnDef(def) => {
                 write!(f, "fn({def:?})")
             }
+            Never => f.write_str("!"),
         }
     }
 }

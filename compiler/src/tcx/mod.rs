@@ -24,6 +24,7 @@ mod private {
 }
 
 pub struct CommonTypes<'tcx> {
+    pub never: Ty<'tcx>,
     pub unit: Ty<'tcx>,
     pub bool: Ty<'tcx>,
     pub i8: Ty<'tcx>,
@@ -41,6 +42,7 @@ impl<'tcx> CommonTypes<'tcx> {
         let mk = |ty| intern.intern_ty(arena, ty);
 
         Self {
+            never: mk(Never),
             unit: mk(Tuple(List::empty())),
             bool: mk(Bool),
             i8: mk(Int(IntTy::I8)),
@@ -152,8 +154,8 @@ impl<'tcx> TyCtx<'tcx> {
         }
     }
 
-    pub fn empty_hir_scope(&self) -> &mut hir::Scope<'tcx> {
-        self.arena.scope.alloc(hir::Scope::new())
+    pub fn empty_hir_scope(&self, sig: hir::FnSig<'tcx>) -> &mut hir::Scope<'tcx> {
+        self.arena.scope.alloc(hir::Scope::new(Some(sig)))
     }
 
     pub fn fatal(&self, msg: impl Into<String>) -> ! {

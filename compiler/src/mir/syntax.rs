@@ -295,7 +295,7 @@ pub enum Statement<'tcx> {
     Nop,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BasicBlockData<'tcx> {
     pub statements: Vec<Statement<'tcx>>,
     pub terminator: Option<Terminator<'tcx>>,

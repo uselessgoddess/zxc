@@ -62,6 +62,22 @@ impl Spanned for expr::Binary<'_> {
     }
 }
 
+impl Spanned for expr::Return<'_> {
+    fn span(&self) -> Span {
+        if let Some(expr) = &self.expr {
+            lookahead_span(self.return_token.span, expr.span())
+        } else {
+            self.return_token.span
+        }
+    }
+}
+
+impl Spanned for expr::Call<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.func.span(), self.paren.span())
+    }
+}
+
 impl Spanned for expr::TailCall<'_> {
     fn span(&self) -> Span {
         lookahead_span(

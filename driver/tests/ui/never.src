@@ -1,3 +1,11 @@
+fn test(argc: i32) -> i32 {
+    return (if true {
+        return argc;
+    } else {
+        return argc;
+    });
+}
+
 fn fib(n: isize) -> isize {
     if n <= 1 {
         return n;

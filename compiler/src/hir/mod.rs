@@ -6,7 +6,7 @@ use {
     crate::{
         mir::{
             self, ty::Abi, CastKind, ConstValue, InstanceData, Local, LocalDecl, Mutability,
-            Operand, Place, Rvalue, ScalarRepr, Statement, SwitchTargets, Terminator,
+            Operand, Place, Rvalue, ScalarRepr, Statement, SwitchTargets, Terminator, TyKind,
         },
         sym,
         symbol::{Ident, Symbol},
@@ -32,6 +32,7 @@ pub enum ExprKind<'tcx> {
     Call(Ident, &'tcx [Expr<'tcx>]),
     Block(&'tcx [Stmt<'tcx>], Span),
     If(&'tcx Expr<'tcx>, &'tcx Expr<'tcx>, Option<&'tcx Expr<'tcx>>),
+    Return(Option<&'tcx Expr<'tcx>>),
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +53,7 @@ fn analyze_block<'tcx>(tcx: Tx<'tcx>, block: &lexer::Block<'tcx>) -> Expr<'tcx> 
 
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &lexer::Expr<'tcx>) -> Self {
-        use lexer::expr::{Binary, Block, If, Paren, TailCall, Unary};
+        use lexer::expr::{Binary, Call, If, Paren, Return, TailCall, Unary};
 
         let span = expr.span();
         let kind = match expr {
@@ -68,6 +69,15 @@ impl<'tcx> Expr<'tcx> {
             ),
             lexer::Expr::Ident(str) => {
                 expr::Local(Ident::new(Symbol::intern(str.ident()), str.span))
+            }
+            lexer::Expr::Call(Call { func, args, .. }) => {
+                let box lexer::Expr::Ident(func) = func else { todo!() };
+                expr::Call(
+                    Ident::from_parse(*func),
+                    tcx.arena
+                        .expr
+                        .alloc_from_iter(args.iter().map(|expr| Self::analyze(tcx, expr))),
+                )
             }
             lexer::Expr::TailCall(TailCall { receiver, func, args, .. }) => {
                 let recv = Self::analyze(tcx, receiver);
@@ -90,6 +100,9 @@ impl<'tcx> Expr<'tcx> {
                 else_branch
                     .as_ref()
                     .map(|(_, block)| &*tcx.arena.expr.alloc(analyze_block(tcx, block))),
+            ),
+            lexer::Expr::Return(Return { expr, .. }) => expr::Return(
+                expr.as_ref().map(|expr| &*tcx.arena.expr.alloc(Self::analyze(tcx, expr))),
             ),
         };
         Self { kind, span }
@@ -134,6 +147,15 @@ impl<'tcx> Stmt<'tcx> {
 pub enum FnRetTy<'hir> {
     Default(Span),
     Return(Ty<'hir>),
+}
+
+impl<'hir> FnRetTy<'hir> {
+    pub fn ty(&self, tcx: Tx<'hir>) -> Ty<'hir> {
+        match *self {
+            FnRetTy::Default(span) => Ty::new(span, tcx.types.unit),
+            FnRetTy::Return(ty) => ty,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -212,13 +234,19 @@ struct AnalyzeCx<'mir, 'hir> {
 
 impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     pub fn scope(&mut self) -> &mut Scope<'hir> {
-        self.scope.as_mut().unwrap()
+        self.scope.as_mut().expect("calling `enter_scope` without `exit_scope`")
     }
 
     fn enter_scope(&mut self) {
-        let parent = self.scope.take();
-        self.scope =
-            Some(self.tcx.arena.scope.alloc(Scope { parent, locals: FxHashMap::default() }))
+        let parent = self.scope.take().unwrap();
+        let returned = parent.returned;
+        let sig = parent.sig;
+        self.scope = Some(self.tcx.arena.scope.alloc(Scope {
+            parent: Some(parent),
+            returned,
+            sig,
+            locals: FxHashMap::default(),
+        }));
     }
 
     fn exit_scope(&mut self) {
@@ -235,18 +263,24 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
 
     pub fn end_of_block(&mut self, terminator: Terminator<'hir>) -> mir::BasicBlock {
         self.block.terminator = Some(terminator);
-        self.body.basic_blocks.push(mem::replace(
-            &mut self.block,
-            mir::BasicBlockData { statements: vec![], terminator: None },
-        ))
+
+        let block = mem::take(&mut self.block);
+        if !self.scope().was_returned() {
+            self.body.basic_blocks.push(block)
+        } else {
+            self.body.basic_blocks.last_idx()
+        }
     }
 
     pub fn end_of_block_dummy(&mut self) -> mir::BasicBlock {
         self.block.terminator = None;
-        self.body.basic_blocks.push(mem::replace(
-            &mut self.block,
-            mir::BasicBlockData { statements: vec![], terminator: None },
-        ))
+
+        let block = mem::take(&mut self.block);
+        if !self.scope().was_returned() {
+            self.body.basic_blocks.push(block)
+        } else {
+            self.body.basic_blocks.last_idx()
+        }
     }
 
     pub fn current_block(&self) -> mir::BasicBlock {
@@ -258,6 +292,16 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     }
 
     pub fn assign_rvalue(&mut self, place: Place<'hir>, val: Rvalue<'hir>) {
+        #[cfg(debug_assertions)]
+        {
+            let tcx = self.tcx;
+            if let Rvalue::Use(operand) = &val
+                && operand.ty(&self.body.local_decls, tcx) == tcx.types.never
+            {
+                // try avoiding `never` assigns
+                panic!("I don't think it's a good idea to allow it to be assigned to something")
+            }
+        }
         self.block.statements.push(Statement::Assign(place, val))
     }
 
@@ -297,6 +341,10 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         (unit, Operand::Const(ConstValue::Zst, unit.kind))
     }
 
+    pub fn unit_const(&mut self, unit: Ty<'hir>) -> Operand<'hir> {
+        Operand::Const(ConstValue::Zst, unit.kind)
+    }
+
     pub fn bool(&self, discr: bool) -> Operand<'hir> {
         Operand::Const(
             ConstValue::Scalar(if discr { ScalarRepr::TRUE } else { ScalarRepr::FALSE }),
@@ -305,8 +353,20 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     }
 }
 
+/// # Safety
+/// There's really nothing dangerous about it, but let `unsafe`
+/// emphasize the fine line of using the `never` type
+unsafe fn assert_same_types_allow_never<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
+    Ok(match (a.is_never(), b.is_never()) {
+        (true, true) => a,
+        (true, _) => b,
+        (_, true) => a,
+        _ => assert_same_types(a, b)?,
+    })
+}
+
 fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
-    if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) }
+    return if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) };
 }
 
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
@@ -335,37 +395,45 @@ fn analyze_branch_expr<'hir>(
     let bool = acx.tcx.types.bool;
     assert_same_types(Ty::new(cond.span, bool), ty)?;
 
-    let ret_place = acx.typed_place(acx.tcx.types.unit);
-    let cond_block = acx.end_of_block_dummy();
+    acx.scoped(|acx| {
+        let ret_place = acx.typed_place(acx.tcx.types.unit);
+        let cond_block = acx.end_of_block_dummy();
 
-    let then_entry = acx.current_block();
-    let (then_ty, then) = then_expr(acx)?;
-    acx.assign_rvalue(ret_place, Rvalue::Use(then));
-    let then_block = acx.end_of_block_dummy();
+        let then_entry = acx.current_block();
+        let (then_ty, then) = then_expr(acx)?;
+        if !then_ty.is_never() {
+            acx.assign_rvalue(ret_place, Rvalue::Use(then));
+        }
+        let then_block = acx.end_of_block_dummy();
 
-    let else_entry = acx.current_block();
-    let else_ty = if let Some(else_) = else_expr {
-        let (ty, else_) = else_(acx)?;
-        acx.assign_rvalue(ret_place, Rvalue::Use(else_));
-        ty
-    } else {
-        Ty::new(then_ty.span, acx.tcx.types.unit)
-    };
+        let else_entry = acx.current_block();
+        let else_ty = if let Some(else_) = else_expr {
+            let (ty, else_) = else_(acx)?;
+            if !ty.is_never() {
+                acx.assign_rvalue(ret_place, Rvalue::Use(else_));
+            }
+            ty
+        } else {
+            Ty::new(then_ty.span, acx.tcx.types.unit)
+        };
 
-    // All the if blocks converge to this block
-    let next_block = acx.next_block();
-    acx.end_of_block(Terminator::Goto { target: next_block });
-    acx.body.basic_blocks[then_block].terminator = Some(Terminator::Goto { target: next_block });
+        // All the if blocks converge to this block
+        let next_block = acx.next_block();
+        acx.end_of_block(Terminator::Goto { target: next_block });
+        acx.body.basic_blocks[then_block].terminator =
+            Some(Terminator::Goto { target: next_block });
 
-    let ret_ty = assert_same_types(else_ty, then_ty)?;
-    acx.body.local_decls[ret_place.local].ty = ret_ty.kind;
+        // Safety: we do not create zst constants if the expression type is reduced to `never'
+        let ret_ty = unsafe { assert_same_types_allow_never(else_ty, then_ty)? };
+        acx.body.local_decls[ret_place.local].ty = ret_ty.kind;
 
-    acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
-        discr,
-        targets: SwitchTargets::static_if(0, else_entry, then_entry),
-    });
+        acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
+            discr,
+            targets: SwitchTargets::static_if(0, else_entry, then_entry),
+        });
 
-    Ok((ret_ty, Operand::Copy(ret_place)))
+        Ok((ret_ty, Operand::Copy(ret_place)))
+    })
 }
 
 fn const_eval_operand(
@@ -448,7 +516,11 @@ fn analyze_expr<'hir>(
         }
         expr::Local(ident) => {
             let (ty, place) = acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?;
-            (ty, Operand::Copy(place))
+            if let Some(place) = place {
+                (ty, Operand::Copy(place))
+            } else {
+                if ty.is_zst() { (ty, Operand::Const(ConstValue::Zst, ty.kind)) } else { panic!() }
+            }
         }
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
@@ -462,8 +534,8 @@ fn analyze_expr<'hir>(
                 let (lhs, a) = analyze_expr(acx, lhs)?;
                 let (rhs, b) = analyze_expr(acx, rhs)?;
 
-                let (a, b) = if lhs.is_integer() && rhs.is_integer() {
-                    match (a, b) {
+                if lhs.is_integer() && rhs.is_integer() {
+                    let (a, b) = match (a, b) {
                         (
                             Operand::Const(ConstValue::Scalar(a), ty),
                             Operand::Const(ConstValue::Scalar(b), _),
@@ -511,14 +583,15 @@ fn analyze_expr<'hir>(
                             assert_same_types(lhs, rhs)?;
                             (a, b)
                         }
-                    }
+                    };
+                    // lhs is defining reality
+                    let kind = op.ty(acx.tcx, lhs.kind, lhs.kind);
+                    acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
                 } else {
                     assert_same_types(lhs, rhs)?;
-                    (a, b)
-                };
-
-                let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
-                acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
+                    let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
+                    acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
+                }
             } else {
                 let bool = Ty::new(rhs.span, acx.tcx.types.bool);
 
@@ -616,6 +689,31 @@ fn analyze_expr<'hir>(
             lazy!(|acx| analyze_expr(acx, then)),
             else_.map(|else_| lazy!(|acx| analyze_expr(acx, else_))),
         )?,
+        expr::Return(ret) => {
+            if let Some(sig) = acx.scope().sig {
+                let ret_ty = sig.decl.output.ty(acx.tcx);
+                let (ty, ret) = if let Some(ret) = ret {
+                    analyze_expr(acx, ret)?
+                } else {
+                    let unit = Ty::new(expr.span, acx.tcx.types.unit);
+                    (unit, acx.unit_const(unit))
+                };
+
+                if ty.is_never() {
+                    let _ = mem::take(&mut acx.block);
+                } else {
+                    let ty = assert_same_types(ret_ty, ty)?;
+                    make_return(acx, ty, ret);
+                }
+                acx.end_of_block(Terminator::Return);
+                acx.scope().returned = true; // prevent next blocks from spawning in this scope
+
+                let never = Ty::new(ty.span, acx.tcx.types.never);
+                (never, acx.unit_const(never))
+            } else {
+                return Err(todo!());
+            }
+        }
         panic => todo!("{panic:?}"),
     };
 
@@ -641,8 +739,13 @@ fn analyze_stmt<'hir>(
 
             match stmt {
                 StmtKind::Local(LocalStmt { pat, .. }) => {
-                    let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), Mutability::Not);
-                    acx.scope().declare_var(pat.name, (ty, place));
+                    if !ty.is_zst() {
+                        let (ty, place) =
+                            acx.push_rvalue(ty, Rvalue::Use(operand), Mutability::Not);
+                        acx.scope().declare_var(pat.name, (ty, Some(place)));
+                    } else {
+                        acx.scope().declare_var(pat.name, (ty, None));
+                    }
                     None
                 }
                 StmtKind::Expr(_, _) => Some((ty, operand)),
@@ -665,7 +768,7 @@ fn analyze_local_block_unclosed<'hir>(
 }
 
 fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
-    if let Some(Statement::Assign(place, rvalue)) = acx.block.statements.last_mut() {
+    if let Some(Statement::Assign(place, _)) = acx.block.statements.last_mut() {
         place.local = Local::RETURN_PLACE;
     } else {
         acx.block
@@ -681,6 +784,10 @@ fn analyze_body<'hir>(
 ) -> Result<'hir, ()> {
     if let Some((last, stmts)) = stmts.split_last() {
         analyze_local_block_unclosed(acx, stmts)?;
+
+        if let stmt::Expr(ret @ Expr { kind: expr::Return(_), .. }, _) = &last.kind {
+            return analyze_expr(acx, ret).map(|_| ());
+        }
 
         return Ok(if let stmt::Expr(expr, true) = &last.kind {
             let (ty, place) = analyze_expr(acx, expr)?;
@@ -702,7 +809,7 @@ fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) ->
     acx.body.argc = sig.inputs.len();
     for &(mutability, pat, ty) in sig.inputs {
         let local = acx.body.local_decls.push(LocalDecl { mutability, ty: ty.kind });
-        acx.scope().declare_var(pat, (ty, Place::pure(local)));
+        acx.scope().declare_var(pat, (ty, Some(Place::pure(local))));
     }
     // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
 
@@ -712,10 +819,10 @@ fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) ->
 pub fn analyze_fn_definition<'hir>(
     tcx: Tx<'hir>,
     hix: &HirCtx<'hir>,
-    sig: FnDecl<'hir>,
+    sig: FnSig<'hir>,
     stmts: &[Stmt<'hir>],
 ) -> Result<'hir, mir::Body<'hir>> {
-    let ret = match sig.output {
+    let ret = match sig.decl.output {
         FnRetTy::Default(span) => Ty::new(span, tcx.types.unit),
         FnRetTy::Return(ty) => ty,
     };
@@ -729,10 +836,10 @@ pub fn analyze_fn_definition<'hir>(
         hix,
         block: mir::BasicBlockData { statements: vec![], terminator: None },
         body: &mut body,
-        scope: Some(tcx.empty_hir_scope()),
+        scope: Some(tcx.empty_hir_scope(sig)),
     };
 
-    analyze_fn_prelude(&mut acx, sig)?;
+    analyze_fn_prelude(&mut acx, sig.decl)?;
     analyze_body(&mut acx, stmts, ret)?;
 
     assert!(acx.block.statements.is_empty());
@@ -807,7 +914,7 @@ pub fn analyze_module<'hir>(
 
     let mut mir = IndexVec::<mir::DefId, _>::with_capacity(128);
     for (def, (sig, stmts)) in defs.into_iter().zip(functions) {
-        let body = analyze_fn_definition(hix.tcx, hix, sig.decl, stmts)?;
+        let body = analyze_fn_definition(hix.tcx, hix, *sig, stmts)?;
         assert_eq!(def, mir.push(body));
     }
 

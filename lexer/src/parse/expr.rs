@@ -1,10 +1,13 @@
-use crate::{
-    braced,
-    lexer::{Ident, Lit},
-    parenthesized,
-    parse::{self, Parse, ParseBuffer, Punctuated},
-    token::{self},
-    Token,
+use {
+    crate::{
+        braced,
+        lexer::{Ident, Lit},
+        parenthesized,
+        parse::{self, Parse, ParseBuffer, Punctuated},
+        token::{self},
+        Token,
+    },
+    std::assert_matches::assert_matches,
 };
 
 #[derive(PartialOrd, PartialEq)]
@@ -123,6 +126,8 @@ ast_enum_of_structs! {
         Ident(Ident<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
+        Return(Return<'a>),
+        Call(Call<'a>),
         TailCall(TailCall<'a>),
         If(If<'a>),
     }
@@ -153,6 +158,19 @@ pub struct Binary<'a> {
 pub struct Unary<'a> {
     pub op: UnOp,
     pub expr: Box<Expr<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Return<'a> {
+    pub return_token: Token![return],
+    pub expr: Option<Box<Expr<'a>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Call<'a> {
+    pub func: Box<Expr<'a>>,
+    pub paren: token::Paren,
+    pub args: Punctuated<Expr<'a>, Token![,]>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +304,42 @@ fn unary_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> 
     }
 }
 
+fn expr_return<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Return<'lex>> {
+    fn can_begin_expr(input: &ParseBuffer) -> bool {
+        input.peek(Ident) // value name or keyword
+            || input.peek(token::Paren) // tuple
+            || input.peek(token::Bracket) // array
+            || input.peek(token::Brace) // block
+            || input.peek(Lit) // literal
+            || input.peek(Token![!]) // operator not
+            || input.peek(Token![-]) // unary minus
+            || input.peek(Token![*]) // dereference
+        //    || input.peek(Token![|]) // closure
+        //    || input.peek(Token![&]) // reference
+        // || input.peek(Token![..]) // range notation
+            || input.peek(Token![<]) // associated path
+        // || input.peek(Token![::]) // global path
+        // || input.peek(Lifetime) // labeled loop
+        //|| input.peek(Token![#]) // expression attributes
+    }
+
+    Ok(Return {
+        return_token: input.parse()?,
+        expr: {
+            if can_begin_expr(input) {
+                // NOTE: return is greedy and eats blocks after it even when in a
+                // position where structs are not allowed, such as in if statement
+                // conditions. For example:
+                //
+                // if return { print("A") } {} // Prints "A"
+                Some(Box::new(input.parse()?))
+            } else {
+                None
+            }
+        },
+    })
+}
+
 fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     let mut e = atom_expr(input)?;
 
@@ -293,7 +347,14 @@ fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>
         // Doesn't allow trailer expressions now
         // later there will be `func(a) |..| { b }` syntax
 
-        if input.peek(Token![.]) {
+        if input.peek(token::Paren) {
+            let mut content;
+            e = Expr::Call(Call {
+                func: Box::new(e),
+                paren: parenthesized!(content in input),
+                args: content.parse_terminated(Expr::parse, Token![,])?,
+            });
+        } else if input.peek(Token![.]) {
             e = Expr::TailCall(TailCall {
                 receiver: Box::new(e),
                 dot: input.parse()?,
@@ -327,6 +388,8 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
         input.custom(expr_paren).map(Expr::Paren)
     } else if input.peek(token::Brace) {
         input.custom(Block::parse).map(Expr::Block)
+    } else if input.peek(Token![return]) {
+        expr_return(input).map(Expr::Return)
     } else if input.peek(Token![if]) {
         input.parse().map(Expr::If)
     } else if input.is_empty() {
@@ -482,4 +545,13 @@ fn bool_expr() {
     } else {
         panic!()
     }
+}
+
+#[test]
+fn return_expr() {
+    let expr: Expr = lex_it!("return").parse().unwrap();
+    assert_matches!(expr, Expr::Return(Return { expr, .. }) if expr.is_none());
+
+    let expr: Expr = lex_it!("return print(\"Hi\")").parse().unwrap();
+    assert_matches!(expr, Expr::Return(Return { expr: Some(box Expr::Call(Call { .. })), .. }));
 }

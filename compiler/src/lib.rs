@@ -12,10 +12,12 @@
     hash_raw_entry,
     core_intrinsics,
     mem_copy_fn,
-    const_option
+    const_option,
+    box_patterns
 )]
 #![allow(clippy::unit_arg)]
 #![allow(internal_features)]
+#![deny(unused_must_use)]
 
 pub mod abi;
 pub mod hir;

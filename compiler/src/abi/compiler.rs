@@ -32,7 +32,6 @@ impl<'tcx> TyCtx<'tcx> {
                     IntTy::I32 => scalar(Integer::I32, true, (4, 4)),
                     IntTy::I64 => scalar(Integer::I64, true, (8, 8)),
                     IntTy::Isize => scalar(Integer::I64, true, (8, 8)),
-                    _ => todo!(),
                 },
                 TyKind::Tuple(list) => {
                     if list.is_empty() {
@@ -42,6 +41,7 @@ impl<'tcx> TyCtx<'tcx> {
                     }
                 }
                 TyKind::FnDef(_) => ZST_LAYOUT,
+                TyKind::Never => ZST_LAYOUT, // or unreachable?
             },
         );
         TyAbi { ty, layout }
@@ -60,6 +60,7 @@ impl<'tcx> TyCtx<'tcx> {
                     }
                 }
                 TyKind::FnDef(_) => PassMode::Ignore,
+                TyKind::Never => PassMode::Ignore,
             },
         };
 

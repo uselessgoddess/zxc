@@ -1,4 +1,4 @@
-#![feature(let_chains, slice_ptr_len, slice_ptr_get)]
+#![feature(let_chains, slice_ptr_len, slice_ptr_get, assert_matches, box_patterns)]
 #![allow(clippy::unit_arg, clippy::let_unit_value)]
 
 #[macro_use]

@@ -229,6 +229,7 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
                 let sig = self.hix.instances[def].sig;
                 p!(print(sig))
             }
+            ty::Never => p!("!"),
         }
 
         Ok(())

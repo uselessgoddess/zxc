@@ -88,6 +88,7 @@ pub mod ast {
     define_tokens! {
         Token(&str) {
             "extern" => Extern
+            "return" => Return
             "let" => Let
             "fn" => Fn
             "if" => If

@@ -19,7 +19,7 @@ use {
         fmt,
         fs::File,
         path::{Path, PathBuf},
-        process::{self, ExitCode},
+        process,
     },
 };
 
