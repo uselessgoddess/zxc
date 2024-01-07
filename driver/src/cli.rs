@@ -11,6 +11,13 @@ pub enum Emit {
     IR,
 }
 
+#[derive(ValueEnum, Copy, Clone, Debug)]
+pub enum Color {
+    Auto,
+    Always,
+    Never,
+}
+
 #[derive(Parser, Debug)]
 #[command(about)]
 pub struct Args {
@@ -24,6 +31,9 @@ pub struct Args {
 
     #[arg(long = "emit")]
     pub emit: Vec<Emit>,
+
+    #[arg(long = "color", value_name = "WHEN")]
+    pub color: Option<Color>,
 
     /// codegen flags to zxc
     #[arg(short = 'C', value_name = "FLAG", value_parser = parse_kv)]

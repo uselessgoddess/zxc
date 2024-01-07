@@ -6,7 +6,8 @@ mod error;
 mod interface;
 
 use {
-    anyhow::{anyhow, Context as _},
+    anyhow::Context as _,
+    concolor::{ColorChoice, Stream},
     cranelift::{
         codegen::{isa, Context},
         prelude::{settings, Configurable},
@@ -15,9 +16,10 @@ use {
     cranelift_object::{ObjectBuilder, ObjectModule},
     std::{
         collections::HashMap,
+        fmt,
         fs::File,
         path::{Path, PathBuf},
-        process,
+        process::{self, ExitCode},
     },
 };
 
@@ -36,11 +38,40 @@ use {
         mir::pretty,
         par::WorkerLocal,
     },
-    std::{fmt::Write as _, fs, io::Write as _, process::Command},
-    yansi::Paint,
+    std::{
+        fmt::Write as _,
+        fs,
+        io::{self, Write as _},
+        process::Command,
+    },
 };
 
-pub type Error = anyhow::Error;
+#[derive(Debug)]
+pub enum Error {
+    Error(anyhow::Error),
+    Guaranteed,
+}
+
+macro_rules! impl_error {
+    ($($error:ty)*) => {$(
+        impl From<$error> for Error {
+            fn from(error: $error) -> Self {
+                Error::Error(error.into())
+            }
+        }
+    )*};
+}
+
+impl_error! {
+    anyhow::Error
+    io::Error
+    fmt::Error
+    isa::LookupError
+    settings::SetError
+    cranelift_object::object::write::Error
+    cranelift::codegen::CodegenError
+    cranelift_module::ModuleError
+}
 
 fn parse_items<'lex>(
     tcx: Tx<'lex>,
@@ -68,15 +99,15 @@ fn driver_impl<'tcx>(
 ) -> Result<Vec<u8>, Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
-    let items = parse_items(tcx, &mut input).unwrap_or_else(|err| {
+    let items = parse_items(tcx, &mut input).or_else(|err| {
         Report::build(ReportKind::Error, name, 5)
             .with_message(err.to_string())
             .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
             .finish()
             .eprint((name, ariadne::Source::from(src)))
             .unwrap();
-        process::exit(1)
-    });
+        Err(Error::Guaranteed)
+    })?;
 
     let mut hix = HirCtx::pure(tcx);
     let mir = match hir::analyze_module(&mut hix, &items) {
@@ -99,7 +130,7 @@ fn driver_impl<'tcx>(
                 .finish()
                 .eprint((name, ariadne::Source::from(src)))
                 .unwrap();
-            process::exit(1)
+            return Err(Error::Guaranteed);
         }
     };
 
@@ -173,7 +204,11 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
     let input = &tcx.sess.io.input;
     let src = fs::read_to_string(input).with_context(|| format!("{}", input.display()))?;
 
-    println!("{}", Paint::magenta(&src));
+    if concolor::get(Stream::Stdout).ansi_color() {
+        println!("{}", yansi::Paint::magenta(&src));
+    } else {
+        println!("{src}");
+    }
 
     let sess = &tcx.sess;
     let art = PathBuf::from(input.file_name().unwrap());
@@ -221,11 +256,17 @@ use {
 };
 
 fn main() {
-    use {clap::Parser, std::error::Error};
+    use clap::Parser;
 
     let early = EarlyErrorHandler;
 
-    let Args { input, output, output_dir, c_flags, z_flags, emit } = Args::parse();
+    let Args { input, output, output_dir, color, c_flags, z_flags, emit } = Args::parse();
+    concolor::set(match color.unwrap_or(cli::Color::Auto) {
+        cli::Color::Auto => ColorChoice::Auto,
+        cli::Color::Always => ColorChoice::Always,
+        cli::Color::Never => ColorChoice::Never,
+    });
+
     let c_opts = cli::build_options(&early, &c_flags, sess::C_OPTIONS, "C", "codegen");
     let z_opts = cli::build_options(&early, &z_flags, sess::Z_OPTIONS, "Z", "compiler");
 
@@ -246,7 +287,10 @@ fn main() {
 
     interface::run_compiler(config, |compiler| {
         if let Err(err) = driver(&early, compiler) {
-            early.early_fatal(err.to_string())
+            if let Error::Error(err) = err {
+                early.early_fatal(err.to_string())
+            }
+            process::exit(1)
         }
     });
 }

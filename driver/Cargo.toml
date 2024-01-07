@@ -20,4 +20,5 @@ yansi = "1.0.0-rc.1"
 num_cpus = "1.16.0"
 tempfile = { version = "3.9" }
 anyhow = { version = "1.0.79" }
+concolor = { version = "0.1.1", features = ["auto", "api"] }
 clap = { version = "4.4.11", features = ["derive"] }
