@@ -1,5 +1,6 @@
 mod const_goto;
 mod dump;
+mod multiple_return;
 mod peep_simplify;
 mod simplify;
 mod simplify_branches;
@@ -75,6 +76,7 @@ fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
         body,
         &[
             &o1(simplify::SimplifyCfg::EarlyOpt),
+            &multiple_return::MultipleReturnTerminators,
             &peep_simplify::PeepSimplify,
             &const_goto::ConstGoto,
             &simplify::SimplifyLocals::AfterGVN,

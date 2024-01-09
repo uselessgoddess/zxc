@@ -1,7 +1,1 @@
-extern "C" fn main(argc: isize, _: isize) -> isize {
-    if argc == argc {
-        return 1.isize;
-    }
-
-    0.isize
-}
+fn foo(x: i32) -> i32 { }

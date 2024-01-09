@@ -1,0 +1,9 @@
+[E0228] Error: mismatch types
+   ╭─[empty:1:6]
+   │
+ 1 │ fn foo(x: i32) -> i32 { }
+   │ ──────────┬────────┬─  
+   │           ╰──────────── found `@unit` 
+   │                    │   
+   │                    ╰─── expected `i32` 
+───╯

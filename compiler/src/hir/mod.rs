@@ -793,16 +793,19 @@ fn analyze_body<'hir>(
 
         return Ok(if let stmt::Expr(expr, true) = &last.kind {
             let (ty, place) = analyze_expr(acx, expr)?;
-            make_return(acx, assert_same_types(ret, ty)?, place);
+            unsafe {
+                make_return(acx, assert_same_types_allow_never(ret, ty)?, place);
+            }
             acx.end_of_block(Terminator::Return);
         } else {
-            //if let Some((ty, place)) = analyze_stmt(acx, last, None)? {
-            //    make_return(acx, assert_same_types(ret, ty)?, place);
-            //} else {
-            assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
-            //}
+            if !acx.scope().returned {
+                assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
+            }
             acx.end_of_block(Terminator::Return);
         });
+    } else {
+        let span = acx.scope().sig.map(|sig| sig.span).unwrap_or(ret.span);
+        assert_same_types(ret, Ty::new(span, acx.tcx.types.unit))?;
     }
     Ok(())
 }
