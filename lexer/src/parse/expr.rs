@@ -487,8 +487,11 @@ impl Block<'_> {
     }
 }
 
-fn requires_terminator<T>(_: &T) -> bool {
-    true
+fn requires_terminator(expr: &Expr<'_>) -> bool {
+    match expr {
+        Expr::If(_) => false,
+        _ => true,
+    }
 }
 
 #[cfg(test)]

@@ -1,6 +1,10 @@
-extern "C" fn main(argc: isize, _: isize) -> isize {
-    let x = true == false;
-    let x = 2342342342.i8;
+fn fib(n: isize) -> isize {
+    if n <= 1 {
+        return n;
+    };
+    fib(n - 1.isize) + fib(n - 2.isize)
+}
 
-    0.isize
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    (fib(argc) == 1 && argc == 1).isize - 1
 }

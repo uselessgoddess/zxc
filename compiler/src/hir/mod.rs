@@ -122,7 +122,7 @@ pub struct LocalStmt<'tcx> {
 #[derive(Debug, Clone)]
 pub enum StmtKind<'tcx> {
     Local(LocalStmt<'tcx>),
-    Expr(&'tcx Expr<'tcx>, /* semi */ bool),
+    Expr(&'tcx Expr<'tcx>, /* no semi */ bool),
 }
 
 #[derive(Debug, Clone)]
@@ -763,9 +763,6 @@ fn analyze_local_block_unclosed<'hir>(
     stmts: &[Stmt<'hir>],
 ) -> Result<'hir, ()> {
     for stmt in stmts {
-        if let stmt::Expr(_, true) = &stmt.kind {
-            panic!()
-        }
         analyze_stmt(acx, stmt, Some(goto_next))?;
     }
     Ok(())
@@ -798,11 +795,11 @@ fn analyze_body<'hir>(
             make_return(acx, assert_same_types(ret, ty)?, place);
             acx.end_of_block(Terminator::Return);
         } else {
-            if let Some((ty, place)) = analyze_stmt(acx, last, None)? {
-                make_return(acx, assert_same_types(ret, ty)?, place);
-            } else {
-                assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
-            }
+            //if let Some((ty, place)) = analyze_stmt(acx, last, None)? {
+            //    make_return(acx, assert_same_types(ret, ty)?, place);
+            //} else {
+            assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
+            //}
             acx.end_of_block(Terminator::Return);
         });
     }
