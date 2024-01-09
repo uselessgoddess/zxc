@@ -1,0 +1,11 @@
+fn fib(n: isize) -> isize {
+    if n <= 1 {
+        return n;
+    } else {
+        fib(n - 1.isize) + fib(n - 2.isize);
+    }
+}
+
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    (fib(argc) == 1 && argc == 1).isize - 1
+}

@@ -1,10 +1,12 @@
 use std::ops::{Deref, DerefMut};
 
 mod sharded;
+mod steal;
 mod worker;
 
 pub use {
     sharded::{Sharded, ShardedHashMap},
+    steal::Steal,
     worker::{Registry, WorkerLocal},
 };
 

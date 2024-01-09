@@ -14,35 +14,29 @@ use {
     },
     cranelift_module::{self as module, FuncOrDataId, Module},
     cranelift_object::{ObjectBuilder, ObjectModule},
-    std::{
-        collections::HashMap,
-        fmt,
-        fs::File,
-        path::{Path, PathBuf},
-        process,
-    },
 };
 
-use {
-    compiler::{
-        hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
-        mir, Tx, TyCtx,
-    },
-    lexer::{Block, ItemFn, ParseBuffer},
+use compiler::{
+    ariadne::{self, Color, Label, Report, ReportKind},
+    hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
+    mir::{self, pretty, InstanceDef, MirPass},
+    par::WorkerLocal,
+    rayon::prelude::*,
+    sess::{self, Options, OutFileName, OutputType},
+    symbol::Symbol,
+    Tx, TyCtx,
 };
 
 use {
     chumsky::Parser,
-    compiler::{
-        ariadne::{self, Color, Report, ReportKind},
-        mir::pretty,
-        par::WorkerLocal,
-    },
+    lexer::{Block, ItemFn, ParseBuffer},
     std::{
-        fmt::Write as _,
-        fs,
+        collections::{BTreeMap, HashMap},
+        fmt::{self, Write as _},
+        fs::{self, File},
         io::{self, Write as _},
-        process::Command,
+        path::{Path, PathBuf},
+        process::{self, Command},
     },
 };
 
@@ -91,12 +85,7 @@ fn parse_items<'lex>(
     Ok(items)
 }
 
-fn driver_impl<'tcx>(
-    tcx: Tx<'tcx>,
-    (src, name): (&'tcx str, &'tcx str),
-    out: &Path,
-    artifact: &Path,
-) -> Result<Vec<u8>, Error> {
+fn driver_impl<'tcx>(tcx: Tx<'tcx>, src: &'tcx str, name: &'tcx str) -> Result<Vec<u8>, Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
     let items = parse_items(tcx, &mut input).or_else(|err| {
@@ -109,9 +98,9 @@ fn driver_impl<'tcx>(
         Err(Error::Guaranteed)
     })?;
 
-    let mut hix = HirCtx::pure(tcx);
-    let mir = match hir::analyze_module(&mut hix, &items) {
-        Ok(mir) => mir,
+    let mut hix = HirCtx::pure(tcx, Symbol::intern("main-cgu"));
+    match hir::analyze_module(&mut hix, &items) {
+        Ok(_) => {}
         Err(err) => {
             let settings =
                 ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
@@ -144,51 +133,53 @@ fn driver_impl<'tcx>(
     let mut module =
         ObjectModule::new(ObjectBuilder::new(isa, "main.object", module::default_libcall_names())?);
 
-    use sess::Emit;
+    let cgu = hix.as_codegen_unit();
+    let mir = cgu
+        .items
+        .par_iter()
+        .map(|(def, _)| {
+            let InstanceDef::Item(def) = def.def;
+            (def, hix.optimized_mir(def))
+        })
+        .collect::<Vec<_>>();
+    mir::pass::emit_mir(&hix, &mir)?;
 
-    if tcx.sess.opts.emit.contains(Emit::MIR) {
-        let path = out.join(artifact.with_extension("mir"));
-        let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
-
-        for (def, mir) in mir.iter_enumerated() {
-            let mut printer = pretty::FmtPrinter::new(&hix);
-            mir::write_mir_pretty(def, mir, &mut printer)?;
-
-            write!(file, "{}", printer.into_buf())?;
-        }
-    }
-
-    let emit_clif = tcx.sess.opts.emit.contains(Emit::IR);
-    let mut contexts = HashMap::with_capacity(128);
-
-    for (def, mir) in mir.iter_enumerated() {
+    for (def, mir) in mir {
         let (id, func) = codegen::cranelift::compile_fn(tcx, &hix, def, mir, &mut module);
 
-        let mut ctx = Context::for_function(func);
-        // ctx.set_disasm(true);
-        ctx.optimize(module.isa())?;
-        module.define_function(id, &mut ctx)?;
-
-        if emit_clif {
-            contexts.insert(id, ctx.func);
-        }
+        module.define_function(id, &mut Context::for_function(func))?;
     }
 
-    if emit_clif {
-        let path = out.join(artifact.with_extension("clif"));
-        let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
+    //if tcx.sess.opts.emit.contains(Emit::MIR) {
+    //    let path = out.join(artifact.with_extension("mir"));
+    //    let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
+    //
+    //    for (def, _) in &cgu.items {
+    //        let mut printer = pretty::FmtPrinter::new(&hix);
+    //        mir::write_mir_pretty(def, mir, &mut printer)?;
+    //
+    //        write!(file, "{}", printer.into_buf())?;
+    //    }
+    //}
 
-        for (def, _) in mir.iter_enumerated() {
-            let Some(FuncOrDataId::Func(func)) =
-                module.get_name(hix.instances[def].symbol.as_str())
-            else {
-                panic!()
-            };
+    //let emit_clif = tcx.sess.opts.emit.contains(Emit::IR);
+    //let mut contexts = HashMap::with_capacity(128);
 
-            writeln!(file, "{}", &contexts[&func])?;
-            // println!("{}", printer.into_buf().replace('\n', "\n    "));
-        }
-    }
+    //if emit_clif {
+    //    let path = out.join(artifact.with_extension("clif"));
+    //    let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
+    //
+    //    for (def, _) in mir.iter_enumerated() {
+    //        let Some(FuncOrDataId::Func(func)) =
+    //            module.get_name(hix.instances[def].symbol.as_str())
+    //        else {
+    //            panic!()
+    //        };
+    //
+    //        writeln!(file, "{}", &contexts[&func])?;
+    //        // println!("{}", printer.into_buf().replace('\n', "\n    "));
+    //    }
+    //}
 
     Ok(module.finish().emit()?)
 }
@@ -198,10 +189,8 @@ fn parent_dir(path: &Path) -> &Path {
 }
 
 fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(), Error> {
-    let arena = WorkerLocal::new(|_| Default::default());
-    let tcx = TyCtx::enter(&arena, &compiler.sess);
-
-    let input = &tcx.sess.io.input;
+    let sess = &compiler.sess;
+    let input = &sess.io.input;
     let src = fs::read_to_string(input).with_context(|| format!("{}", input.display()))?;
 
     if concolor::get(Stream::Stdout).ansi_color() {
@@ -210,7 +199,6 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         println!("{src}");
     }
 
-    let sess = &tcx.sess;
     let art = PathBuf::from(input.file_name().unwrap());
     let out =
         if let Some(out) = &sess.io.output_file { out.clone() } else { art.with_extension("out") };
@@ -232,7 +220,19 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         .to_str()
         .unwrap_or_else(|| early.early_fatal("non UTF-8 file name"));
     let emit = temps.join(art.with_extension("emit"));
-    fs::write(&emit, driver_impl(&tcx, (&src, name), &out_dir, &art)?)
+
+    let mut outputs = BTreeMap::new();
+    let output = sess::OutputFilenames {
+        out_directory: out_dir,
+        file_stem: art.file_stem().unwrap().to_str().unwrap().to_owned(),
+        single_output_file: None,
+        temps_directory: temps,
+        outputs,
+    };
+
+    let arena = WorkerLocal::new(|_| Default::default());
+    let tcx = TyCtx::enter(&arena, &compiler.sess, output);
+    fs::write(&emit, driver_impl(&tcx, &src, name)?)
         .with_context(|| format!("{}", emit.display()))?;
 
     let out = Command::new("gcc").arg(emit).arg("-o").arg(out).output()?;
@@ -243,16 +243,10 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
     Ok(())
 }
 
-use {
-    crate::{
-        cli::{Args, Emit},
-        error::EarlyErrorHandler,
-        interface::Config,
-    },
-    compiler::{
-        ariadne::Label,
-        sess::{self, Options},
-    },
+use crate::{
+    cli::{Args, Emit},
+    error::EarlyErrorHandler,
+    interface::Config,
 };
 
 fn main() {

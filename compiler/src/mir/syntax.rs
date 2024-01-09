@@ -6,7 +6,7 @@ use {
         Tx,
     },
     index_vec::IndexVec,
-    lexer::{Span, UnOp},
+    lexer::Span,
     smallvec::{smallvec, SmallVec},
     std::{
         borrow::Cow,
@@ -47,6 +47,12 @@ pub struct SwitchTargets {
 }
 
 impl SwitchTargets {
+    pub fn new(targets: impl Iterator<Item = (u128, BasicBlock)>, otherwise: BasicBlock) -> Self {
+        let (values, mut targets): (SmallVec<_, 1>, SmallVec<_, 2>) = targets.unzip();
+        targets.push(otherwise);
+        Self { values, targets }
+    }
+
     pub fn static_if(value: u128, then: BasicBlock, else_: BasicBlock) -> Self {
         Self { values: smallvec![value], targets: smallvec![then, else_] }
     }
@@ -59,6 +65,10 @@ impl SwitchTargets {
         } else {
             None
         }
+    }
+
+    pub fn otherwise(&self) -> BasicBlock {
+        *self.targets.last().unwrap()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (u128, BasicBlock)> + ExactSizeIterator + '_ {
@@ -146,6 +156,15 @@ pub enum Operand<'tcx> {
 }
 
 impl<'tcx> Operand<'tcx> {
+    pub fn constant(&self) -> Option<(&ConstValue, &Ty<'tcx>)> {
+        match self {
+            Operand::Const(x, ty) => Some((x, ty)),
+            Operand::Copy(_) => None,
+        }
+    }
+}
+
+impl<'tcx> Operand<'tcx> {
     pub fn ty(&self, decls: &IndexVec<Local, LocalDecl<'tcx>>, _tcx: Tx<'tcx>) -> Ty<'tcx> {
         // TODO: later also use `projection`
         match *self {
@@ -217,13 +236,39 @@ macro_rules! from {
 
 from!(u8 u16 u32 u64);
 
+impl TryFrom<ScalarRepr> for bool {
+    type Error = Size;
+    #[inline]
+    fn try_from(int: ScalarRepr) -> Result<Self, Size> {
+        int.to_bits(Size::from_bytes(1)).and_then(|u| match u {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Size::from_bytes(1)),
+        })
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum ConstValue {
     Scalar(ScalarRepr),
     Zst,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl ConstValue {
+    #[inline]
+    pub fn try_to_scalar(&self) -> Option<ScalarRepr> {
+        match *self {
+            ConstValue::Zst => None,
+            ConstValue::Scalar(val) => Some(val),
+        }
+    }
+
+    pub fn try_to_bool(&self) -> Option<bool> {
+        self.try_to_scalar()?.try_into().ok()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CastKind {
     IntToInt,
 }
@@ -280,6 +325,23 @@ impl BinOp {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum UnOp {
+    Not,
+    Neg,
+}
+
+impl UnOp {
+    pub fn from_parse(op: lexer::UnOp) -> Self {
+        use lexer::UnOp;
+
+        match op {
+            UnOp::Not(_) => Self::Not,
+            UnOp::Neg(_) => Self::Neg,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum Rvalue<'tcx> {
     Use(Operand<'tcx>),
@@ -305,6 +367,10 @@ impl<'tcx> BasicBlockData<'tcx> {
     pub fn terminator(&self) -> &Terminator<'tcx> {
         self.terminator.as_ref().expect("invalid hir analyzing")
     }
+
+    pub fn terminator_mut(&mut self) -> &mut Terminator<'tcx> {
+        self.terminator.as_mut().expect("invalid hir analyzing")
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Copy)]
@@ -319,10 +385,13 @@ pub struct LocalDecl<'tcx> {
     pub ty: Ty<'tcx>,
 }
 
+pub type LocalDecls<'tcx> = IndexVec<Local, LocalDecl<'tcx>>;
+
 #[derive(Debug, Clone, Default)]
 pub struct Body<'tcx> {
+    pub pass_count: usize,
     pub argc: usize,
-    pub local_decls: IndexVec<Local, LocalDecl<'tcx>>,
+    pub local_decls: LocalDecls<'tcx>,
     pub basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
 }
 

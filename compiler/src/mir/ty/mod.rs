@@ -117,6 +117,11 @@ impl<'cx> Ty<'cx> {
     }
 
     #[inline]
+    pub fn is_bool(&self) -> bool {
+        matches!(self.kind(), Bool)
+    }
+
+    #[inline]
     pub fn is_never(&self) -> bool {
         matches!(self.kind(), Never)
     }

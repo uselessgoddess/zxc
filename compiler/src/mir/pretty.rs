@@ -7,9 +7,9 @@ use {
             ty::{self, Abi},
             BinOp, ConstValue, Mutability, Operand, Rvalue, Statement, Terminator,
             TyKind::{self},
+            UnOp,
         },
     },
-    lexer::UnOp,
     std::fmt::{self, Write as _},
 };
 
@@ -313,8 +313,8 @@ define_print_and_forward_display! {
             Rvalue::UseDeref(operand) =>p!("*", print(operand)),
             Rvalue::UnaryOp(op, operand) => {
                 let op = match op {
-                    UnOp::Not(_) => "Not",
-                    UnOp::Neg(_) => "Neg",
+                    UnOp::Not => "Not",
+                    UnOp::Neg => "Neg",
                 };
                 p!(write("{op}"), "(", print(operand), ")")
             }

@@ -5,7 +5,7 @@ use {
         hir::HirCtx,
         mir::{
             ty, BasicBlock, BasicBlockData, BinOp, Body, ConstValue, DefId, IntTy, Local, Operand,
-            Place, Rvalue, Statement, Terminator, Ty,
+            Place, Rvalue, Statement, Terminator, Ty, UnOp,
         },
         Session, Tx,
     },
@@ -18,7 +18,6 @@ use {
     },
     cranelift_module::{FuncId, Linkage, Module},
     index_vec::IndexVec,
-    lexer::UnOp,
     target_lexicon::PointerWidth,
 };
 
@@ -259,11 +258,11 @@ fn codegen_stmt<'tcx>(
                     let layout = operand.layout();
                     let val = operand.load_scalar(fx);
                     let res = match op {
-                        UnOp::Not(_) => match layout.ty.kind() {
+                        UnOp::Not => match layout.ty.kind() {
                             ty::Int(_) => CValue::by_val(fx.bcx.ins().bnot(val), layout),
                             _ => unreachable!("un op Not for {:?}", layout.ty),
                         },
-                        UnOp::Neg(_) => match layout.ty.kind() {
+                        UnOp::Neg => match layout.ty.kind() {
                             ty::Int(_) => CValue::by_val(fx.bcx.ins().ineg(val), layout),
                             _ => unreachable!("un op Neg for {:?}", layout.ty),
                         },

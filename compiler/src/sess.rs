@@ -1,7 +1,11 @@
 use {
     crate::{spec, spec::Target},
     bitflags::bitflags,
-    std::{fmt, fmt::Formatter, path::PathBuf},
+    std::{
+        collections::BTreeMap,
+        fmt::{self, Formatter},
+        path::PathBuf,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
@@ -68,6 +72,29 @@ mod parse {
             None => false,
         }
     }
+
+    pub fn parse_opt_number<T: Copy + FromStr>(slot: &mut Option<T>, v: Option<&str>) -> bool {
+        match v {
+            Some(s) => {
+                *slot = s.parse().ok();
+                slot.is_some()
+            }
+            None => false,
+        }
+    }
+
+    pub fn parse_list_with_polarity(slot: &mut Vec<(String, bool)>, v: Option<&str>) -> bool {
+        match v {
+            Some(s) => {
+                for s in s.split(',') {
+                    let Some(pass_name) = s.strip_prefix(&['+', '-'][..]) else { return false };
+                    slot.push((pass_name.to_string(), &s[..1] == "+"));
+                }
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -76,7 +103,10 @@ mod desc {
     pub const parse_opt_string: &str = parse_string;
     pub const parse_bool: &str = "one of: `y`, `yes`, `on`, `true`, `n`, `no`, `off` or `false`";
     pub const parse_number: &str = "a number";
+    pub const parse_opt_number: &str = parse_number;
     pub const parse_opt_level: &str = "optimization level needs to be between 0-3, s or z)";
+    pub const parse_list_with_polarity: &str =
+        "a comma-separated list of strings, with elements beginning with + or -";
 }
 
 pub type OptionSetter<O> = fn(&mut O, v: Option<&str>) -> bool;
@@ -123,6 +153,13 @@ options! {
 
     opt_level: OptLevel = (OptLevel::No, parse_opt_level,
         "optimization level (0-3, s, or z; default: 0)"),
+    mir_opt_level: Option<usize> = (None, parse_opt_number,
+        "MIR optimization level (0-2; default determined by `opt_level`)"),
+    mir_enable_passes: Vec<(String, bool)> = (Vec::new(), parse_list_with_polarity,
+        "use like `-Zmir-enable-passes=+SimplifyBranches,-Simplify`. Forces the \
+        specified passes to be enabled, overriding all other checks. In particular, this will \
+        enable unsound (known-buggy and hence usually disabled) passes without further warning! \
+        Passes that are not specified are enabled or disabled by other flags as usual."),
 }
 
 bitflags! {
@@ -190,6 +227,15 @@ pub struct Session {
     pub io: CompilerIO,
 }
 
+impl Session {
+    pub fn mir_opt_level(&self) -> usize {
+        self.opts
+            .C
+            .mir_opt_level
+            .unwrap_or_else(|| if self.opts.C.opt_level != OptLevel::No { 2 } else { 1 })
+    }
+}
+
 #[derive(Debug)]
 pub struct CompilerIO {
     pub input: PathBuf,
@@ -202,4 +248,57 @@ pub fn build_session(opts: Options, io: CompilerIO) -> Session {
     let host = spec::targets::x86_64_windows_gnu::target();
 
     Session { target: host.clone(), host, opts, io }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum OutputType {
+    Bitcode,
+    Mir,
+    Object,
+    Exe,
+}
+
+impl OutputType {
+    pub fn extension(&self) -> &'static str {
+        match *self {
+            OutputType::Bitcode => "bc",
+            OutputType::Mir => "mir",
+            OutputType::Object => "o",
+            OutputType::Exe => "",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum OutFileName {
+    Real(PathBuf),
+    Stdout,
+}
+
+pub struct OutputFilenames {
+    pub out_directory: PathBuf,
+    pub file_stem: String,
+    pub single_output_file: Option<OutFileName>,
+    pub temps_directory: PathBuf,
+    pub outputs: BTreeMap<OutputType, OutFileName>,
+}
+
+impl OutputFilenames {
+    pub fn path(&self, flavor: OutputType) -> OutFileName {
+        self.outputs
+            .get(&flavor)
+            .map(|p| p.to_owned())
+            .or_else(|| self.single_output_file.clone())
+            .unwrap_or_else(|| OutFileName::Real(self.output_path(flavor)))
+    }
+
+    pub fn output_path(&self, flavor: OutputType) -> PathBuf {
+        self.with_directory_and_extension(&self.out_directory, flavor.extension())
+    }
+
+    fn with_directory_and_extension(&self, directory: &PathBuf, extension: &str) -> PathBuf {
+        let mut path = directory.join(&self.file_stem);
+        path.set_extension(extension);
+        path
+    }
 }

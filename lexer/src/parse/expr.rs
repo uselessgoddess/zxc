@@ -305,6 +305,7 @@ fn unary_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> 
 }
 
 fn expr_return<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Return<'lex>> {
+    #[rustfmt::skip]
     fn can_begin_expr(input: &ParseBuffer) -> bool {
         input.peek(Ident) // value name or keyword
             || input.peek(token::Paren) // tuple

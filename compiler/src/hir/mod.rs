@@ -5,8 +5,12 @@ mod ty;
 use {
     crate::{
         mir::{
-            self, ty::Abi, CastKind, ConstValue, InstanceData, Local, LocalDecl, Mutability,
-            Operand, Place, Rvalue, ScalarRepr, Statement, SwitchTargets, Terminator, TyKind,
+            self,
+            mono::{Linkage, Visibility},
+            ty::Abi,
+            CastKind, CodegenUnit, ConstValue, InstanceData, InstanceDef, Local, LocalDecl,
+            MonoItem, MonoItemData, Mutability, Operand, Place, Rvalue, ScalarRepr, Statement,
+            SwitchTargets, Terminator, TyKind,
         },
         sym,
         symbol::{Ident, Symbol},
@@ -15,7 +19,7 @@ use {
     index_vec::{index_vec, IndexVec},
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
-    std::{collections::hash_map::Entry, iter, mem, num::NonZeroU8},
+    std::{collections::hash_map::Entry, iter, marker::PhantomData, mem, num::NonZeroU8},
 };
 pub use {
     error::{Error, ReportSettings, Result},
@@ -525,7 +529,7 @@ fn analyze_expr<'hir>(
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
                 let (ty, operand) = analyze_expr(acx, expr)?;
-                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(op, operand))
+                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(mir::UnOp::from_parse(op), operand))
             }
             _ => todo!(),
         },
@@ -850,13 +854,42 @@ pub fn analyze_fn_definition<'hir>(
 #[derive(Debug)]
 pub struct HirCtx<'hir> {
     pub tcx: Tx<'hir>,
+    name: Symbol,
     pub decls: FxHashMap<Symbol, mir::DefId>, // later use modules
+
+    pub defs: IndexVec<mir::DefId, mir::Body<'hir>>,
     pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
 }
 
 impl<'hir> HirCtx<'hir> {
-    pub fn pure(tcx: Tx<'hir>) -> Self {
-        Self { tcx, decls: Default::default(), instances: Default::default() }
+    pub fn as_codegen_unit(&self) -> CodegenUnit<'hir> {
+        let items = self
+            .defs
+            .iter_enumerated()
+            .map(|(def, body)| {
+                (
+                    MonoItem { def: InstanceDef::Item(def), _marker: PhantomData },
+                    MonoItemData {
+                        inlined: false,
+                        linkage: Linkage::External,
+                        visibility: Visibility::Default,
+                    },
+                )
+            })
+            .collect();
+        CodegenUnit { name: self.name, items }
+    }
+}
+
+impl<'hir> HirCtx<'hir> {
+    pub fn pure(tcx: Tx<'hir>, name: Symbol) -> Self {
+        Self {
+            tcx,
+            name,
+            decls: Default::default(),
+            defs: Default::default(),
+            instances: Default::default(),
+        }
     }
 }
 
@@ -876,7 +909,7 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
 pub fn analyze_module<'hir>(
     hix: &mut HirCtx<'hir>,
     functions: &[(FnSig<'hir>, Box<[Stmt<'hir>]>)],
-) -> Result<'hir, IndexVec<mir::DefId, mir::Body<'hir>>> {
+) -> Result<'hir, ()> {
     let mut defs = Vec::with_capacity(128);
     for &(hsig @ FnSig { decl, abi, span }, _) in functions {
         match hix.decls.entry(decl.name) {
@@ -918,7 +951,8 @@ pub fn analyze_module<'hir>(
         assert_eq!(def, mir.push(body));
     }
 
-    Ok(mir)
+    hix.defs.extend(mir);
+    Ok(())
 }
 
 mod size_asserts {

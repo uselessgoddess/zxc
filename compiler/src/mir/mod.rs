@@ -1,4 +1,6 @@
 pub mod consts;
+pub mod mono;
+pub mod pass;
 pub mod pretty;
 mod syntax;
 pub mod ty;
@@ -9,28 +11,32 @@ use {
     std::marker::PhantomData,
 };
 pub use {
+    mono::{CodegenUnit, MonoItem, MonoItemData},
+    pass::MirPass,
     pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
         BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local, LocalDecl,
-        Mutability, Operand, Place, PlaceElem, Rvalue, ScalarRepr, Statement, SwitchTargets,
-        Terminator,
+        LocalDecls, Mutability, Operand, Place, PlaceElem, Rvalue, ScalarRepr, Statement,
+        SwitchTargets, Terminator, UnOp,
     },
     ty::{cast, FnSig, IntTy, Ty, TyKind, UintTy},
 };
+
+pub const START_BLOCK: BasicBlock = BasicBlock::START_BLOCK;
 
 index_vec::define_index_type! {
     pub struct DefId = u32;
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum InstanceDef {
     Item(DefId),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub struct Instance<'tcx> {
     pub def: InstanceDef,
-    _marker: PhantomData<&'tcx ()>,
+    pub(crate) _marker: PhantomData<&'tcx ()>,
 }
 
 #[derive(Debug, Clone)]

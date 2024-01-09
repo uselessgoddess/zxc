@@ -1,7 +1,7 @@
 mod arenas;
 pub mod intern;
 
-use std::fmt;
+use std::{fmt, io};
 pub use {
     arenas::{DroplessArena, TypedArena},
     intern::Interned,
@@ -15,6 +15,7 @@ use crate::{
         IntTy, Ty, TyKind,
     },
     par::{ShardedHashMap, WorkerLocal},
+    sess::OutputFilenames,
     Session,
 };
 
@@ -79,6 +80,7 @@ impl<'tcx> CommonSigs<'tcx> {
     }
 }
 
+// TODO: add macro like in `rustc`
 #[derive(Default)]
 pub struct Arena<'tcx> {
     pub dropless: DroplessArena,
@@ -87,6 +89,7 @@ pub struct Arena<'tcx> {
     pub scope: TypedArena<hir::Scope<'tcx>>,
     pub type_: TypedArena<TyKind<'tcx>>,
     pub layout: TypedArena<abi::LayoutKind>,
+    pub body: TypedArena<mir::Body<'tcx>>,
 }
 
 type InternSet<'tcx, T> = ShardedHashMap<Interned<'tcx, T>, ()>;
@@ -129,6 +132,7 @@ pub struct TyCtx<'tcx> {
     pub types: CommonTypes<'tcx>,
     pub sigs: CommonSigs<'tcx>,
     pub sess: &'tcx Session,
+    output: OutputFilenames,
 }
 
 impl fmt::Debug for TyCtx<'_> {
@@ -138,12 +142,16 @@ impl fmt::Debug for TyCtx<'_> {
 }
 
 impl<'tcx> TyCtx<'tcx> {
-    pub fn enter(arena: &'tcx WorkerLocal<Arena<'tcx>>, sess: &'tcx Session) -> Self {
+    pub fn enter(
+        arena: &'tcx WorkerLocal<Arena<'tcx>>,
+        sess: &'tcx Session,
+        output: OutputFilenames,
+    ) -> Self {
         let intern = Intern::default();
         let types = CommonTypes::new(&intern, arena, sess);
         let sigs = CommonSigs::new(&intern, arena, &types);
 
-        Self { arena, intern, types, sigs, sess }
+        Self { arena, intern, types, sigs, sess, output }
     }
 
     pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {
@@ -165,6 +173,10 @@ impl<'tcx> TyCtx<'tcx> {
 
     pub fn intern_ty(&self, kind: TyKind<'tcx>) -> Ty<'tcx> {
         self.intern.intern_ty(self.arena, kind)
+    }
+
+    pub fn output_filenames(&self) -> &OutputFilenames {
+        &self.output
     }
 }
 
