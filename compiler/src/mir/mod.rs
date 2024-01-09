@@ -3,12 +3,14 @@ pub mod mono;
 pub mod pass;
 pub mod pretty;
 mod syntax;
+pub mod traversal;
 pub mod ty;
+pub mod visit;
 
 use {
-    crate::{hir, Symbol},
+    crate::{hir, idx, Symbol},
     lexer::Span,
-    std::marker::PhantomData,
+    std::{fmt, marker::PhantomData},
 };
 pub use {
     mono::{CodegenUnit, MonoItem, MonoItemData},
@@ -16,15 +18,17 @@ pub use {
     pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
         BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local, LocalDecl,
-        LocalDecls, Mutability, Operand, Place, PlaceElem, Rvalue, ScalarRepr, Statement,
+        LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr, Statement,
         SwitchTargets, Terminator, UnOp,
     },
     ty::{cast, FnSig, IntTy, Ty, TyKind, UintTy},
 };
 
 pub const START_BLOCK: BasicBlock = BasicBlock::START_BLOCK;
+pub const RETURN_PLACE: Local = Local::RETURN_PLACE;
 
-index_vec::define_index_type! {
+idx::define_index! {
+    #[derive(Debug)]
     pub struct DefId = u32;
 }
 
@@ -47,4 +51,22 @@ pub struct InstanceData<'tcx> {
     // hir data
     pub span: Span,
     pub hsig: hir::FnSig<'tcx>,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Hash)]
+pub struct Location {
+    /// The block that the location is within.
+    pub block: BasicBlock,
+
+    pub statement_index: usize,
+}
+
+impl Location {
+    pub const START: Location = Location { block: START_BLOCK, statement_index: 0 };
+}
+
+impl fmt::Debug for Location {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(fmt, "{:?}[{}]", self.block, self.statement_index)
+    }
 }

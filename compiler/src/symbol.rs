@@ -1,10 +1,10 @@
 use {
-    crate::{fx::FxIndexSet, index, tls::with_session_globals, DroplessArena, Lock},
+    crate::{fx::FxIndexSet, idx, index, tls::with_session_globals, DroplessArena, Lock},
     lexer::Span,
     std::{fmt, mem, str},
 };
 
-index::define_index! {
+idx::define_index! {
     pub struct Symbol = u32;
 }
 

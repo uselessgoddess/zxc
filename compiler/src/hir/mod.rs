@@ -4,6 +4,8 @@ mod ty;
 
 use {
     crate::{
+        idx::IndexVec,
+        index_vec,
         mir::{
             self,
             mono::{Linkage, Visibility},
@@ -16,7 +18,6 @@ use {
         symbol::{Ident, Symbol},
         FxHashMap, Span, Tx,
     },
-    index_vec::{index_vec, IndexVec},
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
     std::{collections::hash_map::Entry, iter, marker::PhantomData, mem, num::NonZeroU8},
@@ -272,7 +273,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         if !self.scope().was_returned() {
             self.body.basic_blocks.push(block)
         } else {
-            self.body.basic_blocks.last_idx()
+            self.body.basic_blocks.last_index().expect("empty body")
         }
     }
 
@@ -283,7 +284,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         if !self.scope().was_returned() {
             self.body.basic_blocks.push(block)
         } else {
-            self.body.basic_blocks.last_idx()
+            self.body.basic_blocks.last_index().expect("empty body")
         }
     }
 
@@ -863,7 +864,7 @@ impl<'hir> HirCtx<'hir> {
         let items = self
             .defs
             .iter_enumerated()
-            .map(|(def, body)| {
+            .map(|(def, _body)| {
                 (
                     MonoItem { def: InstanceDef::Item(def), _marker: PhantomData },
                     MonoItemData {

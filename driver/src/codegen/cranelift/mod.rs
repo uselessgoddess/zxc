@@ -7,7 +7,7 @@ use {
             ty, BasicBlock, BasicBlockData, BinOp, Body, ConstValue, DefId, IntTy, Local, Operand,
             Place, Rvalue, Statement, Terminator, Ty, UnOp,
         },
-        Session, Tx,
+        IndexVec, Session, Tx,
     },
     cranelift::{
         codegen::ir::{Function, UserFuncName},
@@ -17,7 +17,6 @@ use {
         },
     },
     cranelift_module::{FuncId, Linkage, Module},
-    index_vec::IndexVec,
     target_lexicon::PointerWidth,
 };
 

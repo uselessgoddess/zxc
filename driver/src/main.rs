@@ -221,13 +221,12 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         .unwrap_or_else(|| early.early_fatal("non UTF-8 file name"));
     let emit = temps.join(art.with_extension("emit"));
 
-    let mut outputs = BTreeMap::new();
     let output = sess::OutputFilenames {
         out_directory: out_dir,
         file_stem: art.file_stem().unwrap().to_str().unwrap().to_owned(),
         single_output_file: None,
         temps_directory: temps,
-        outputs,
+        outputs: BTreeMap::new(),
     };
 
     let arena = WorkerLocal::new(|_| Default::default());

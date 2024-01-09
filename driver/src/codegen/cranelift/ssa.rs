@@ -1,7 +1,9 @@
 use {
     super::FunctionCx,
-    compiler::mir::{Local, Statement, Ty},
-    index_vec::IndexVec,
+    compiler::{
+        mir::{Local, Statement, Ty},
+        IndexVec,
+    },
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

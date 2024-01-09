@@ -1,7 +1,10 @@
+mod const_goto;
 mod dump;
+mod peep_simplify;
 mod simplify;
+mod simplify_branches;
 
-pub use {dump::emit_mir, simplify::Simplify};
+pub use dump::emit_mir;
 
 use crate::{
     hir::HirCtx,
@@ -43,8 +46,43 @@ impl<'tcx> HirCtx<'tcx> {
     }
 }
 
+pub struct WithMinOptLevel<T>(pub u32, pub T);
+
+impl<'tcx, T> MirPass<'tcx> for WithMinOptLevel<T>
+where
+    T: MirPass<'tcx>,
+{
+    fn name(&self) -> &'static str {
+        self.1.name()
+    }
+
+    fn is_enabled(&self, sess: &Session) -> bool {
+        sess.mir_opt_level() >= self.0 as usize
+    }
+
+    fn run_pass(&self, tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
+        self.1.run_pass(tcx, body)
+    }
+}
+
 fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
-    run_passes(tcx, body, &[&Simplify]);
+    fn o1<T>(x: T) -> WithMinOptLevel<T> {
+        WithMinOptLevel(1, x)
+    }
+
+    run_passes(
+        tcx,
+        body,
+        &[
+            &o1(simplify::SimplifyCfg::EarlyOpt),
+            &peep_simplify::PeepSimplify,
+            &const_goto::ConstGoto,
+            &simplify::SimplifyLocals::AfterGVN,
+            &simplify_branches::SimplifyConstCondition::Final,
+            &simplify::SimplifyLocals::Final,
+            &o1(simplify::SimplifyCfg::Final),
+        ],
+    );
 }
 
 pub fn should_run_pass<'tcx, P: MirPass<'tcx> + ?Sized>(tcx: Tx<'tcx>, pass: &P) -> bool {

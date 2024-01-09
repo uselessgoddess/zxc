@@ -26,6 +26,7 @@ pub mod tcx;
 
 mod fx;
 
+mod idx;
 pub(crate) mod index;
 pub mod par;
 pub mod sess;
@@ -36,6 +37,7 @@ pub(crate) mod util;
 
 pub use {
     ariadne,
+    idx::{Idx, IndexSlice, IndexVec},
     mir::pretty,
     sess::Session,
     tcx::{Arena, DroplessArena, Intern, Tx, TyCtx},
@@ -59,3 +61,11 @@ macro_rules! assert_size {
 }
 
 pub(crate) use assert_size;
+
+macro_rules! index_vec {
+    ($($tokens:tt)*) => {
+        $crate::IndexVec::from_raw(vec![$($tokens)*])
+    }
+}
+
+pub(crate) use index_vec;

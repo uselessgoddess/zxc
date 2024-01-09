@@ -1,11 +1,16 @@
 use {
     crate::{
         abi::Size,
+        idx::{self, IndexVec},
         index,
-        mir::{self, ty::List, Ty},
+        mir::{
+            self,
+            ty::List,
+            Terminator::{Return, Unreachable},
+            Ty, RETURN_PLACE,
+        },
         Tx,
     },
-    index_vec::IndexVec,
     lexer::Span,
     smallvec::{smallvec, SmallVec},
     std::{
@@ -14,10 +19,11 @@ use {
         io::Read,
         iter,
         num::NonZeroU8,
+        slice,
     },
 };
 
-index::define_index! {
+idx::define_index! {
     pub struct BasicBlock = u32;
 }
 
@@ -27,7 +33,8 @@ impl fmt::Debug for BasicBlock {
     }
 }
 
-index_vec::define_index_type! {
+idx::define_index! {
+    #[derive(Debug)]
     pub struct Local = u32;
 }
 
@@ -74,6 +81,10 @@ impl SwitchTargets {
     pub fn iter(&self) -> impl Iterator<Item = (u128, BasicBlock)> + ExactSizeIterator + '_ {
         iter::zip(&self.values, &self.targets).map(|(a, b)| (*a, *b))
     }
+
+    pub fn target_for_value(&self, value: u128) -> BasicBlock {
+        self.iter().find_map(|(v, t)| (v == value).then_some(t)).unwrap_or_else(|| self.otherwise())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +108,8 @@ pub enum Terminator<'tcx> {
 }
 
 pub type Successors<'a> = impl DoubleEndedIterator<Item = BasicBlock> + 'a;
+pub type SuccessorsMut<'a> =
+    iter::Chain<std::option::IntoIter<&'a mut BasicBlock>, slice::IterMut<'a, BasicBlock>>;
 
 impl<'tcx> Terminator<'tcx> {
     pub fn successors(&self) -> Successors<'_> {
@@ -110,6 +123,32 @@ impl<'tcx> Terminator<'tcx> {
             SwitchInt { ref targets, .. } => {
                 None.into_iter().chain(targets.targets.iter().copied())
             }
+        }
+    }
+
+    pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
+        use Terminator::*;
+
+        let tail_slice = (&mut []).into_iter();
+        match self {
+            Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
+            Goto { target: t } => Some(t).into_iter().chain(tail_slice),
+            Return | Unreachable | Call { target: None, .. } => None.into_iter().chain(tail_slice),
+            SwitchInt { targets, .. } => None.into_iter().chain(targets.targets.iter_mut()),
+        }
+    }
+
+    pub fn as_goto(&self) -> Option<BasicBlock> {
+        match self {
+            Terminator::Goto { target } => Some(*target),
+            _ => None,
+        }
+    }
+
+    pub fn as_switch(&self) -> Option<(&Operand<'tcx>, &SwitchTargets)> {
+        match self {
+            Terminator::SwitchInt { discr, targets } => Some((discr, targets)),
+            _ => None,
         }
     }
 
@@ -137,6 +176,14 @@ pub enum PlaceElem<'tcx> {
     Subtype(Ty<'tcx>), // also applicable for non-transmuting types
 }
 
+impl<'tcx> PlaceElem<'tcx> {
+    pub fn is_indirect(&self) -> bool {
+        match self {
+            PlaceElem::Subtype(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Place<'tcx> {
     pub local: Local,
@@ -147,6 +194,41 @@ impl<'tcx> Place<'tcx> {
     pub fn pure(local: Local) -> Self {
         Self { local, projection: List::empty() }
     }
+
+    pub fn as_ref(&self) -> PlaceRef<'tcx> {
+        PlaceRef { local: self.local, projection: &self.projection }
+    }
+
+    pub fn ty(&self, local_decls: &LocalDecls<'tcx>, tcx: Tx<'tcx>) -> Ty<'tcx> {
+        assert!(self.projection.is_empty());
+
+        local_decls[self.local].ty
+        // projection
+        //     .iter()
+        //     .fold(local_decls[local].ty, |place_ty, &elem| place_ty.projection_ty(tcx, elem))
+    }
+
+    pub fn is_indirect(&self) -> bool {
+        self.projection.iter().any(|elem| elem.is_indirect())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlaceRef<'tcx> {
+    pub local: Local,
+    pub projection: &'tcx [PlaceElem<'tcx>],
+}
+
+impl<'tcx> PlaceRef<'tcx> {
+    #[inline]
+    pub fn iter_projections(
+        self,
+    ) -> impl Iterator<Item = (PlaceRef<'tcx>, PlaceElem<'tcx>)> + DoubleEndedIterator {
+        self.projection.iter().enumerate().map(move |(i, proj)| {
+            let base = PlaceRef { local: self.local, projection: &self.projection[..i] };
+            (base, *proj)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,6 +238,13 @@ pub enum Operand<'tcx> {
 }
 
 impl<'tcx> Operand<'tcx> {
+    pub fn place(&self) -> Option<Place<'tcx>> {
+        match self {
+            Operand::Copy(place) => Some(*place),
+            Operand::Const(_, _) => None,
+        }
+    }
+
     pub fn constant(&self) -> Option<(&ConstValue, &Ty<'tcx>)> {
         match self {
             Operand::Const(x, ty) => Some((x, ty)),
@@ -351,10 +440,28 @@ pub enum Rvalue<'tcx> {
     Cast(CastKind, Operand<'tcx>, Ty<'tcx>),
 }
 
+impl<'tcx> Rvalue<'tcx> {
+    #[inline]
+    pub fn is_safe_to_remove(&self) -> bool {
+        match self {
+            _ => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement<'tcx> {
     Assign(Place<'tcx>, Rvalue<'tcx>),
     Nop,
+}
+
+impl<'tcx> Statement<'tcx> {
+    pub fn as_assign(&self) -> Option<(&Place<'tcx>, &Rvalue<'tcx>)> {
+        match self {
+            Statement::Assign(place, rvalue) => Some((place, rvalue)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -364,12 +471,18 @@ pub struct BasicBlockData<'tcx> {
 }
 
 impl<'tcx> BasicBlockData<'tcx> {
+    #[track_caller]
     pub fn terminator(&self) -> &Terminator<'tcx> {
         self.terminator.as_ref().expect("invalid hir analyzing")
     }
 
+    #[track_caller]
     pub fn terminator_mut(&mut self) -> &mut Terminator<'tcx> {
         self.terminator.as_mut().expect("invalid hir analyzing")
+    }
+
+    pub fn is_empty_unreachable(&self) -> bool {
+        self.statements.is_empty() && matches!(self.terminator(), Terminator::Unreachable)
     }
 }
 
@@ -404,5 +517,10 @@ impl<'tcx> Body<'tcx> {
     #[inline]
     pub fn vars_and_temps_iter(&self) -> impl ExactSizeIterator<Item = Local> {
         (self.argc + 1..self.local_decls.len()).map(Local::new)
+    }
+
+    #[inline]
+    pub fn return_ty(&self) -> Ty<'tcx> {
+        self.local_decls[RETURN_PLACE].ty
     }
 }

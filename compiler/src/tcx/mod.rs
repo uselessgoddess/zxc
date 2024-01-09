@@ -12,7 +12,7 @@ use crate::{
     mir::{
         self,
         ty::{self, List},
-        IntTy, Ty, TyKind,
+        IntTy, PlaceElem, Ty, TyKind,
     },
     par::{ShardedHashMap, WorkerLocal},
     sess::OutputFilenames,
@@ -100,6 +100,7 @@ pub struct Intern<'tcx> {
     pub symbols: InternSet<'tcx, TyKind<'tcx>>,
     pub layouts: InternSet<'tcx, abi::LayoutKind>,
     pub type_lists: InternSet<'tcx, List<Ty<'tcx>>>,
+    pub place_elems: InternSet<'tcx, List<PlaceElem<'tcx>>>,
 }
 
 impl<'tcx> Intern<'tcx> {
@@ -159,6 +160,17 @@ impl<'tcx> TyCtx<'tcx> {
             List::empty()
         } else {
             self.intern.intern_type_list(self.arena, slice)
+        }
+    }
+
+    pub fn mk_place_elems(&self, slice: &[PlaceElem<'tcx>]) -> &'tcx List<PlaceElem<'tcx>> {
+        if slice.is_empty() {
+            List::empty()
+        } else {
+            self.intern
+                .place_elems
+                .intern_ref(slice, || Interned::new_unchecked(List::from_arena(self.arena, slice)))
+                .0
         }
     }
 
