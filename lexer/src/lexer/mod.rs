@@ -93,6 +93,8 @@ pub mod ast {
             "fn" => Fn
             "if" => If
             "else" => Else
+            "break" => Break
+            "loop" => Loop
         }
 
         Punct(&str) {

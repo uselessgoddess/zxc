@@ -1,1 +1,7 @@
-fn foo(x: i32) -> i32 { }
+fn foo(x: i32) -> i32 {
+    loop { }
+}
+
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    foo(12).isize
+}

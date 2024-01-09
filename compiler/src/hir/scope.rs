@@ -5,20 +5,27 @@ use {
         mir::{self},
         FxHashMap, Symbol,
     },
+    smallvec::SmallVec,
 };
 
-#[derive(Debug)]
-pub struct Scope<'hir> {
-    pub(crate) parent: Option<&'hir mut Self>,
+#[derive(Debug, Default, Clone)]
+pub struct LoopData<'tcx> {
+    pub breaks: SmallVec<(mir::BasicBlock, Option<mir::Operand<'tcx>>), 1>,
+}
 
-    pub(crate) returned: bool,
-    pub(crate) sig: Option<hir::FnSig<'hir>>,
-    pub(crate) locals: FxHashMap<Symbol, (Ty<'hir>, Option<mir::Place<'hir>>)>,
+#[derive(Debug, Default)]
+pub struct Scope<'hir> {
+    pub parent: Option<&'hir mut Self>,
+
+    pub returned: bool,
+    pub looped: Option<LoopData<'hir>>,
+    pub sig: Option<hir::FnSig<'hir>>,
+    pub locals: FxHashMap<Symbol, (Ty<'hir>, Option<mir::Place<'hir>>)>,
 }
 
 impl<'hir> Scope<'hir> {
     pub fn new(sig: Option<hir::FnSig<'hir>>) -> Self {
-        Self { parent: None, returned: false, sig, locals: Default::default() }
+        Self { sig, ..Default::default() }
     }
 
     pub fn was_returned(&self) -> bool {
