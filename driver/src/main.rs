@@ -229,7 +229,8 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         outputs: BTreeMap::new(),
     };
 
-    let arena = WorkerLocal::new(|_| Default::default());
+    // FIXME: strainge borrow checker error - suppress by leaking
+    let arena = Box::leak(Box::new(WorkerLocal::new(|_| Default::default())));
     let tcx = TyCtx::enter(&arena, &compiler.sess, output);
     fs::write(&emit, driver_impl(&tcx, &src, name)?)
         .with_context(|| format!("{}", emit.display()))?;

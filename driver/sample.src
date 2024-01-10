@@ -1,7 +1,14 @@
 fn foo(x: i32) -> i32 {
-    loop { }
+    loop {
+        if x == 1 {
+            break 1;
+        }
+        if x == 2 {
+            break 2;
+        }
+    }
 }
 
 extern "C" fn main(argc: isize, _: isize) -> isize {
-    foo(12).isize
+    foo(argc.i32).isize
 }

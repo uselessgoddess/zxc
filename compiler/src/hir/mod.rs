@@ -256,8 +256,10 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         let parent = self.scope.take().unwrap();
         let returned = parent.returned;
         let sig = parent.sig;
+        let looped = parent.looped.clone();
         self.scope = Some(self.tcx.arena.scope.alloc(Scope {
             parent: Some(parent),
+            looped,
             returned,
             sig,
             ..Default::default()
@@ -265,7 +267,10 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     }
 
     fn exit_scope(&mut self) {
-        let parent = self.scope().parent.take().expect("lmao");
+        let scope = self.scope();
+
+        let parent = scope.parent.take().unwrap();
+        parent.looped = scope.looped.take();
         self.scope = Some(parent);
     }
 
@@ -725,7 +730,6 @@ fn analyze_expr<'hir>(
             let never = Ty::new(expr.span, acx.tcx.types.never);
 
             if let Some(mut looped) = acx.scope.as_ref().map(|s| s.looped.clone()).expect("TODO") {
-                // unwrapped `end_of_block_dummy` to suppress borrow checker
                 let breaking = acx.end_of_block_dummy();
 
                 let expr =
@@ -738,14 +742,16 @@ fn analyze_expr<'hir>(
 
             (never, Operand::Const(ConstValue::Zst, never.kind))
         }
-        expr::Loop(stmts, _) => {
+        expr::Loop(stmts, span) => {
             let entry = acx.end_of_block(Terminator::Goto { target: acx.next_block() });
 
             acx.scoped(|acx| {
                 acx.scope().looped = Some(LoopData { breaks: Default::default() });
 
                 let unit = Ty::new(expr.span, acx.tcx.types.unit);
-                analyze_body(acx, stmts, unit)?;
+                let (loop_ty, _) =
+                    analyze_expr(acx, &Expr { kind: expr::Block(stmts, span), span })?;
+                assert_same_types(unit, loop_ty)?;
 
                 let _looped = acx.end_of_block(Terminator::Goto { target: entry });
                 let exit = acx.current_block();
