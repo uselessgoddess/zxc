@@ -406,6 +406,9 @@ pub fn write_mir_pretty<'tcx>(
 
     p!("(");
     w.comma_sep_with(sig.inputs().iter().enumerate(), |cx, (local, ty)| {
+        if body.local_decls[local.into()].mutability.is_mut() {
+            write!(cx, "mut ")?;
+        }
         write!(cx, "_{}: ", local + 1)?;
         ty.print(cx)
     })?;
