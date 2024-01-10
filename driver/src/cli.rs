@@ -2,7 +2,7 @@ use {
     crate::error::EarlyErrorHandler,
     clap::{Parser, ValueEnum},
     compiler::sess::OptionDescrs,
-    std::{collections::HashSet, path::PathBuf},
+    std::path::PathBuf,
 };
 
 #[derive(ValueEnum, Copy, Clone, Debug)]
@@ -20,6 +20,7 @@ pub enum Color {
 
 #[derive(Parser, Debug)]
 #[command(about)]
+#[command(styles = super::style::CLAP)]
 pub struct Args {
     pub input: PathBuf,
 

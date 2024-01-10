@@ -41,6 +41,7 @@ pub enum ExprKind<'hir> {
     Return(Option<&'hir Expr<'hir>>),
     Break(Option<&'hir Expr<'hir>>),
     Loop(&'hir [Stmt<'hir>], Span),
+    Assign(&'hir Expr<'hir>, &'hir Expr<'hir>),
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,9 @@ fn analyze_block<'tcx>(tcx: Tx<'tcx>, block: &lexer::Block<'tcx>) -> Expr<'tcx> 
 
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &lexer::Expr<'tcx>) -> Self {
-        use lexer::expr::{Binary, Block, Break, Call, If, Loop, Paren, Return, TailCall, Unary};
+        use lexer::expr::{
+            Assign, Binary, Block, Break, Call, If, Loop, Paren, Return, TailCall, Unary,
+        };
 
         let span = expr.span();
         let kind = match expr {
@@ -119,6 +122,10 @@ impl<'tcx> Expr<'tcx> {
                 tcx.arena.stmt.alloc_from_iter(stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt))),
                 loop_token.span,
             ),
+            lexer::Expr::Assign(Assign { left, right, .. }) => expr::Assign(
+                tcx.arena.expr.alloc(Self::analyze(tcx, left)),
+                tcx.arena.expr.alloc(Self::analyze(tcx, right)),
+            ),
         };
         Self { kind, span }
     }
@@ -126,6 +133,7 @@ impl<'tcx> Expr<'tcx> {
 
 #[derive(Debug, Clone)]
 pub struct LocalStmt<'tcx> {
+    pub mutability: Mutability,
     pub pat: Ident,
     pub init: &'tcx Expr<'tcx>,
 }
@@ -147,6 +155,7 @@ impl<'tcx> Stmt<'tcx> {
         let span = stmt.span();
         let kind = match stmt {
             lexer::Stmt::Local(local) => StmtKind::Local(LocalStmt {
+                mutability: Mutability::from_bool(local.mutability.is_some()),
                 pat: Ident::new(Symbol::intern(local.pat.ident()), local.pat.span),
                 init: tcx.arena.expr.alloc(Expr::analyze(tcx, &local.expr)),
             }),
@@ -206,7 +215,11 @@ impl<'tcx> FnDecl<'tcx> {
         Self {
             name: Symbol::intern(sig.ident.ident()),
             inputs: tcx.arena.dropless.alloc_from_iter(sig.inputs.iter().map(|arg| {
-                (Mutability::Not, Symbol::intern(arg.pat.ident()), analyze_hir_ty(tcx, &arg.ty))
+                (
+                    Mutability::from_bool(arg.mutability.is_some()),
+                    Symbol::intern(arg.pat.ident()),
+                    analyze_hir_ty(tcx, &arg.ty),
+                )
             })),
             output: match &sig.output {
                 ReturnType::Default => FnRetTy::Default({
@@ -351,6 +364,11 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     pub fn unit_place(&mut self, span: Span) -> (Ty<'hir>, Operand<'hir>) {
         let unit = Ty { kind: self.tcx.types.unit, span };
         (unit, Operand::Const(ConstValue::Zst, unit.kind))
+    }
+
+    pub fn never_place(&mut self, span: Span) -> (Ty<'hir>, Operand<'hir>) {
+        let never = Ty { kind: self.tcx.types.never, span };
+        (never, Operand::Const(ConstValue::Zst, never.kind))
     }
 
     pub fn unit_const(&mut self, unit: Ty<'hir>) -> Operand<'hir> {
@@ -534,6 +552,20 @@ fn analyze_expr<'hir>(
                 if ty.is_zst() { (ty, Operand::Const(ConstValue::Zst, ty.kind)) } else { panic!() }
             }
         }
+        expr::Assign(lvalue, rvalue) => {
+            let (lty, lhs) = analyze_expr(acx, lvalue)?;
+            let (rty, rhs) = analyze_expr(acx, rvalue)?;
+
+            if let Some(place) = lhs.place()
+                && acx.body.local_decls[place.local].mutability.is_mut()
+            {
+                let ty = assert_same_types(lty, rty)?;
+                acx.block.statements.push(Statement::Assign(place, Rvalue::Use(rhs)));
+                (ty, Operand::Copy(place))
+            } else {
+                return Err(Error::InvalidLvalue(lty.span));
+            }
+        }
         expr::Unary(op, expr) => match op {
             UnOp::Neg(_) => {
                 let (ty, operand) = analyze_expr(acx, expr)?;
@@ -628,8 +660,13 @@ fn analyze_expr<'hir>(
             if let Some((tail, stmts)) = stmts.split_last() {
                 acx.scoped(|acx| {
                     analyze_local_block_unclosed(acx, stmts)?;
-                    Ok(analyze_stmt(acx, tail, Some(goto_next))?
-                        .unwrap_or_else(|| acx.unit_place(span)))
+                    Ok(analyze_stmt(acx, tail, Some(goto_next))?.unwrap_or_else(|| {
+                        if acx.scope().returned {
+                            acx.never_place(span)
+                        } else {
+                            acx.unit_place(span)
+                        }
+                    }))
                 })?
             } else {
                 acx.unit_place(span)
@@ -816,18 +853,18 @@ fn analyze_stmt<'hir>(
                 acx.end_of_block(terminator);
             }
 
-            match stmt {
-                StmtKind::Local(LocalStmt { pat, .. }) => {
+            match *stmt {
+                StmtKind::Local(LocalStmt { mutability, pat, .. }) => {
                     if !ty.is_zst() {
-                        let (ty, place) =
-                            acx.push_rvalue(ty, Rvalue::Use(operand), Mutability::Not);
+                        let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
                         acx.scope().declare_var(pat.name, (ty, Some(place)));
                     } else {
                         acx.scope().declare_var(pat.name, (ty, None));
                     }
                     None
                 }
-                StmtKind::Expr(_, _) => Some((ty, operand)),
+                StmtKind::Expr(_, true) => Some((ty, operand)),
+                StmtKind::Expr(_, false) => None,
             }
         }
     })

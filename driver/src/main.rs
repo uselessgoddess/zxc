@@ -4,6 +4,7 @@ mod cli;
 mod codegen;
 mod error;
 mod interface;
+mod style;
 
 use {
     anyhow::Context as _,

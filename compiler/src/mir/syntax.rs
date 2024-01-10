@@ -492,6 +492,16 @@ pub enum Mutability {
     Mut,
 }
 
+impl Mutability {
+    pub fn from_bool(is_mut: bool) -> Self {
+        if is_mut { Mutability::Mut } else { Mutability::Not }
+    }
+
+    pub fn is_mut(&self) -> bool {
+        matches!(self, Self::Mut)
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct LocalDecl<'tcx> {
     pub mutability: Mutability,

@@ -25,6 +25,7 @@ impl<'lex> Parse<'lex> for Option<Abi<'lex>> {
 
 #[derive(Debug, Clone)]
 pub struct FnArg<'lex> {
+    pub mutability: Option<Token![mut]>,
     pub pat: Ident<'lex>,
     pub colon: Token![:],
     pub ty: Box<Type<'lex>>,
@@ -32,7 +33,12 @@ pub struct FnArg<'lex> {
 
 impl<'lex> Parse<'lex> for FnArg<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
-        Ok(Self { pat: input.parse()?, colon: input.parse()?, ty: input.parse()? })
+        Ok(Self {
+            mutability: input.parse()?,
+            pat: input.parse()?,
+            colon: input.parse()?,
+            ty: input.parse()?,
+        })
     }
 }
 

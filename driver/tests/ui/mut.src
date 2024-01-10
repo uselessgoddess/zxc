@@ -1,0 +1,13 @@
+fn foo(mut x: i32) -> i32 {
+    loop {
+        if x == 1 {
+            x = 0;
+        }
+        break;
+    }
+    x
+}
+
+extern "C" fn main(argc: isize, _: isize) -> isize {
+    foo(argc.i32).isize
+}

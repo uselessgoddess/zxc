@@ -21,3 +21,4 @@ tempfile = { version = "3.9" }
 anyhow = { version = "1.0.79" }
 concolor = { version = "0.1.1", features = ["auto", "api"] }
 clap = { version = "4.4.11", features = ["derive"] }
+anstyle = { version = "1.0.4" }

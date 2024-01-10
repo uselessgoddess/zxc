@@ -5,7 +5,7 @@ use {
         parenthesized,
         parse::{self, Parse, ParseBuffer, Punctuated},
         token::{self},
-        Token,
+        Error, Token,
     },
     std::assert_matches::assert_matches,
 };
@@ -132,6 +132,7 @@ ast_enum_of_structs! {
         If(If<'a>),
         Break(Break<'a>),
         Loop(Loop<'a>),
+        Assign(Assign<'a>),
     }
 }
 
@@ -201,6 +202,13 @@ pub struct Break<'a> {
 pub struct Loop<'a> {
     pub loop_token: Token![loop],
     pub body: Block<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Assign<'a> {
+    pub left: Box<Expr<'a>>,
+    pub eq_token: Token![=],
+    pub right: Box<Expr<'a>>,
 }
 
 impl<'lex> Parse<'lex> for Expr<'lex> {
@@ -309,6 +317,18 @@ fn parse_expr<'lex>(
                 }
             }
             lhs = Expr::Binary(Binary { left: Box::new(lhs), op, right: Box::new(rhs) });
+        } else if Precedence::Assign >= base && input.peek(Token![=]) {
+            let eq_token: Token![=] = input.parse()?;
+            let mut rhs = unary_expr(input)?;
+            loop {
+                let next = peek_precedence(input);
+                if next >= Precedence::Assign {
+                    rhs = parse_expr(input, rhs, next)?;
+                } else {
+                    break;
+                }
+            }
+            lhs = Expr::Assign(Assign { left: Box::new(lhs), eq_token, right: Box::new(rhs) });
         } else {
             break;
         }
@@ -435,6 +455,7 @@ fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
 #[derive(Debug, Clone)]
 pub struct Local<'lex> {
     pub let_token: Token![let],
+    pub mutability: Option<Token![mut]>,
     pub pat: Ident<'lex>,
     pub eq: Token![=],
     pub expr: Box<Expr<'lex>>,
@@ -457,6 +478,7 @@ fn parse_stmt<'lex>(input: &mut ParseBuffer<'lex>, no_semi: bool) -> parse::Resu
     if input.peek(Token![let]) {
         Ok(Stmt::Local(Local {
             let_token: input.parse()?,
+            mutability: input.parse()?,
             pat: input.parse()?,
             eq: input.parse()?,
             expr: input.parse()?,
@@ -521,8 +543,20 @@ impl Block<'_> {
 
 fn requires_terminator(expr: &Expr<'_>) -> bool {
     match expr {
-        Expr::If(_) => false,
+        Expr::If(_) | Expr::Loop(_) => false,
         _ => true,
+    }
+}
+
+impl<'lex> Parse<'lex> for Assign<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        use crate::parse::Spanned;
+
+        let expr = input.parse()?;
+        match expr {
+            Expr::Assign(inner) => Ok(inner),
+            _ => Err(Error::new(expr.span(), "expected assignment expression")),
+        }
     }
 }
 

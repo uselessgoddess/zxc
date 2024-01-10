@@ -57,6 +57,7 @@ pub enum Error<'tcx> {
         span: Span,
     },
     HasNoMain(Span),
+    InvalidLvalue(Span),
 }
 
 type Spanned<'a> = (&'a str, Range<usize>);
@@ -183,6 +184,11 @@ impl<'a> Error<'a> {
                 }
                 ("#ERROR_PLACEHOLDER", case.to_string(), vec![label])
             }
+            Error::InvalidLvalue(span) => (
+                "#ERROR_PLACEHOLDER",
+                "temporary or immutable lvalue".into(),
+                vec![Label::new(s(span))],
+            ),
         }
     }
 }

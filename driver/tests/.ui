@@ -7,6 +7,7 @@ fn ui() {
     t.pass("../tests/ui/sample.src");
     t.pass("../tests/ui/never.src");
     t.pass("../tests/ui/fib.src");
+    t.pass("../tests/ui/mut.src");
 
     t.compile_fail("../tests/ui/max.src");
     t.compile_fail("../tests/ui/empty.src");

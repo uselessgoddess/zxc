@@ -1,6 +1,6 @@
 use crate::{
     parse::{self, expr, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
-    token, Break, If, Loop, Span,
+    token, Assign, Break, If, Loop, Span,
 };
 
 pub trait Spanned {
@@ -162,6 +162,12 @@ impl Spanned for Break<'_> {
 impl Spanned for Loop<'_> {
     fn span(&self) -> Span {
         lookahead_span(self.loop_token.span, self.body.span())
+    }
+}
+
+impl Spanned for Assign<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.left.span(), self.right.span())
     }
 }
 
