@@ -4,6 +4,7 @@ use {
     std::{
         collections::BTreeMap,
         fmt::{self, Formatter},
+        io::{self, Write},
         path::PathBuf,
     },
 };
@@ -225,6 +226,7 @@ pub struct Session {
     pub opts: Options,
 
     pub io: CompilerIO,
+    handler: Handler,
 }
 
 impl Session {
@@ -233,6 +235,10 @@ impl Session {
             .C
             .mir_opt_level
             .unwrap_or_else(|| if self.opts.C.opt_level != OptLevel::No { 2 } else { 1 })
+    }
+
+    pub fn emit_fatal<'a>(&'a self, fatal: impl IntoDiagnostic<'a, !>) -> ! {
+        fatal.into_diagnostic(&self.handler).emit()
     }
 }
 
@@ -247,7 +253,13 @@ pub struct CompilerIO {
 pub fn build_session(opts: Options, io: CompilerIO) -> Session {
     let host = spec::targets::x86_64_windows_gnu::target();
 
-    Session { target: host.clone(), host, opts, io }
+    Session {
+        target: host.clone(),
+        host,
+        opts,
+        io,
+        handler: Handler::with_emitter(Box::new(EmitterWriter::stderr())),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -301,4 +313,234 @@ impl OutputFilenames {
         path.set_extension(extension);
         path
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Hash)]
+pub enum Style {
+    NoStyle,
+    Level(Level),
+}
+
+#[derive(Copy, PartialEq, Eq, Clone, Hash, Debug)]
+pub enum Level {
+    Bug,
+    Fatal,
+    Error,
+}
+
+impl Level {
+    pub fn to_str(self) -> &'static str {
+        match self {
+            Level::Bug => "error: internal compiler error",
+            Level::Fatal | Level::Error { .. } => "error",
+        }
+    }
+}
+
+#[must_use]
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub(crate) level: Level,
+    pub message: Vec<(String, Style)>,
+}
+
+impl Diagnostic {
+    pub fn is_error(&self) -> bool {
+        match self.level {
+            Level::Bug | Level::Fatal | Level::Error => true,
+        }
+    }
+}
+
+impl Diagnostic {
+    #[track_caller]
+    pub fn new_with_code(level: Level, message: String) -> Self {
+        Diagnostic { level, message: vec![(message.into(), Style::NoStyle)] }
+    }
+}
+
+pub type DynEmitter = dyn Emitter + Send;
+
+struct HandlerInner {
+    emitter: Box<DynEmitter>,
+    errors: usize,
+}
+
+pub struct Handler {
+    inner: Lock<HandlerInner>,
+}
+
+impl fmt::Debug for Handler {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Handler {{ .. }}")
+    }
+}
+
+impl HandlerInner {
+    pub fn emit_diagnostic(&mut self, diagnostic: Diagnostic) {
+        if diagnostic.is_error() {
+            self.errors += 1;
+        }
+
+        self.emitter.emit_diagnostic(diagnostic);
+    }
+}
+
+impl Handler {
+    pub fn with_emitter(emitter: Box<DynEmitter>) -> Self {
+        Self { inner: Lock::new(HandlerInner { emitter, errors: 0 }) }
+    }
+
+    pub fn emit_diagnostic(&self, diagnostic: Diagnostic) {
+        self.inner.lock().emit_diagnostic(diagnostic)
+    }
+
+    pub fn struct_fatal(&self, msg: impl Into<String>) -> DiagnosticBuilder<'_, !> {
+        DiagnosticBuilder::new_fatal(self, msg.into())
+    }
+}
+
+pub trait Emitter {
+    fn emit_diagnostic(&mut self, diag: Diagnostic);
+}
+
+pub trait Emission: Sized {
+    fn emit_guarantee(diagnostic: DiagnosticBuilder<'_, Self>) -> Self;
+    fn make_guarantee(handler: &Handler, message: String) -> DiagnosticBuilder<'_, Self>;
+}
+
+impl Emission for ! {
+    fn emit_guarantee(diagnostic: DiagnosticBuilder<'_, Self>) -> Self {
+        diagnostic.handler.emit_diagnostic(diagnostic.diagnostic);
+
+        crate::FatalError.raise()
+    }
+
+    fn make_guarantee(handler: &Handler, message: String) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::new_fatal(handler, message)
+    }
+}
+
+impl Emission for () {
+    fn emit_guarantee(diagnostic: DiagnosticBuilder<'_, Self>) -> Self {
+        diagnostic.handler.emit_diagnostic(diagnostic.diagnostic);
+    }
+
+    fn make_guarantee(handler: &Handler, message: String) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::new(handler, Level::Fatal, message)
+    }
+}
+
+use {crate::par::Lock, std::marker::PhantomData};
+
+pub struct DiagnosticBuilder<'h, E: Emission> {
+    handler: &'h Handler,
+    diagnostic: Diagnostic,
+    _marker: PhantomData<E>,
+}
+
+impl<'a, E: Emission> DiagnosticBuilder<'a, E> {
+    #[track_caller]
+    pub fn emit(self) -> E {
+        E::emit_guarantee(self)
+    }
+}
+
+impl<'h> DiagnosticBuilder<'h, !> {
+    #[track_caller]
+    pub(crate) fn new_fatal(handler: &'h Handler, message: String) -> Self {
+        Self {
+            handler,
+            diagnostic: Diagnostic::new_with_code(Level::Fatal, message),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'h> DiagnosticBuilder<'h, ()> {
+    pub(crate) fn new(handler: &'h Handler, level: Level, message: String) -> Self {
+        Self {
+            handler,
+            diagnostic: Diagnostic::new_with_code(level, message),
+            _marker: PhantomData,
+        }
+    }
+}
+
+pub struct EarlyErrorHandler {
+    handler: Handler,
+}
+
+impl EarlyErrorHandler {
+    pub fn new() -> Self {
+        Self { handler: Handler::with_emitter(Box::new(EmitterWriter::stderr())) }
+    }
+}
+
+impl EarlyErrorHandler {
+    pub fn early_error(&self, msg: impl Into<String>) -> ! {
+        self.handler.struct_fatal(msg).emit()
+    }
+}
+
+fn normalize_whitespace(str: &str) -> String {
+    const REPLACEMENTS: &[(char, &str)] = &[
+        ('\t', "    "),
+        ('\u{200D}', ""),
+        ('\u{202A}', ""),
+        ('\u{202B}', ""),
+        ('\u{202D}', ""),
+        ('\u{202E}', ""),
+        ('\u{2066}', ""),
+        ('\u{2067}', ""),
+        ('\u{2068}', ""),
+        ('\u{202C}', ""),
+        ('\u{2069}', ""),
+    ];
+
+    let mut s = str.to_string();
+    for (c, replacement) in REPLACEMENTS {
+        s = s.replace(*c, replacement);
+    }
+    s
+}
+
+pub struct EmitterWriter {
+    dest: Box<dyn Write + Send>,
+}
+
+impl EmitterWriter {
+    pub fn stderr() -> Self {
+        Self { dest: Box::new(io::stderr()) }
+    }
+
+    fn emit_diagnostic_default(&mut self, diag: Diagnostic) -> io::Result<()> {
+        let mut buf = Vec::with_capacity(32);
+
+        write!(buf, "{}: ", diag.level.to_str())?;
+
+        for (text, _style) in diag.message.iter() {
+            let text = &normalize_whitespace(&text);
+            for line in text.lines() {
+                write!(buf, "{line}")?;
+            }
+        }
+        writeln!(buf)?;
+
+        self.dest.write(&buf)?;
+        Ok(())
+    }
+}
+
+impl Emitter for EmitterWriter {
+    fn emit_diagnostic(&mut self, diag: Diagnostic) {
+        match self.emit_diagnostic_default(diag) {
+            Ok(_) => {}
+            Err(err) => panic!("failed to emit error: {err}"),
+        }
+    }
+}
+
+pub trait IntoDiagnostic<'a, T: Emission = ()> {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, T>;
 }

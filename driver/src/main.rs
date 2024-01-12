@@ -2,7 +2,6 @@
 
 mod cli;
 mod codegen;
-mod error;
 mod interface;
 mod style;
 
@@ -30,6 +29,7 @@ use compiler::{
 
 use {
     chumsky::Parser,
+    compiler::sess::EarlyErrorHandler,
     lexer::{Block, ItemFn, ParseBuffer},
     std::{
         collections::{BTreeMap, HashMap},
@@ -219,7 +219,7 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         .file_stem()
         .unwrap()
         .to_str()
-        .unwrap_or_else(|| early.early_fatal("non UTF-8 file name"));
+        .unwrap_or_else(|| early.early_error("non UTF-8 file name"));
     let emit = temps.join(art.with_extension("emit"));
 
     let output = sess::OutputFilenames {
@@ -246,14 +246,13 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
 
 use crate::{
     cli::{Args, Emit},
-    error::EarlyErrorHandler,
     interface::Config,
 };
 
 fn main() {
     use clap::Parser;
 
-    let early = EarlyErrorHandler;
+    let early = EarlyErrorHandler::new();
 
     let Args { input, output, output_dir, color, c_flags, z_flags, emit } = Args::parse();
     concolor::set(match color.unwrap_or(cli::Color::Auto) {
@@ -283,7 +282,7 @@ fn main() {
     interface::run_compiler(config, |compiler| {
         if let Err(err) = driver(&early, compiler) {
             if let Error::Error(err) = err {
-                early.early_fatal(err.to_string())
+                early.early_error(err.to_string())
             }
             process::exit(1)
         }

@@ -13,7 +13,9 @@
     core_intrinsics,
     mem_copy_fn,
     const_option,
-    box_patterns
+    box_patterns,
+    never_type,
+    negative_impls
 )]
 #![allow(clippy::unit_arg)]
 #![allow(internal_features)]
@@ -26,6 +28,7 @@ pub mod tcx;
 
 mod fx;
 
+mod fatal;
 mod idx;
 pub(crate) mod index;
 pub mod par;
@@ -37,6 +40,7 @@ pub(crate) mod util;
 
 pub use {
     ariadne,
+    fatal::{FatalError, FatalErrorMarker},
     idx::{Idx, IndexSlice, IndexVec},
     mir::pretty,
     sess::Session,

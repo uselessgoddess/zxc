@@ -1,7 +1,6 @@
 use {
-    crate::error::EarlyErrorHandler,
     clap::{Parser, ValueEnum},
-    compiler::sess::OptionDescrs,
+    compiler::sess::{EarlyErrorHandler, OptionDescrs},
     std::path::PathBuf,
 };
 
@@ -68,18 +67,18 @@ pub fn build_options<O: Default>(
             Some((_, setter, type_desc, _)) => {
                 if !setter(&mut op, value) {
                     match value {
-                        None => handler.early_fatal(format!(
+                        None => handler.early_error(format!(
                             "{output_name} option `{key}` \
                                 requires {type_desc} ({prefix} {key}=<value>)"
                         )),
-                        Some(value) => handler.early_fatal(format!(
+                        Some(value) => handler.early_error(format!(
                             "incorrect value `{value}` for \
                                 {output_name} option `{key}` - {type_desc} was expected"
                         )),
                     }
                 }
             }
-            None => handler.early_fatal(format!("unknown {output_name} option: `{key}`")),
+            None => handler.early_error(format!("unknown {output_name} option: `{key}`")),
         }
     }
     op
