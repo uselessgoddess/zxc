@@ -192,3 +192,9 @@ use crate::{
     util, Tx,
 };
 pub use {list::List, sty::*, TyKind::*};
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TyMut<'tcx> {
+    pub ty: Ty<'tcx>,
+    pub mutbl: mir::Mutability,
+}

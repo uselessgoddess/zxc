@@ -174,12 +174,14 @@ impl<'tcx> Terminator<'tcx> {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum PlaceElem<'tcx> {
     Subtype(Ty<'tcx>), // also applicable for non-transmuting types
+    Deref,
 }
 
 impl<'tcx> PlaceElem<'tcx> {
     pub fn is_indirect(&self) -> bool {
         match self {
             PlaceElem::Subtype(_) => false,
+            PlaceElem::Deref => true,
         }
     }
 }
