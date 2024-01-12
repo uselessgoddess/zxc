@@ -12,17 +12,17 @@ use {
         codegen::{isa, Context},
         prelude::{settings, Configurable},
     },
-    cranelift_module::{self as module, FuncOrDataId, Module},
+    cranelift_module::{self as module, Module},
     cranelift_object::{ObjectBuilder, ObjectModule},
 };
 
 use compiler::{
     ariadne::{self, Color, Label, Report, ReportKind},
     hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
-    mir::{self, pretty, InstanceDef, MirPass},
+    mir::{self, InstanceDef, MirPass},
     par::WorkerLocal,
     rayon::prelude::*,
-    sess::{self, Options, OutFileName, OutputType},
+    sess::{self, Options},
     symbol::Symbol,
     Tx, TyCtx,
 };
@@ -32,9 +32,9 @@ use {
     compiler::sess::EarlyErrorHandler,
     lexer::{Block, ItemFn, ParseBuffer},
     std::{
-        collections::{BTreeMap, HashMap},
+        collections::BTreeMap,
         fmt::{self, Write as _},
-        fs::{self, File},
+        fs,
         io::{self, Write as _},
         path::{Path, PathBuf},
         process::{self, Command},
@@ -222,7 +222,7 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         .unwrap_or_else(|| early.early_error("non UTF-8 file name"));
     let emit = temps.join(art.with_extension("emit"));
 
-    let output = sess::OutputFilenames {
+    let outputs = sess::OutputFilenames {
         out_directory: out_dir,
         file_stem: art.file_stem().unwrap().to_str().unwrap().to_owned(),
         single_output_file: None,
@@ -232,7 +232,7 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
 
     // FIXME: strainge borrow checker error - suppress by leaking
     let arena = Box::leak(Box::new(WorkerLocal::new(|_| Default::default())));
-    let tcx = TyCtx::enter(&arena, &compiler.sess, output);
+    let tcx = TyCtx::enter(&arena, &compiler.sess, outputs);
     fs::write(&emit, driver_impl(&tcx, &src, name)?)
         .with_context(|| format!("{}", emit.display()))?;
 
