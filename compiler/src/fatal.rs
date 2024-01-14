@@ -1,3 +1,8 @@
+use {
+    crate::sess::{Diagnostic, DiagnosticBuilder, Emission, Handler, Level},
+    std::marker::PhantomData,
+};
+
 #[derive(Copy, Clone, Debug)]
 #[must_use]
 pub struct FatalError;
@@ -11,6 +16,27 @@ impl !Send for FatalError {}
 impl FatalError {
     pub fn raise(self) -> ! {
         std::panic::resume_unwind(Box::new(FatalErrorMarker))
+    }
+}
+
+impl<'a> DiagnosticBuilder<'a, FatalError> {
+    pub(crate) fn new_almost_fatal(handler: &'a Handler, message: impl Into<String>) -> Self {
+        Self {
+            handler,
+            diagnostic: Diagnostic::new_with_code(Level::Fatal, message.into()),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl Emission for FatalError {
+    fn emit_guarantee(db: DiagnosticBuilder<'_, Self>) -> Self {
+        db.handler.emit_diagnostic(db.diagnostic);
+        FatalError
+    }
+
+    fn make_guarantee(handler: &Handler, message: String) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::new_almost_fatal(handler, message)
     }
 }
 

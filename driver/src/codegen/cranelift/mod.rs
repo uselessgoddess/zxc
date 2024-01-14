@@ -1,22 +1,30 @@
 use {
     self::value::{CPlace, CValue, Pointer},
+    crate::codegen::ssa::CodegenResults,
     compiler::{
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
         hir::HirCtx,
         mir::{
-            ty, BasicBlock, BasicBlockData, BinOp, Body, ConstValue, DefId, IntTy, Local, Operand,
-            Place, Rvalue, Statement, Terminator, Ty, UnOp,
+            ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
+            Local, Operand, Place, Rvalue, Statement, Terminator, Ty, UnOp,
         },
+        sess::{OptLevel, OutputFilenames},
         IndexVec, Session, Tx,
     },
     cranelift::{
-        codegen::ir::{Function, UserFuncName},
+        codegen::{
+            ir::{Function, UserFuncName},
+            CodegenError, Context,
+        },
         prelude::{
-            isa, types, AbiParam, Block, FunctionBuilder, FunctionBuilderContext, InstBuilder,
-            MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
+            isa,
+            settings::{self, SetError},
+            types, AbiParam, Block, Configurable, FunctionBuilder, FunctionBuilderContext,
+            InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
         },
     },
-    cranelift_module::{FuncId, Linkage, Module},
+    cranelift_module::{FuncId, Linkage, Module, ModuleError},
+    std::{any::Any, fs::File, sync::Arc},
     target_lexicon::PointerWidth,
 };
 
@@ -28,7 +36,7 @@ mod value;
 
 pub struct FunctionCx<'m, 'cl, 'tcx: 'm> {
     tcx: Tx<'tcx>,
-    hix: &'cl HirCtx<'tcx>,
+    hix: Hx<'tcx>,
     mir: &'cl Body<'tcx>,
     bcx: FunctionBuilder<'cl>,
 
@@ -387,13 +395,13 @@ fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, default: isa::CallConv, abi: &FnAbi<'tcx>) 
     }
 }
 
-pub(crate) fn compile_fn<'tcx>(
-    tcx: Tx<'tcx>,
-    hix: &HirCtx<'tcx>,
+pub(crate) fn codegen_fn<'tcx>(
+    hix: Hx<'tcx>,
     def: DefId,
-    mir: &Body<'tcx>,
+    mono_item: &MonoItemData,
     module: &mut dyn Module,
-) -> (FuncId, Function) {
+) -> (Symbol, FuncId, Function) {
+    let tcx = hix.tcx;
     let fn_abi = tcx.fn_abi_of_sig(hix.instances[def].sig);
     let mut fn_ctx = FunctionBuilderContext::new();
 
@@ -413,6 +421,7 @@ pub(crate) fn compile_fn<'tcx>(
 
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
 
+    let mir = hix.optimized_mir(def);
     let start_block = bcx.create_block();
     let block_map: IndexVec<BasicBlock, Block> =
         (0..mir.basic_blocks.len()).map(|_| bcx.create_block()).collect();
@@ -506,5 +515,211 @@ pub(crate) fn compile_fn<'tcx>(
     fx.bcx.seal_all_blocks();
     fx.bcx.finalize();
 
-    (id, fn_)
+    (hix.instances[def].symbol, id, fn_)
+}
+
+use super::ssa::{CompiledModule, ModuleInfo};
+
+struct CodegenModule {
+    regular: CompiledModule,
+}
+
+pub(crate) struct CodegenData {
+    modules: Vec<Result<CodegenModule, String>>,
+    info: ModuleInfo,
+}
+
+impl CodegenData {
+    fn join(self, sess: &Session) -> CodegenResults {
+        let mut modules = Vec::with_capacity(32);
+        for module in self.modules {
+            match module {
+                Ok(module) => modules.push(module.regular),
+                Err(err) => sess.fatal(err),
+            }
+        }
+
+        sess.abort_if_errors();
+
+        CodegenResults { modules, info: self.info }
+    }
+}
+
+fn build_isa(sess: &Session) -> Result<Arc<dyn isa::TargetIsa + 'static>, SetError> {
+    let target_triple: target_lexicon::Triple = match sess.target.triple.parse() {
+        Ok(triple) => triple,
+        Err(err) => sess.fatal(format!("target not recognized: {}", err)),
+    };
+
+    let mut flags = settings::builder();
+    flags.enable("is_pic")?;
+    flags.set("enable_llvm_abi_extensions", "true")?;
+
+    match sess.opts.C.opt_level {
+        OptLevel::No => {
+            flags.set("opt_level", "none")?;
+        }
+        OptLevel::Less | OptLevel::Default => {}
+        OptLevel::Size | OptLevel::SizeMin | OptLevel::Aggressive => {
+            flags.set("opt_level", "speed_and_size")?;
+        }
+    }
+
+    if let target_lexicon::Architecture::Aarch64(_)
+    | target_lexicon::Architecture::Riscv64(_)
+    | target_lexicon::Architecture::X86_64 = target_triple.architecture
+    {
+        // Windows depends on stack probes to grow the committed part of the stack.
+        // On other platforms it helps prevents stack smashing.
+        flags.enable("enable_probestack")?;
+        flags.set("probestack_strategy", "inline")?;
+    } else {
+        // __cranelift_probestack is not provided and inline stack probes are only supported on
+        // AArch64, Riscv64 and x86_64.
+        flags.set("enable_probestack", "false")?;
+    }
+
+    let flags = settings::Flags::new(flags);
+
+    let isa_builder = match None {
+        Some("native") => {
+            let builder = cranelift_native::builder_with_options(true).unwrap();
+            builder
+        }
+        Some(value) => {
+            let mut builder = isa::lookup(target_triple.clone()).unwrap_or_else(|err| {
+                sess.fatal(format!("can't compile for {target_triple}: {err}"));
+            });
+            if let Err(_) = builder.enable(value) {
+                sess.fatal("the specified target cpu isn't currently supported by Cranelift.");
+            }
+            builder
+        }
+        None => {
+            let mut builder = isa::lookup(target_triple.clone()).unwrap_or_else(|err| {
+                sess.fatal(format!("can't compile for {target_triple}: {err}"));
+            });
+            if target_triple.architecture == target_lexicon::Architecture::X86_64 {
+                // Don't use "haswell" as the default, as it implies `has_lzcnt`.
+                // macOS CI is still at Ivy Bridge EP, so `lzcnt` is interpreted as `bsr`.
+                builder.enable("nehalem").unwrap();
+            }
+            builder
+        }
+    };
+
+    isa_builder.finish(flags).map_err(|err| sess.fatal(format!("failed to build TargetIsa: {err}")))
+}
+
+use {
+    compiler::{
+        hir::Hx,
+        mir::{InstanceDef, MonoItem, MonoItemData},
+        sess::OutputType,
+        symbol::Symbol,
+    },
+    cranelift_object::{ObjectBuilder, ObjectModule},
+};
+
+fn make_module(sess: &Session, name: String) -> ObjectModule {
+    let isa = build_isa(sess).expect("unreachable error");
+
+    let mut builder =
+        ObjectBuilder::new(isa, name + ".o", cranelift_module::default_libcall_names()).unwrap();
+    builder.per_function_section(false);
+    ObjectModule::new(builder)
+}
+
+fn emit_module(
+    name: String,
+    mut object: cranelift_object::object::write::Object<'_>,
+    output_filenames: &OutputFilenames,
+) -> Result<CompiledModule, String> {
+    let tmp_file = output_filenames.temp_path(OutputType::Object, Some(&name));
+    let mut file = match File::create(&tmp_file) {
+        Ok(file) => file,
+        Err(err) => return Err(format!("error creating object file: {}", err)),
+    };
+    if let Err(err) = object.write_stream(&mut file) {
+        return Err(format!("error writing object file: {}", err));
+    }
+
+    Ok(CompiledModule { name, object: Some(tmp_file) })
+}
+
+fn emit_cgu(
+    name: String,
+    module: ObjectModule,
+    output_filenames: &OutputFilenames,
+) -> Result<CodegenModule, String> {
+    let mut product = module.finish();
+
+    Ok(CodegenModule { regular: emit_module(name, product.object, output_filenames)? })
+}
+
+fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<CodegenModule, String> {
+    let mut module = make_module(hix.tcx.sess, cgu.name.as_str().to_string());
+
+    let mut cg_functions = Vec::with_capacity(32);
+    for (&MonoItem { def: InstanceDef::Item(def), .. }, mono_item) in &cgu.items {
+        cg_functions.push(codegen_fn(hix, def, mono_item, &mut module));
+    }
+
+    let mut ctx = Context::new();
+    for (symbol, id, func) in cg_functions {
+        ctx.clear();
+        ctx.func = func;
+
+        match module.define_function(id, &mut ctx) {
+            Err(ModuleError::Compilation(CodegenError::ImplLimitExceeded)) => {
+                hix.tcx.sess.fatal(format!(
+                    "backend implementation limit exceeded while compiling {symbol}",
+                ));
+            }
+            Err(err) => panic!("Error while defining {symbol}: {err:?}"),
+            _ => {}
+        }
+    }
+
+    let cgu_name = cgu.name.as_str().to_owned();
+    emit_cgu(cgu_name, module, hix.tcx.output_filenames())
+}
+
+fn driver<'tcx>(hix: Hx<'tcx>, cgus: &[CodegenUnit<'tcx>]) -> CodegenData {
+    let [unit] = cgus else { todo!() };
+
+    let target_cpu = hix.tcx.sess.target.cpu.to_string();
+    let module = module_codegen(hix, unit);
+
+    CodegenData { modules: vec![module], info: ModuleInfo::new(hix.tcx, target_cpu) }
+}
+
+pub struct CraneliftBackend;
+
+impl super::ssa::CodegenBackend for CraneliftBackend {
+    fn codegen_module<'tcx>(
+        &self,
+        hix: Hx<'tcx>,
+        mono_items: &[CodegenUnit<'tcx>],
+    ) -> Box<dyn Any> {
+        Box::new(driver(hix, mono_items))
+    }
+
+    fn join_codegen(
+        &self,
+        sess: &Session,
+        ongoing: Box<dyn Any>,
+        _outputs: &OutputFilenames,
+    ) -> CodegenResults {
+        ongoing.downcast::<CodegenData>().unwrap().join(sess)
+    }
+
+    fn link_binary(
+        &self,
+        sess: &Session,
+        codegen_results: CodegenResults,
+        outputs: &OutputFilenames,
+    ) {
+        super::ssa::link::link_binary(sess, &codegen_results, outputs)
+    }
 }

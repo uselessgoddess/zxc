@@ -2,16 +2,15 @@ use {
     crate::{
         fx::FxIndexSet,
         mir::{
-            traversal, visit::MutVisitor, BasicBlock, BasicBlockData, Body, Location, MirPass,
-            Statement, SwitchTargets, Terminator, START_BLOCK,
+            traversal,
+            visit::{MutVisitor, MutatingUseContext, PlaceContext, Visitor},
+            BasicBlock, BasicBlockData, Body, Local, Location, MirPass, Place, Statement,
+            SwitchTargets, Terminator, START_BLOCK,
         },
-        IndexSlice, IndexVec, Session, Tx,
+        Idx, IndexSlice, IndexVec, Session, Tx,
     },
     smallvec::SmallVec,
 };
-use crate::Idx;
-use crate::mir::{Local, Place};
-use crate::mir::visit::{MutatingUseContext, PlaceContext, Visitor};
 
 pub enum SimplifyCfg {
     EarlyOpt,
@@ -360,7 +359,6 @@ impl<'tcx> Visitor<'tcx> for UsedLocals {
                     self.super_statement(statement, location);
                 }
             }
-
         }
     }
 
@@ -395,7 +393,6 @@ impl<'tcx> MirPass<'tcx> for SimplifyLocals {
         simplify_locals(tcx, body);
     }
 }
-
 
 fn remove_unused_definitions_helper(used_locals: &mut UsedLocals, body: &mut Body<'_>) {
     let mut modified = true;
@@ -456,7 +453,8 @@ pub fn simplify_locals<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
     // fixedpoint where there are no more unused locals.
     remove_unused_definitions_helper(&mut used_locals, body);
 
-    // Finally, we'll actually do the work of shrinking `body.local_decls` and remapping the `Local`s.
+    // Finally, we'll actually do the work of shrinking `body.local_decls`
+    // and remapping the `Local`s.
     let map = make_local_map(&mut body.local_decls, &used_locals);
 
     // Only bother running the `LocalUpdater` if we actually found locals to remove.

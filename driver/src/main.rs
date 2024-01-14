@@ -1,4 +1,4 @@
-#![feature(let_chains, try_blocks, never_type)]
+#![feature(let_chains, try_blocks, never_type, associated_type_bounds)]
 
 mod cli;
 mod codegen;
@@ -86,7 +86,12 @@ fn parse_items<'lex>(
     Ok(items)
 }
 
-fn driver_impl<'tcx>(tcx: Tx<'tcx>, src: &'tcx str, name: &'tcx str) -> Result<Vec<u8>, Error> {
+fn driver_impl<'tcx>(
+    tcx: Tx<'tcx>,
+    hix: &'tcx mut HirCtx<'tcx>,
+    src: &'tcx str,
+    name: &'tcx str,
+) -> Result<(), Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
     let items = parse_items(tcx, &mut input).or_else(|err| {
@@ -99,8 +104,7 @@ fn driver_impl<'tcx>(tcx: Tx<'tcx>, src: &'tcx str, name: &'tcx str) -> Result<V
         Err(Error::Guaranteed)
     })?;
 
-    let mut hix = HirCtx::pure(tcx, Symbol::intern("main-cgu"));
-    match hir::analyze_module(&mut hix, &items) {
+    match hir::analyze_module(hix, &items) {
         Ok(_) => {}
         Err(err) => {
             let settings =
@@ -145,44 +149,13 @@ fn driver_impl<'tcx>(tcx: Tx<'tcx>, src: &'tcx str, name: &'tcx str) -> Result<V
         .collect::<Vec<_>>();
     mir::pass::emit_mir(&hix, &mir)?;
 
-    for (def, mir) in mir {
-        let (id, func) = codegen::cranelift::compile_fn(tcx, &hix, def, mir, &mut module);
+    let codegen = codegen::cranelift::CraneliftBackend;
 
-        module.define_function(id, &mut Context::for_function(func))?;
-    }
+    let ongoing = codegen.codegen_module(hix, &[cgu]);
+    let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
+    let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());
 
-    //if tcx.sess.opts.emit.contains(Emit::MIR) {
-    //    let path = out.join(artifact.with_extension("mir"));
-    //    let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
-    //
-    //    for (def, _) in &cgu.items {
-    //        let mut printer = pretty::FmtPrinter::new(&hix);
-    //        mir::write_mir_pretty(def, mir, &mut printer)?;
-    //
-    //        write!(file, "{}", printer.into_buf())?;
-    //    }
-    //}
-
-    //let emit_clif = tcx.sess.opts.emit.contains(Emit::IR);
-    //let mut contexts = HashMap::with_capacity(128);
-
-    //if emit_clif {
-    //    let path = out.join(artifact.with_extension("clif"));
-    //    let mut file = File::create(&path).with_context(|| format!("failed to create {path:?}"))?;
-    //
-    //    for (def, _) in mir.iter_enumerated() {
-    //        let Some(FuncOrDataId::Func(func)) =
-    //            module.get_name(hix.instances[def].symbol.as_str())
-    //        else {
-    //            panic!()
-    //        };
-    //
-    //        writeln!(file, "{}", &contexts[&func])?;
-    //        // println!("{}", printer.into_buf().replace('\n', "\n    "));
-    //    }
-    //}
-
-    Ok(module.finish().emit()?)
+    Ok(())
 }
 
 fn parent_dir(path: &Path) -> &Path {
@@ -226,26 +199,22 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
         out_directory: out_dir,
         file_stem: art.file_stem().unwrap().to_str().unwrap().to_owned(),
         single_output_file: None,
-        temps_directory: temps,
+        temps_directory: Some(temps),
         outputs: BTreeMap::new(),
     };
 
     // FIXME: strainge borrow checker error - suppress by leaking
     let arena = Box::leak(Box::new(WorkerLocal::new(|_| Default::default())));
     let tcx = TyCtx::enter(&arena, &compiler.sess, outputs);
-    fs::write(&emit, driver_impl(&tcx, &src, name)?)
-        .with_context(|| format!("{}", emit.display()))?;
-
-    let out = Command::new("gcc").arg(emit).arg("-o").arg(out).output()?;
-    if !out.stderr.is_empty() {
-        print!("Linker out: {}", String::from_utf8_lossy(&out.stderr));
-    }
+    let mut hix = HirCtx::pure(&tcx, Symbol::intern("main"));
+    driver_impl(&tcx, &mut hix, &src, name)?;
 
     Ok(())
 }
 
 use crate::{
     cli::{Args, Emit},
+    codegen::ssa::CodegenBackend,
     interface::Config,
 };
 
@@ -254,7 +223,7 @@ fn main() {
 
     let early = EarlyErrorHandler::new();
 
-    let Args { input, output, output_dir, color, c_flags, z_flags, emit } = Args::parse();
+    let Args { input, output, output_dir, color, c_flags, z_flags, emit, target } = Args::parse();
     concolor::set(match color.unwrap_or(cli::Color::Auto) {
         cli::Color::Auto => ColorChoice::Auto,
         cli::Color::Always => ColorChoice::Always,
@@ -271,12 +240,15 @@ fn main() {
             Emit::IR => sess::Emit::IR,
         };
     }
-    let config = Config {
-        opts: Options { Z: z_opts, C: c_opts, emit: emit_flags },
+    let mut config = Config {
+        opts: Options { Z: z_opts, C: c_opts, emit: emit_flags, ..Default::default() },
         input,
         output_dir,
         output_file: output,
     };
+    if let Some(target) = target {
+        config.opts.triple = target;
+    }
     println!("{config:#?}");
 
     interface::run_compiler(config, |compiler| {

@@ -35,6 +35,7 @@ pub mod par;
 pub mod sess;
 pub mod spec;
 pub mod symbol;
+mod temp;
 pub mod tls;
 pub(crate) mod util;
 
@@ -45,6 +46,7 @@ pub use {
     mir::pretty,
     sess::Session,
     tcx::{Arena, DroplessArena, Intern, Tx, TyCtx},
+    temp::MaybeTempDir,
 };
 pub(crate) use {
     fx::{FxHashMap, FxHashSet, FxHasher},
@@ -73,3 +75,43 @@ macro_rules! index_vec {
 }
 
 pub(crate) use index_vec;
+
+#[macro_export]
+macro_rules! diagnostic {
+    {
+        $([$($head:tt)*])*
+        pub struct $name:ident;
+    } => {
+        pub struct $name;
+
+        impl<'a, E: Emission> IntoDiagnostic<'a, E> for $name  {
+            $crate::diagnostic!(@impl $([$($head)*])*);
+        }
+    };
+
+    {
+        $([$($head:tt)*])*
+        pub struct $name:ident $(<$($l:lifetime),*>)? { $($body:tt)* }
+    } => {
+        pub struct $name$(<$($l),*>)? { $($body)* }
+
+        impl<'a, E: Emission> IntoDiagnostic<'a, E> for $name$(<$($l),*>)?  {
+            $crate::diagnostic!(@impl $([$($head)*])*);
+        }
+    };
+
+    (@impl
+        [$fmt:literal $(, $arg:ident)*]
+        $([note: $fmt_notes:literal $(, $arg_notes:ident)*])*
+    ) => {
+        fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, E> {
+            let mut diag = handler.struct_diagnostic(format!($fmt $(, self.$arg )*));
+
+            $(
+                diag.note(format!($fmt_notes $(, self.$arg_notes )*));
+            )*
+
+            diag
+        }
+    };
+}

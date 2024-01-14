@@ -1,12 +1,21 @@
 use {
-    crate::spec::{base, Target},
+    crate::spec::{base, Cc, LinkerFlavor, Lld, Target},
     macros::target_data_layout,
 };
 
+#[rustfmt::skip]
 pub fn target() -> Target {
     let mut base = base::windows_gnu::opts();
     base.cpu = "x86-64".into();
     base.linker = Some("x86_64-w64-mingw32-gcc".into());
+    base.add_pre_link_args(
+        LinkerFlavor::Gnu(Cc::No, Lld::No),
+        &["-m", "i386pep", "--high-entropy-va"],
+    );
+    base.add_pre_link_args(
+        LinkerFlavor::Gnu(Cc::Yes, Lld::No),
+        &["-m64", "-Wl,--high-entropy-va"],
+    );
 
     Target {
         triple: "x86_64-pc-windows-gnu".into(),

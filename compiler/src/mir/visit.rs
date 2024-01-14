@@ -1,6 +1,13 @@
-use std::borrow::Cow;
-use crate::mir::{BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Location, Operand, Place, PlaceElem, PlaceRef, Rvalue, Statement, Terminator, Ty};
-use crate::Tx;
+use {
+    crate::{
+        mir::{
+            BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Location, Operand,
+            Place, PlaceElem, PlaceRef, Rvalue, Statement, Terminator, Ty,
+        },
+        Tx,
+    },
+    std::borrow::Cow,
+};
 
 macro_rules! make_mir_visitor {
     ($visitor_trait_name:ident, $($mutability:ident)?) => {
@@ -293,7 +300,8 @@ macro_rules! make_mir_visitor {
                 body: &$($mutability)? Body<'tcx>,
                 location: Location
             ) {
-                let basic_block = & $($mutability)? basic_blocks!(body, $($mutability, true)?)[location.block];
+                let basic_block = & $($mutability)?
+                    basic_blocks!(body, $($mutability, true)?)[location.block];
                 if basic_block.statements.len() == location.statement_index {
                     if let Some(ref $($mutability)? terminator) = basic_block.terminator {
                         self.visit_terminator(terminator, location)
@@ -312,7 +320,8 @@ macro_rules! basic_blocks {
     ($body:ident, mut, true) => {
         (&mut $body.basic_blocks)
     };
-    ($body:ident, mut, false) => { // TODO: .as_mut_preserves_cfg()
+    ($body:ident, mut, false) => {
+        // TODO: .as_mut_preserves_cfg()
         (&mut $body.basic_blocks)
     };
     ($body:ident,) => {
@@ -411,7 +420,7 @@ macro_rules! visit_place_fns {
                     self.visit_ty(&mut new_ty, TyContext::Location(location));
                     if ty != new_ty { Some(PlaceElem::Subtype(new_ty)) } else { None }
                 }
-                PlaceElem::Deref => None
+                PlaceElem::Deref => None,
             }
         }
     };

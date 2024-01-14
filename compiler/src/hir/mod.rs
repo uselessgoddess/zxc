@@ -976,6 +976,8 @@ pub struct HirCtx<'hir> {
     pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
 }
 
+pub type Hx<'hir> = &'hir HirCtx<'hir>;
+
 impl<'hir> HirCtx<'hir> {
     pub fn as_codegen_unit(&self) -> CodegenUnit<'hir> {
         let items = self

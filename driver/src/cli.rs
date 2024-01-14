@@ -35,6 +35,10 @@ pub struct Args {
     #[arg(long = "color", value_name = "WHEN")]
     pub color: Option<Color>,
 
+    /// Target triple for which the code is compiled
+    #[arg(long = "target")]
+    pub target: Option<String>,
+
     /// codegen flags to zxc
     #[arg(short = 'C', value_name = "FLAG", value_parser = parse_kv)]
     pub c_flags: Vec<(String, Option<String>)>,
