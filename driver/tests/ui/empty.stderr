@@ -1,5 +1,5 @@
-[E0228] Error: mismatch types
-   ╭─[empty:1:6]
+[#ERROR_PLACEHOLDER] Error: mismatch types
+   ╭─[empty:1:19]
    │
  1 │ fn foo(x: i32) -> i32 { }
    │ ──────────┬────────┬─  

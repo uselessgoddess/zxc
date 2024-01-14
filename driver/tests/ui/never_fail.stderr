@@ -1,5 +1,5 @@
-[E0228] Error: mismatch types
-   ╭─[never_fail:1:6]
+[#ERROR_PLACEHOLDER] Error: mismatch types
+   ╭─[never_fail:3:12]
    │
  3 │     return x + 12.isize;
    │            ┬   ────┬───  

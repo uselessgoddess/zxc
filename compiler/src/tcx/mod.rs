@@ -87,8 +87,10 @@ pub struct Arena<'tcx> {
     pub expr: TypedArena<hir::Expr<'tcx>>,
     pub stmt: TypedArena<hir::Stmt<'tcx>>,
     pub scope: TypedArena<hir::Scope<'tcx>>,
+    pub ffi: TypedArena<hir::ForeignItem<'tcx>>,
     pub type_: TypedArena<TyKind<'tcx>>,
     pub layout: TypedArena<abi::LayoutKind>,
+    pub attrs: TypedArena<lexer::Meta<'tcx>>,
     pub body: TypedArena<mir::Body<'tcx>>,
 }
 

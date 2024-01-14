@@ -1,8 +1,9 @@
 use crate::{
+    braced,
     lexer::{Ident, LitStr},
     parenthesized,
     parse::{self, Block, Parse, ParseBuffer, Punctuated, Type},
-    token, Token,
+    token, Attribute, Token,
 };
 
 #[derive(Debug, Clone)]
@@ -96,6 +97,74 @@ impl<'lex> Parse<'lex> for ItemFn<'lex> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ForeignItem<'lex> {
+    pub sig: Signature<'lex>,
+    pub semi: Token![;],
+}
+
+impl<'lex> Parse<'lex> for ForeignItem<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(Self { sig: input.parse()?, semi: input.parse()? })
+    }
+}
+
+#[derive(Debug)]
+pub struct ForeignMod<'lex> {
+    pub attrs: Vec<Attribute<'lex>>,
+    pub abi: Abi<'lex>,
+    pub brace: token::Brace,
+    pub items: Vec<ForeignItem<'lex>>,
+}
+
+impl<'lex> Parse<'lex> for ForeignMod<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        let mut content;
+        Ok(Self {
+            attrs: input.do_in(Attribute::parse)?,
+            abi: input.parse()?,
+            brace: braced!(content in input),
+            items: {
+                let mut items = Vec::new();
+                while !content.is_empty() {
+                    items.push(content.parse()?);
+                }
+                items
+            },
+        })
+    }
+}
+
+ast_enum_of_structs! {
+    pub enum Item<'lex> {
+        Fn(ItemFn<'lex>),
+        Foreign(ForeignMod<'lex>),
+    }
+}
+
+impl<'lex> Parse<'lex> for Item<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        rest_items(input)
+    }
+}
+
+fn peek_signature(input: &ParseBuffer<'_>) -> bool {
+    input.scan(|fork| fork.parse::<Option<Abi>>().is_ok() && fork.peek(Token![fn]))
+}
+
+fn rest_items<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Item<'lex>> {
+    let peek_sig = peek_signature(input);
+    let mut lookahead = input.lookahead();
+
+    if lookahead.peek(Token![fn]) || peek_sig {
+        input.parse().map(Item::Fn)
+    } else if lookahead.peek(Token![extern]) {
+        input.parse().map(Item::Foreign)
+    } else {
+        Err(lookahead.error())
+    }
+}
+
 #[test]
 fn fn_sig() {
     use crate::util::lex_it;
@@ -110,4 +179,25 @@ fn fn_sig() {
     } else {
         panic!()
     }
+}
+
+#[test]
+fn foreign_mod() {
+    use crate::util::lex_it;
+
+    let foreign: ForeignMod = lex_it!(
+        r#"
+        #[link(name = "msvcrt")]
+        #[link(name = "c", kind = "static")]
+        extern "C" {
+            fn putchar(_: i32) -> i32;
+            fn abort() -> !;
+        }
+        "#
+    )
+    .parse()
+    .unwrap();
+
+    assert!(foreign.attrs.len() == 2);
+    assert!(foreign.items.len() == 2);
 }

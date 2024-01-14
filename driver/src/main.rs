@@ -29,7 +29,7 @@ use compiler::{
 
 use {
     chumsky::Parser,
-    compiler::sess::EarlyErrorHandler,
+    compiler::{hir::Hx, sess::EarlyErrorHandler},
     lexer::{Block, ItemFn, ParseBuffer},
     std::{
         collections::BTreeMap,
@@ -71,19 +71,32 @@ impl_error! {
 fn parse_items<'lex>(
     tcx: Tx<'lex>,
     input: &mut ParseBuffer<'lex>,
-) -> Result<Vec<(FnSig<'lex>, Box<[Stmt<'lex>]>)>, lexer::Error> {
+) -> Result<Vec<hir::Item<'lex>>, lexer::Error> {
     let mut items = Vec::new();
     while !input.is_empty() {
-        let ItemFn { sig, block: Block { stmts, .. } } = input.parse()?;
-        let sig = FnSig::analyze(tcx, &sig);
-        let stmts = stmts
-            .iter()
-            .map(|stmt| Stmt::analyze(tcx, stmt))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        items.push((sig, stmts));
+        items.push(hir::Item::analyze(tcx, input.parse()?));
     }
     Ok(items)
+}
+
+fn print_report<'hir>(hix: Hx<'hir>, err: &hir::Error<'hir>, name: &'hir str, src: &'hir str) {
+    let settings = ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
+    // fixme: get access to label spans
+    let (code, reason, first, labels) = err.report(&hix, name, settings);
+    let mut report =
+        Report::build(ReportKind::Error, name, first.start).with_code(code).with_message(reason);
+    for label in labels {
+        report = report.with_label(label.with_color(Color::Red));
+    }
+    report
+        .with_config(
+            ariadne::Config::default()
+                // .with_cross_gap(true)
+                .with_underlines(true),
+        )
+        .finish()
+        .eprint((name, ariadne::Source::from(src)))
+        .unwrap();
 }
 
 fn driver_impl<'tcx>(
@@ -94,7 +107,7 @@ fn driver_impl<'tcx>(
 ) -> Result<(), Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
-    let items = parse_items(tcx, &mut input).or_else(|err| {
+    let mut items = parse_items(tcx, &mut input).or_else(|err| {
         Report::build(ReportKind::Error, name, 5)
             .with_message(err.to_string())
             .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
@@ -104,29 +117,20 @@ fn driver_impl<'tcx>(
         Err(Error::Guaranteed)
     })?;
 
-    match hir::analyze_module(hix, &items) {
+    match hir::analyze_module(hix, &mut items) {
         Ok(_) => {}
         Err(err) => {
-            let settings =
-                ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
-            let (code, reason, labels) = err.report(&hix, name, settings);
-            let mut report =
-                Report::build(ReportKind::Error, name, 5).with_code(code).with_message(reason);
-            for label in labels {
-                report = report.with_label(label.with_color(Color::Red));
-            }
-            report
-                .with_config(
-                    ariadne::Config::default()
-                        // .with_cross_gap(true)
-                        .with_underlines(true),
-                )
-                .finish()
-                .eprint((name, ariadne::Source::from(src)))
-                .unwrap();
+            print_report(hix, &err, name, src);
             return Err(Error::Guaranteed);
         }
     };
+    if let Some(()) = hix.errors(|errors| {
+        for err in errors {
+            print_report(hix, err, name, src);
+        }
+    }) {
+        return Err(Error::Guaranteed);
+    }
 
     let mut builder = settings::builder();
     builder.set("opt_level", "speed_and_size")?;

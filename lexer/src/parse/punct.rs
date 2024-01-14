@@ -55,6 +55,10 @@ impl<T, P> Punctuated<T, P> {
         self.inner.iter_mut().map(|(item, _)| item).chain(self.last.as_deref_mut())
     }
 
+    pub fn into_iter(self) -> impl DoubleEndedIterator<Item = T> {
+        self.inner.into_iter().map(|(item, _)| item).chain(self.last.map(|x| *x))
+    }
+
     pub fn pairs(&self) -> impl Iterator<Item = Pair<&T, &P>> {
         self.inner
             .iter()

@@ -1,5 +1,5 @@
 [#ERROR_PLACEHOLDER] Error: this arithmetic operation will overflow
-   ╭─[max:1:6]
+   ╭─[max:2:13]
    │
  2 │     let x = 2147483647 + 1;
 ───╯

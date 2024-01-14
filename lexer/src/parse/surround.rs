@@ -1,6 +1,7 @@
 use crate::{
+    attr,
     parse::{self, expr, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
-    token, Assign, Break, If, Loop, Span,
+    token, Assign, Break, ForeignItem, ForeignMod, If, ItemFn, Loop, Span,
 };
 
 pub trait Spanned {
@@ -29,6 +30,20 @@ pub(crate) fn lookahead_span(lo: Span, hi: Span) -> Span {
 }
 
 impl Spanned for token::Paren {
+    fn span(&self) -> Span {
+        let DelimSpan { lt, rt, .. } = self.span;
+        lookahead_span(lt, rt)
+    }
+}
+
+impl Spanned for token::Brace {
+    fn span(&self) -> Span {
+        let DelimSpan { lt, rt, .. } = self.span;
+        lookahead_span(lt, rt)
+    }
+}
+
+impl Spanned for token::Bracket {
     fn span(&self) -> Span {
         let DelimSpan { lt, rt, .. } = self.span;
         lookahead_span(lt, rt)
@@ -168,6 +183,50 @@ impl Spanned for Loop<'_> {
 impl Spanned for Assign<'_> {
     fn span(&self) -> Span {
         lookahead_span(self.left.span(), self.right.span())
+    }
+}
+
+impl Spanned for attr::List<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.ident.span, self.paren.span())
+    }
+}
+
+impl Spanned for attr::NameValue<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.ident.span, self.value.span())
+    }
+}
+
+impl Spanned for attr::Attribute<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.pound.span, self.bracket.span())
+    }
+}
+
+impl Spanned for ty::Never {
+    fn span(&self) -> Span {
+        self.bang.span
+    }
+}
+
+impl Spanned for ItemFn<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.sig.span(), self.block.span())
+    }
+}
+
+impl Spanned for ForeignItem<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.sig.span(), self.semi.span)
+    }
+}
+
+impl Spanned for ForeignMod<'_> {
+    fn span(&self) -> Span {
+        let lo =
+            if let Some(first) = self.attrs.first() { first.pound.span } else { self.abi.span() };
+        lookahead_span(lo, self.brace.span())
     }
 }
 

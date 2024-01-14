@@ -11,6 +11,18 @@ ast_enum_of_structs! {
         Ident(Ident<'lex>),
         Paren(Paren<'lex>),
         Tuple(Tuple<'lex>),
+        Never(Never),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Never {
+    pub bang: Token![!],
+}
+
+impl<'lex> Parse<'lex> for Never {
+    fn parse(input: &mut ParseBuffer<'lex>) -> crate::Result<Self> {
+        Ok(Self { bang: input.parse()? })
     }
 }
 
@@ -65,6 +77,8 @@ fn parse_type<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Type<'lex>> 
         })
     } else if lookahead.peek(Ident) {
         input.parse().map(Type::Ident)
+    } else if lookahead.peek(Token![!]) {
+        input.parse().map(Type::Never)
     } else {
         Err(lookahead.error())
     }

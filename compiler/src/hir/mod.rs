@@ -1,10 +1,11 @@
+mod attrs;
 mod error;
 mod scope;
 mod ty;
 
 use {
     crate::{
-        hir::scope::LoopData,
+        hir::{self, attrs::MetaItem, scope::LoopData},
         idx::IndexVec,
         index_vec,
         mir::{
@@ -28,6 +29,59 @@ pub use {
     scope::Scope,
     ty::Ty,
 };
+
+#[derive(Debug, Copy, Clone)]
+pub struct ForeignItem<'hir> {
+    pub sig: FnSig<'hir>,
+    pub span: Span,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum ItemKind<'hir> {
+    Fn(FnSig<'hir>, &'hir [Stmt<'hir>]),
+    Foreign { abi: Abi, items: &'hir [ForeignItem<'hir>] },
+}
+
+#[derive(Debug, Clone)]
+pub struct Item<'hir> {
+    pub attrs: Vec<MetaItem>,
+    pub kind: ItemKind<'hir>,
+    pub span: Span,
+}
+
+impl<'hir> Item<'hir> {
+    pub fn analyze(tcx: Tx<'hir>, item: lexer::Item<'hir>) -> Self {
+        use lexer::{ForeignMod, ItemFn};
+
+        let mut meta = Vec::new();
+        let span = item.span();
+        let kind =
+            match item {
+                lexer::Item::Fn(ItemFn { sig, block }) => {
+                    let sig = FnSig::analyze(tcx, &sig);
+                    let stmts = tcx
+                        .arena
+                        .stmt
+                        .alloc_from_iter(block.stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt)));
+                    item::Fn(sig, stmts)
+                }
+                lexer::Item::Foreign(ForeignMod { attrs, abi: _abi, items, .. }) => {
+                    meta = attrs
+                        .into_iter()
+                        .map(|attr| MetaItem::from_parse(attr.meta).expect("incompatible meta"))
+                        .collect();
+                    item::Foreign {
+                        abi: Abi::C,
+                        items: tcx.arena.ffi.alloc_from_iter(items.into_iter().map(|f| {
+                            ForeignItem { sig: FnSig::analyze(tcx, &f.sig), span: f.span() }
+                        })),
+                    }
+                }
+            };
+
+        Self { attrs: meta, kind, span }
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum ExprKind<'hir> {
@@ -249,6 +303,10 @@ pub mod stmt {
 
 pub mod expr {
     pub use super::ExprKind::*;
+}
+
+pub mod item {
+    pub use super::ItemKind::*;
 }
 
 #[derive(Debug)]
@@ -967,6 +1025,15 @@ pub fn analyze_fn_definition<'hir>(
 }
 
 #[derive(Debug)]
+pub struct Emit<'hir>(Vec<Error<'hir>>);
+
+impl<'hir> Emit<'hir> {
+    pub fn error(&mut self, err: Error<'hir>) {
+        self.0.push(err);
+    }
+}
+
+#[derive(Debug)]
 pub struct HirCtx<'hir> {
     pub tcx: Tx<'hir>,
     name: Symbol,
@@ -974,11 +1041,16 @@ pub struct HirCtx<'hir> {
 
     pub defs: IndexVec<mir::DefId, mir::Body<'hir>>,
     pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
+    pub emit: Emit<'hir>,
 }
 
 pub type Hx<'hir> = &'hir HirCtx<'hir>;
 
 impl<'hir> HirCtx<'hir> {
+    pub fn errors<R>(&self, f: impl FnOnce(&[Error<'hir>]) -> R) -> Option<R> {
+        if !self.emit.0.is_empty() { Some(f(&self.emit.0)) } else { None }
+    }
+
     pub fn as_codegen_unit(&self) -> CodegenUnit<'hir> {
         let items = self
             .defs
@@ -1006,6 +1078,7 @@ impl<'hir> HirCtx<'hir> {
             decls: Default::default(),
             defs: Default::default(),
             instances: Default::default(),
+            emit: Emit(vec![]),
         }
     }
 }
@@ -1023,17 +1096,16 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
     mir::FnSig { inputs_and_output: tcx.mk_type_list(&io), abi }
 }
 
-pub fn analyze_module<'hir>(
-    hix: &mut HirCtx<'hir>,
-    functions: &[(FnSig<'hir>, Box<[Stmt<'hir>]>)],
-) -> Result<'hir, ()> {
+pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: &mut [Item<'hir>]) -> Result<'hir, ()> {
     let mut defs = Vec::with_capacity(128);
-    for &(hsig @ FnSig { decl, abi, span }, _) in functions {
-        match hix.decls.entry(decl.name) {
+
+    let mut define =
+        |hsig @ FnSig { decl, abi, span }, body: Option<_>| match hix.decls.entry(decl.name) {
             Entry::Occupied(prev) => {
-                return Err(Error::DefinedMultiple {
+                hix.emit.error(Error::DefinedMultiple {
                     name: decl.name,
-                    definition: hix.instances[*prev.get()].span,
+                    def: hix.instances[*prev.get()].span,
+                    redef: span,
                 });
             }
             Entry::Vacant(entry) => {
@@ -1043,29 +1115,47 @@ pub fn analyze_module<'hir>(
                     span,
                     hsig,
                 }));
-                defs.push(*def);
+                defs.push((*def, body));
             }
-        }
+        };
+
+    items.sort_unstable_by_key(|item| match item.kind {
+        ItemKind::Fn(..) => 0,
+        _ => 1, // each other has no body
+    });
+
+    for item in items {
+        match item.kind {
+            ItemKind::Fn(sig, body) => define(sig, Some((sig, body))),
+            ItemKind::Foreign { abi, items } => {
+                for item in items {
+                    // Copy abi from foreign block to all items
+                    define(FnSig { abi, ..item.sig }, None);
+                }
+            }
+        };
     }
 
     match hix.decls.get(&sym::main) {
         None => {
-            return Err(Error::HasNoMain(Span::splat(
+            hix.emit.error(Error::HasNoMain(Span::splat(
                 0, /* add `span::whole`  to communicate with globals like symbol */
             )));
         }
         Some(&def) => {
             let InstanceData { sig, span, .. } = hix.instances[def];
             if !hix.tcx.sigs.main.contains(&sig) {
-                return Err(Error::WrongMainSig { sig, span });
+                hix.emit.error(Error::WrongMainSig { sig, span });
             }
         }
     }
 
     let mut mir = IndexVec::<mir::DefId, _>::with_capacity(128);
-    for (def, (sig, stmts)) in defs.into_iter().zip(functions) {
-        let body = analyze_fn_definition(hix.tcx, hix, *sig, stmts)?;
-        assert_eq!(def, mir.push(body));
+    for (def, stmts) in defs {
+        if let Some((sig, stmts)) = stmts {
+            let body = analyze_fn_definition(hix.tcx, hix, sig, stmts)?;
+            assert_eq!(def, mir.push(body));
+        }
     }
 
     hix.defs.extend(mir);

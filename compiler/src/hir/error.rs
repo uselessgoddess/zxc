@@ -11,6 +11,7 @@ use {
     std::{fmt, ops::Range},
 };
 
+#[derive(Clone)]
 pub struct ReportSettings {
     pub err_kw: Color,
     pub err: Color,
@@ -19,6 +20,7 @@ pub struct ReportSettings {
 
 pub type Result<'tcx, T> = std::result::Result<T, Error<'tcx>>;
 
+#[derive(Debug, Clone)]
 pub enum Error<'tcx> {
     NotFoundLocal(Ident),
     TypeMismatch {
@@ -39,7 +41,8 @@ pub enum Error<'tcx> {
     },
     DefinedMultiple {
         name: Symbol,
-        definition: Span,
+        def: Span,
+        redef: Span,
     },
     WrongMainSig {
         sig: mir::FnSig<'tcx>,
@@ -62,13 +65,15 @@ pub enum Error<'tcx> {
 
 type Spanned<'a> = (&'a str, Range<usize>);
 
+pub const PLACEHOLDER: &str = "#ERROR_PLACEHOLDER";
+
 impl<'a> Error<'a> {
     pub fn report(
         &self,
         hx: &hir::HirCtx<'a>,
         src_loc: &'a str,
         colors: ReportSettings,
-    ) -> (&str, String, Vec<Label<Spanned<'a>>>) {
+    ) -> (&str, String, Span, Vec<Label<Spanned<'a>>>) {
         let fmt = |hx, ty: mir::Ty<'a>| format!("`{}`", ty.to_string(hx)).fg(colors.err_kw);
         let s = |span: &Span| (src_loc, span.into_range());
 
@@ -76,8 +81,9 @@ impl<'a> Error<'a> {
 
         match self {
             Error::TypeMismatch { expected, found } => (
-                "E0228", // sample code
+                PLACEHOLDER,
                 "mismatch types".into(),
+                expected.span,
                 vec![
                     Label::new((src_loc, expected.span.into_range()))
                         .with_message(format!("expected {} ", fmt(hx, expected.kind))),
@@ -86,8 +92,9 @@ impl<'a> Error<'a> {
                 ],
             ),
             Error::TypeMismatchOnePlace { expected, found } => (
-                "E0228", // sample code
+                PLACEHOLDER,
                 "mismatch types".into(),
+                expected.span,
                 vec![
                     Label::new((src_loc, expected.span.into_range()))
                         .with_message(format!("expected {} ", fmt(hx, expected.kind))),
@@ -96,8 +103,9 @@ impl<'a> Error<'a> {
                 ],
             ),
             Error::ConcreteType { expected, found } => (
-                "E1337",
+                PLACEHOLDER,
                 "mismatch types".into(),
+                expected.first().map(|ty| ty.span).unwrap_or(found.span),
                 vec![
                     Label::new((src_loc, found.span.into_range())).with_message(format!(
                         "expected {} ",
@@ -116,31 +124,39 @@ impl<'a> Error<'a> {
                 ],
             ),
             Error::NotFoundLocal(local) => (
-                "E1234",
+                PLACEHOLDER,
                 "cannot find local".into(),
+                local.span,
                 vec![
                     Label::new((src_loc, local.span.into_range()))
                         .with_message(format!("cannot find value `{local}` in this scope ")),
                 ],
             ),
             Error::NonPrimitiveCast { from, cast } => (
-                "E0xFF",
+                PLACEHOLDER,
                 "non primitive cast".into(),
+                from.span,
                 vec![Label::new((src_loc, from.span.into_range())).with_message(format!(
                     "{} as {}",
                     fmt(hx, from.kind),
                     fmt(hx, *cast)
                 ))],
             ),
-            Error::DefinedMultiple { name, definition } => (
-                "ELMAO",
+            Error::DefinedMultiple { name, def, redef } => (
+                PLACEHOLDER,
                 format!("the name: `{name}` is defined multiple times"),
-                vec![Label::new((src_loc, definition.into_range()))],
+                *def,
+                vec![
+                    Label::new((src_loc, def.into_range())),
+                    Label::new((src_loc, redef.into_range()))
+                        .with_message(format!("`{name}` redefined here")),
+                ],
             ),
             #[rustfmt::skip]
             Error::WrongMainSig { sig, span } => (
-                "#ERROR_PLACEHOLDER",
+                PLACEHOLDER,
                 "`main` function has wrong type".into(),
+                *span,
                 vec![
                     Label::new((src_loc, span.into_range()))
                         .with_message(format!(
@@ -153,15 +169,17 @@ impl<'a> Error<'a> {
                 ],
             ),
             Error::HasNoMain(span) => (
-                "#ERROR_PLACEHOLDER",
+                PLACEHOLDER,
                 "`main` function not found in ...".into(),
+                *span,
                 vec![Label::new((src_loc, span.into_range()))],
             ),
             Error::WrongFnArgs { expect, found, caller, target } => {
                 let location = target.unwrap_or(*caller);
                 (
-                    "#ERROR_PLACEHOLDER",
+                    PLACEHOLDER,
                     "function has another signature".into(),
+                    location,
                     vec![
                         Label::new(s(&location)).with_message(format!(
                             "expected: {}",
@@ -182,11 +200,12 @@ impl<'a> Error<'a> {
                 if let Some(note) = note {
                     label = label.with_message(note);
                 }
-                ("#ERROR_PLACEHOLDER", case.to_string(), vec![label])
+                (PLACEHOLDER, case.to_string(), *span, vec![label])
             }
             Error::InvalidLvalue(span) => (
-                "#ERROR_PLACEHOLDER",
+                PLACEHOLDER,
                 "temporary or immutable lvalue".into(),
+                *span,
                 vec![Label::new(s(span))],
             ),
         }

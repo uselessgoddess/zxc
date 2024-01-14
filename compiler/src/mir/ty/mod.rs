@@ -106,6 +106,7 @@ impl<'cx> Ty<'cx> {
                     &items.iter().map(|ty| Self::analyze(tcx, ty)).collect::<SmallVec<_, 8>>(),
                 )),
             ),
+            Type::Never(_) => tcx.types.never,
         }
     }
 

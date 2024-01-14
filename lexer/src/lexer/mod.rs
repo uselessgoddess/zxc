@@ -99,6 +99,8 @@ pub mod ast {
         }
 
         Punct(&str) {
+            "#" => Pound
+
             "+" => Plus
             "-" => Minus
             "/" => Slash

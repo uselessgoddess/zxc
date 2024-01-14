@@ -1,3 +1,4 @@
+pub mod attr;
 pub(crate) mod delim;
 pub mod expr;
 pub mod item;
@@ -6,21 +7,16 @@ mod surround;
 pub mod ty;
 
 pub use {
+    attr::{Attribute, Meta},
     expr::{Assign, BinOp, Block, Break, Expr, If, Local, Loop, Stmt, UnOp},
-    item::{Abi, FnArg, ItemFn, ReturnType, Signature},
+    item::{Abi, FnArg, ForeignItem, ForeignMod, Item, ItemFn, ReturnType, Signature},
     punct::Punctuated,
     ty::Type,
 };
 
 use {
     crate::{lexer::Token, Lex, Span},
-    std::{
-        error,
-        fmt::{self, Formatter},
-        mem::MaybeUninit,
-        ops::RangeInclusive,
-        ptr::NonNull,
-    },
+    std::{error, fmt, mem::MaybeUninit, ops::RangeInclusive, ptr::NonNull},
 };
 
 pub enum PhantomPeek {}
@@ -81,7 +77,7 @@ impl Error {
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.repr)
     }
 }
@@ -118,6 +114,12 @@ pub struct ParseBuffer<'lex> {
     walker: Walker<'lex>,
     cursor: usize,
     span: Span,
+}
+
+impl fmt::Debug for ParseBuffer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseBuffer {{ .. }}")
+    }
 }
 
 pub struct Advance<'stream, 'lex>(&'stream mut ParseBuffer<'lex>);
@@ -237,6 +239,14 @@ impl<'lex> ParseBuffer<'lex> {
         self.peek_raw::<P::Token>()
     }
 
+    pub fn peek2<P: Peek>(&self, peek: P) -> bool {
+        self.scan(|fork| {
+            let _ = fork.next_lex();
+            let _ = peek;
+            fork.peek_raw::<P::Token>()
+        })
+    }
+
     pub fn peek_raw<T: Token>(&self) -> bool {
         T::peek(self)
     }
@@ -352,6 +362,9 @@ impl Drop for ParseBuffer<'_> {
         }
     }
 }
+
+unsafe impl Sync for ParseBuffer<'_> {}
+unsafe impl Send for ParseBuffer<'_> {}
 
 pub struct Lookahead<'parent, 'lex> {
     parent: &'parent mut ParseBuffer<'lex>,

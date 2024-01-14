@@ -12,4 +12,5 @@ fn ui() {
     t.compile_fail("../tests/ui/max.src");
     t.compile_fail("../tests/ui/empty.src");
     t.compile_fail("../tests/ui/never_fail.src");
+    t.compile_fail("../tests/ui/redef.src");
 }
