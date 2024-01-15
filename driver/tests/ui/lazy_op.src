@@ -1,4 +1,5 @@
-extern "C" fn main(argc: isize, _: isize) -> isize {
+#[start]
+fn main(argc: isize, _: isize) -> isize {
     let a = if true  && true  { 0 } else { 1 };
     let b = if true  && false { 1 } else { 0 };
     let c = if false && true  { 1 } else { 0 };

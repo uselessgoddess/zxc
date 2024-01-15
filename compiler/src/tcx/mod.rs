@@ -8,14 +8,15 @@ pub use {
 };
 
 use crate::{
-    abi, hir,
+    abi,
+    hir::{self, attr},
     mir::{
         self,
         ty::{self, List},
         IntTy, PlaceElem, Ty, TyKind,
     },
     par::{ShardedHashMap, WorkerLocal},
-    sess::OutputFilenames,
+    sess::{output, ModuleType, OutputFilenames},
     Session,
 };
 
@@ -56,7 +57,8 @@ impl<'tcx> CommonTypes<'tcx> {
 }
 
 pub struct CommonSigs<'tcx> {
-    pub main: &'tcx [mir::FnSig<'tcx>],
+    pub main: mir::FnSig<'tcx>,
+    pub start: mir::FnSig<'tcx>,
 }
 
 impl<'tcx> CommonSigs<'tcx> {
@@ -65,18 +67,17 @@ impl<'tcx> CommonSigs<'tcx> {
         arena: &'tcx Arena<'tcx>,
         types: &CommonTypes<'tcx>,
     ) -> CommonSigs<'tcx> {
-        let main = arena.dropless.alloc_from_iter([
-            mir::FnSig {
-                inputs_and_output: intern.intern_type_list(arena, &[types.unit]),
-                abi: ty::Abi::Zxc,
-            },
-            mir::FnSig {
-                inputs_and_output: intern
-                    .intern_type_list(arena, &[types.isize, types.isize, types.isize]),
-                abi: ty::Abi::C,
-            },
-        ]);
-        Self { main }
+        let main = mir::FnSig {
+            inputs_and_output: intern.intern_type_list(arena, &[types.unit]),
+            abi: ty::Abi::Zxc,
+        };
+        let start = mir::FnSig {
+            inputs_and_output: intern
+                .intern_type_list(arena, &[types.isize, types.isize, types.isize]),
+            abi: ty::Abi::Zxc,
+        };
+
+        Self { main, start }
     }
 }
 
@@ -90,7 +91,7 @@ pub struct Arena<'tcx> {
     pub ffi: TypedArena<hir::ForeignItem<'tcx>>,
     pub type_: TypedArena<TyKind<'tcx>>,
     pub layout: TypedArena<abi::LayoutKind>,
-    pub attrs: TypedArena<lexer::Meta<'tcx>>,
+    pub attrs: TypedArena<attr::MetaItem>,
     pub body: TypedArena<mir::Body<'tcx>>,
 }
 
@@ -136,6 +137,7 @@ pub struct TyCtx<'tcx> {
     pub sigs: CommonSigs<'tcx>,
     pub sess: &'tcx Session,
     output: OutputFilenames,
+    module_types: Vec<ModuleType>,
 }
 
 impl fmt::Debug for TyCtx<'_> {
@@ -154,7 +156,7 @@ impl<'tcx> TyCtx<'tcx> {
         let types = CommonTypes::new(&intern, arena, sess);
         let sigs = CommonSigs::new(&intern, arena, &types);
 
-        Self { arena, intern, types, sigs, sess, output }
+        Self { arena, intern, types, sigs, sess, output, module_types: collect_module_types(sess) }
     }
 
     pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {
@@ -192,6 +194,20 @@ impl<'tcx> TyCtx<'tcx> {
     pub fn output_filenames(&self) -> &OutputFilenames {
         &self.output
     }
+
+    pub fn module_types(&self) -> &[ModuleType] {
+        &self.module_types
+    }
+}
+
+fn collect_module_types(sess: &Session) -> Vec<ModuleType> {
+    let mut base = sess.opts.module_types.clone();
+
+    if base.is_empty() {
+        base.push(output::default_output_for_target(sess));
+    }
+
+    base
 }
 
 pub type Tx<'tcx> = &'tcx TyCtx<'tcx>;

@@ -85,15 +85,20 @@ impl<'lex> Parse<'lex> for Signature<'lex> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ItemFn<'lex> {
+    pub attrs: Vec<Attribute<'lex>>,
     pub sig: Signature<'lex>,
     pub block: Block<'lex>,
 }
 
 impl<'lex> Parse<'lex> for ItemFn<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
-        Ok(Self { sig: input.parse()?, block: input.parse()? })
+        Ok(Self {
+            attrs: input.do_in(Attribute::parse)?,
+            sig: input.parse()?,
+            block: input.parse()?,
+        })
     }
 }
 
@@ -144,7 +149,13 @@ ast_enum_of_structs! {
 
 impl<'lex> Parse<'lex> for Item<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
-        rest_items(input)
+        let attrs = input.do_in(Attribute::parse)?;
+        let mut item = rest_items(input)?;
+        match &mut item {
+            Item::Fn(item) => item.attrs = attrs,
+            Item::Foreign(item) => item.attrs = attrs,
+        }
+        Ok(item)
     }
 }
 

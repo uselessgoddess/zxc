@@ -2,7 +2,7 @@ use {
     super::{codegen_operand, codegen_place, sig_from_abi, CPlace, CValue, FunctionCx},
     compiler::{
         abi::{ArgAbi, PassMode},
-        mir::{ty, BasicBlock, InstanceData, Operand, Place},
+        mir::{self, ty, BasicBlock, InstanceData, Operand, Place},
     },
     cranelift::{
         codegen::ir::{FuncRef, Inst, SigRef},
@@ -12,12 +12,12 @@ use {
 };
 
 impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
-    fn import_function(&mut self, InstanceData { sig, symbol, .. }: &InstanceData<'tcx>) -> FuncId {
-        let name = symbol.as_str();
+    fn import_function(&mut self, def: mir::DefId) -> FuncId {
+        let name = self.hix.symbol_name(def).name;
         let sig = sig_from_abi(
             self.tcx,
             self.module.target_config().default_call_conv,
-            &self.tcx.fn_abi_of_sig(*sig),
+            &self.tcx.fn_abi_of_sig(self.hix.instances[def].sig),
         );
         match self.module.declare_function(name, Linkage::Import, &sig) {
             Ok(func_id) => func_id,
@@ -34,8 +34,8 @@ impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
         }
     }
 
-    fn get_function_ref(&mut self, inst: &InstanceData<'tcx>) -> FuncRef {
-        let func_id = self.import_function(inst);
+    fn get_function_ref(&mut self, def: mir::DefId) -> FuncRef {
+        let func_id = self.import_function(def);
         self.module.declare_func_in_func(func_id, self.bcx.func)
     }
 }
@@ -68,11 +68,7 @@ pub fn codegen_terminator_call<'tcx>(
     let fn_sig = func.layout().ty.fn_sig(fx.hix);
     let ret_place = codegen_place(fx, dest);
 
-    let instance = if let ty::FnDef(def) = func.layout().ty.kind() {
-        Some(&fx.hix.instances[def])
-    } else {
-        None
-    };
+    let instance = if let ty::FnDef(def) = func.layout().ty.kind() { Some(def) } else { None };
 
     let fn_abi = fx.tcx.fn_abi_of_sig(fn_sig);
     let args = args.iter().copied().map(|arg| codegen_operand(fx, arg)).collect::<Vec<_>>();
@@ -85,8 +81,8 @@ pub fn codegen_terminator_call<'tcx>(
     }
 
     let func_ref = match instance {
-        Some(instance) => {
-            let func_ref = fx.get_function_ref(instance);
+        Some(def) => {
+            let func_ref = fx.get_function_ref(def);
             CallTarget::Direct(func_ref)
         }
         None => {

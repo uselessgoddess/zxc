@@ -119,6 +119,7 @@ macros::symbols! {
         i8,
         isize,
         main,
+        start,
     }
 }
 

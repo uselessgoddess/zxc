@@ -117,30 +117,26 @@ fn driver_impl<'tcx>(
         Err(Error::Guaranteed)
     })?;
 
-    match hir::analyze_module(hix, &mut items) {
-        Ok(_) => {}
-        Err(err) => {
-            print_report(hix, &err, name, src);
-            return Err(Error::Guaranteed);
-        }
-    };
-    if let Some(()) = hix.errors(|errors| {
+    let analyze = hir::analyze_module(hix, &mut items);
+    hir::check::post_typeck(hix);
+
+    let errors = hix.errors(|errors| {
         for err in errors {
             print_report(hix, err, name, src);
         }
-    }) {
-        return Err(Error::Guaranteed);
+    });
+
+    match (analyze, errors) {
+        (Err(err), _) => {
+            print_report(hix, &err, name, src);
+            return Err(Error::Guaranteed);
+        }
+        (_, Some(_)) => {
+            return Err(Error::Guaranteed);
+        }
+        _ => {}
     }
-
-    let mut builder = settings::builder();
-    builder.set("opt_level", "speed_and_size")?;
-    let flags = settings::Flags::new(builder);
-    //
-    let isa = isa::lookup(target_lexicon::HOST)?;
-    let isa = isa.finish(flags)?;
-
-    let mut module =
-        ObjectModule::new(ObjectBuilder::new(isa, "main.object", module::default_libcall_names())?);
+    tcx.sess.abort_if_errors();
 
     let cgu = hix.as_codegen_unit();
     let mir = cgu

@@ -1,4 +1,5 @@
-extern "C" fn main(_: isize, _: isize) -> isize {
+#[start]
+fn main(_: isize, _: isize) -> isize {
 
     let _ = if true { 1 } else { 2 };
 

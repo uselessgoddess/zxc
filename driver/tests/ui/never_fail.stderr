@@ -1,7 +1,7 @@
 [#ERROR_PLACEHOLDER] Error: mismatch types
-   ╭─[never_fail:3:12]
+   ╭─[never_fail:4:12]
    │
- 3 │     return x + 12.isize;
+ 4 │     return x + 12.isize;
    │            ┬   ────┬───  
    │            ╰───────────── expected `!` 
    │                    │     

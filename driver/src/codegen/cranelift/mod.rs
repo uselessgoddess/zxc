@@ -31,6 +31,7 @@ use {
 mod abi;
 mod cast;
 mod num;
+mod shim;
 mod ssa;
 mod value;
 
@@ -408,7 +409,7 @@ pub(crate) fn codegen_fn<'tcx>(
     let sig = sig_from_abi(tcx, module.target_config().default_call_conv, &fn_abi);
     let id = module
         .declare_function(
-            hix.instances[def].symbol.as_str(),
+            hix.symbol_name(def).name,
             if hix.instances[def].sig.abi == ty::Abi::Zxc {
                 Linkage::Local
             } else {
@@ -664,6 +665,8 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
     for (&MonoItem { def: InstanceDef::Item(def), .. }, mono_item) in &cgu.items {
         cg_functions.push(codegen_fn(hix, def, mono_item, &mut module));
     }
+
+    shim::maybe_create_entry_wrapper(hix, &mut module);
 
     let mut ctx = Context::new();
     for (symbol, id, func) in cg_functions {

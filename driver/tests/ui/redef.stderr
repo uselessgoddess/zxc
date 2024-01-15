@@ -1,3 +1,4 @@
+error:  `main` function not found in file
 [#ERROR_PLACEHOLDER] Error: the name: `foo` is defined multiple times
    ╭─[redef:1:1]
    │
@@ -14,9 +15,4 @@
  3 │ fn foo() {}
    │ ────┬───  
    │     ╰───── `foo` redefined here
-───╯
-[#ERROR_PLACEHOLDER] Error: `main` function not found in ...
-   ╭─[redef:1:1]
-   │
- 1 │ fn foo() {}
 ───╯

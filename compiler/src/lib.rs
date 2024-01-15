@@ -31,6 +31,7 @@ mod fx;
 mod fatal;
 mod idx;
 pub(crate) mod index;
+mod man;
 pub mod par;
 pub mod sess;
 pub mod spec;

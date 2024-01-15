@@ -8,7 +8,10 @@ pub mod ty;
 pub mod visit;
 
 use {
-    crate::{hir, idx, Symbol},
+    crate::{
+        hir::{self, attr},
+        idx, Symbol, Tx,
+    },
     lexer::Span,
     std::{fmt, marker::PhantomData},
 };
@@ -51,6 +54,7 @@ pub struct InstanceData<'tcx> {
     // hir data
     pub span: Span,
     pub hsig: hir::FnSig<'tcx>,
+    pub attrs: &'tcx [attr::MetaItem],
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
@@ -68,5 +72,19 @@ impl Location {
 impl fmt::Debug for Location {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "{:?}[{}]", self.block, self.statement_index)
+    }
+}
+
+pub struct SymbolName<'tcx> {
+    pub name: &'tcx str,
+}
+
+impl<'tcx> SymbolName<'tcx> {
+    pub fn new(tcx: Tx<'tcx>, name: &str) -> SymbolName<'tcx> {
+        SymbolName {
+            name: unsafe {
+                std::str::from_utf8_unchecked(tcx.arena.dropless.alloc_slice(name.as_bytes()))
+            },
+        }
     }
 }

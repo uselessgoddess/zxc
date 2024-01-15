@@ -257,6 +257,7 @@ pub struct Options {
     pub C: CodegenOptions,
     pub emit: Emit,
     pub triple: String,
+    pub module_types: Vec<ModuleType>,
 }
 
 pub fn host_triple() -> String {
@@ -270,6 +271,7 @@ impl Default for Options {
             C: Default::default(),
             emit: Emit::None,
             triple: host_triple(),
+            module_types: Vec::new(),
         }
     }
 }

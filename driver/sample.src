@@ -5,7 +5,12 @@ fn fib(n: isize) -> isize {
     fib(n - 1.isize) + fib(n - 2.isize)
 }
 
-extern "C" fn main(argc: isize, _: isize) -> isize {
-    let x = fib(36.isize);
-    0.isize
+extern "C" {
+    fn abort() -> !;
+    fn exit(code: i32) -> !;
+}
+
+
+fn main() {
+
 }

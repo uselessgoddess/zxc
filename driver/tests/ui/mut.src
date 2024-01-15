@@ -8,6 +8,7 @@ fn foo(mut x: i32) -> i32 {
     x
 }
 
-extern "C" fn main(argc: isize, _: isize) -> isize {
+#[start]
+fn main(argc: isize, _: isize) -> isize {
     foo(argc.i32).isize
 }

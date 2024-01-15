@@ -39,6 +39,11 @@ impl MetaItem {
         };
         Some(MetaItem { path: Ident::from_parse(path), kind, span })
     }
+
+    #[inline]
+    pub fn has_name(&self, name: Symbol) -> bool {
+        self.path.name == name
+    }
 }
 
 fn meta_lit(value: Expr<'_>) -> Option<MetaLit> {
@@ -68,4 +73,16 @@ pub enum NestedMeta {
 pub struct MetaLit {
     pub repr: Symbol,
     pub span: Span,
+}
+
+pub fn filter_by_name(attrs: &[MetaItem], name: Symbol) -> impl Iterator<Item = &MetaItem> {
+    attrs.iter().filter(move |attr| attr.has_name(name))
+}
+
+pub fn find_by_name(attrs: &[MetaItem], name: Symbol) -> Option<&MetaItem> {
+    filter_by_name(attrs, name).next()
+}
+
+pub fn contains_name(attrs: &[MetaItem], name: Symbol) -> bool {
+    find_by_name(attrs, name).is_some()
 }

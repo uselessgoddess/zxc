@@ -48,6 +48,10 @@ pub enum Error<'tcx> {
         sig: mir::FnSig<'tcx>,
         span: Span,
     },
+    WrongStartSig {
+        sig: mir::FnSig<'tcx>,
+        span: Span,
+    },
     WrongFnArgs {
         expect: Vec<mir::Ty<'tcx>>,
         found: Vec<Ty<'tcx>>,
@@ -161,6 +165,22 @@ impl<'a> Error<'a> {
                     Label::new((src_loc, span.into_range()))
                         .with_message(format!(
                             "expected signature {}", "`fn()`".fg(colors.kw)
+                        )),
+                    Label::new((src_loc, span.into_range())).with_message(format!(
+                        "   found signature {}",
+                        format!("`{sig:?}`").fg(colors.kw)
+                    )),
+                ],
+            ),
+            #[rustfmt::skip]
+            Error::WrongStartSig { sig, span } => (
+                PLACEHOLDER,
+                "`#[start]` function has wrong type".into(),
+                *span,
+                vec![
+                    Label::new((src_loc, span.into_range()))
+                        .with_message(format!(
+                            "expected signature {}", "`fn(isize, isize) -> isize`".fg(colors.kw)
                         )),
                     Label::new((src_loc, span.into_range())).with_message(format!(
                         "   found signature {}",
