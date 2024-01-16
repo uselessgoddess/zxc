@@ -1,8 +1,5 @@
 use {
-    crate::{
-        abi,
-        abi::{Endian, TargetDataLayout},
-    },
+    crate::abi::{Endian, TargetDataLayout},
     std::{
         collections::BTreeMap,
         ops::{Deref, DerefMut},

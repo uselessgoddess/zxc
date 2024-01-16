@@ -30,7 +30,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyCfg {
     }
 }
 
-pub fn simplify_cfg<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
+pub fn simplify_cfg<'tcx>(_tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
     CfgSimplifier::new(body).simplify();
     remove_dead_blocks(body);
 }
@@ -405,7 +405,6 @@ fn remove_unused_definitions_helper(used_locals: &mut UsedLocals, body: &mut Bod
                 let keep = match statement {
                     Statement::Assign(place, _) => used_locals.is_used(place.local),
                     Statement::Nop => false,
-                    _ => true,
                 };
 
                 if !keep {

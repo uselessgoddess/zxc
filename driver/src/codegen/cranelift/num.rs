@@ -51,7 +51,7 @@ pub(crate) fn codegen_bool_binop<'tcx>(
     let lhs = lhs.load_scalar(fx);
     let rhs = rhs.load_scalar(fx);
 
-    let b = fx.bcx.ins();
+    let _b = fx.bcx.ins();
     let res = match bin_op {
         _ => unreachable!("{:?}({:?}, {:?})", bin_op, lhs, rhs),
     };

@@ -1,13 +1,10 @@
-use {
-    crate::{
-        braced,
-        lexer::{Ident, Lit},
-        parenthesized,
-        parse::{self, Parse, ParseBuffer, Punctuated},
-        token::{self},
-        Error, Token,
-    },
-    std::assert_matches::assert_matches,
+use crate::{
+    braced,
+    lexer::{Ident, Lit},
+    parenthesized,
+    parse::{self, Parse, ParseBuffer, Punctuated},
+    token::{self},
+    Error, Token,
 };
 
 #[derive(PartialOrd, PartialEq)]
@@ -542,10 +539,7 @@ impl Block<'_> {
 }
 
 fn requires_terminator(expr: &Expr<'_>) -> bool {
-    match expr {
-        Expr::If(_) | Expr::Loop(_) => false,
-        _ => true,
-    }
+    !matches!(expr, Expr::If(_) | Expr::Loop(_))
 }
 
 impl<'lex> Parse<'lex> for Assign<'lex> {
@@ -561,7 +555,7 @@ impl<'lex> Parse<'lex> for Assign<'lex> {
 }
 
 #[cfg(test)]
-use crate::util::lex_it;
+use {crate::util::lex_it, std::assert_matches::assert_matches};
 
 #[test]
 #[should_panic]

@@ -67,7 +67,7 @@ impl OutputFilenames {
         self.with_directory_and_extension(&self.out_directory, flavor.extension())
     }
 
-    fn with_directory_and_extension(&self, directory: &PathBuf, extension: &str) -> PathBuf {
+    fn with_directory_and_extension(&self, directory: &Path, extension: &str) -> PathBuf {
         let mut path = directory.join(&self.file_stem);
         path.set_extension(extension);
         path
@@ -112,11 +112,11 @@ pub fn filename_for_input(
     match module_type {
         ModuleType::Dylib => {
             let (prefix, suffix) = (&sess.target.dll_prefix, &sess.target.dll_suffix);
-            OutFileName::Real(outputs.out_directory.join(&format!("{prefix}{libname}{suffix}")))
+            OutFileName::Real(outputs.out_directory.join(format!("{prefix}{libname}{suffix}")))
         }
         ModuleType::Staticlib => {
             let (prefix, suffix) = (&sess.target.staticlib_prefix, &sess.target.staticlib_suffix);
-            OutFileName::Real(outputs.out_directory.join(&format!("{prefix}{libname}{suffix}")))
+            OutFileName::Real(outputs.out_directory.join(format!("{prefix}{libname}{suffix}")))
         }
         ModuleType::Executable => {
             let suffix = &sess.target.exe_suffix;

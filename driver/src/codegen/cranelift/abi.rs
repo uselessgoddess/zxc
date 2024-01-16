@@ -2,7 +2,7 @@ use {
     super::{codegen_operand, codegen_place, sig_from_abi, CPlace, CValue, FunctionCx},
     compiler::{
         abi::{ArgAbi, PassMode},
-        mir::{self, ty, BasicBlock, InstanceData, Operand, Place},
+        mir::{self, ty, BasicBlock, Operand, Place},
     },
     cranelift::{
         codegen::ir::{FuncRef, Inst, SigRef},

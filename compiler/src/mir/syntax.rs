@@ -2,13 +2,7 @@ use {
     crate::{
         abi::Size,
         idx::{self, IndexVec},
-        index,
-        mir::{
-            self,
-            ty::List,
-            Terminator::{Return, Unreachable},
-            Ty, RETURN_PLACE,
-        },
+        mir::{ty::List, Ty, RETURN_PLACE},
         Tx,
     },
     lexer::Span,
@@ -16,7 +10,6 @@ use {
     std::{
         borrow::Cow,
         fmt::{self, Formatter},
-        io::Read,
         iter,
         num::NonZeroU8,
         slice,
@@ -115,7 +108,7 @@ impl<'tcx> Terminator<'tcx> {
     pub fn successors(&self) -> Successors<'_> {
         use Terminator::*;
 
-        let tail_slice = (&[]).into_iter().copied();
+        let tail_slice = [].iter().copied();
         match *self {
             Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
             Goto { target: t } => Some(t).into_iter().chain(tail_slice),
@@ -129,7 +122,7 @@ impl<'tcx> Terminator<'tcx> {
     pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
         use Terminator::*;
 
-        let tail_slice = (&mut []).into_iter();
+        let tail_slice = [].iter_mut();
         match self {
             Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
             Goto { target: t } => Some(t).into_iter().chain(tail_slice),
@@ -198,10 +191,10 @@ impl<'tcx> Place<'tcx> {
     }
 
     pub fn as_ref(&self) -> PlaceRef<'tcx> {
-        PlaceRef { local: self.local, projection: &self.projection }
+        PlaceRef { local: self.local, projection: self.projection }
     }
 
-    pub fn ty(&self, local_decls: &LocalDecls<'tcx>, tcx: Tx<'tcx>) -> Ty<'tcx> {
+    pub fn ty(&self, local_decls: &LocalDecls<'tcx>, _tcx: Tx<'tcx>) -> Ty<'tcx> {
         assert!(self.projection.is_empty());
 
         local_decls[self.local].ty
@@ -445,9 +438,7 @@ pub enum Rvalue<'tcx> {
 impl<'tcx> Rvalue<'tcx> {
     #[inline]
     pub fn is_safe_to_remove(&self) -> bool {
-        match self {
-            _ => true,
-        }
+        true
     }
 }
 

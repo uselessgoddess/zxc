@@ -13,11 +13,10 @@ smallvec = { version = "2.0.0-alpha.1", features = ["specialization"] }
 bitflags = { version = "2.4.1" }
 tempfile = { version = "3.8.1" }
 target-lexicon = { version = "0.12.12" }
-ariadne = { version = "0.4.0", features = ["auto-color"] }
 rayon = { package = "rustc-rayon", version = "0.5.0" }
 rayon-core = { package = "rustc-rayon-core", version = "0.5.0" }
-
 
 abi = { path = "../abi" }
 lexer = { path = "../lexer" }
 macros = { path = "../macros" }
+errors = { path = "../errors" }

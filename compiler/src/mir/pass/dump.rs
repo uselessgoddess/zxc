@@ -24,7 +24,7 @@ pub fn emit_mir<'tcx>(
     match hix.tcx.output_filenames().path(OutputType::Mir) {
         OutFileName::Stdout => io::stdout().write_all(printer.into_buf().as_bytes()),
         OutFileName::Real(path) => {
-            let mut buf = io::BufWriter::new(File::create(&path)?);
+            let mut buf = io::BufWriter::new(File::create(path)?);
             buf.write_all(printer.into_buf().as_bytes())
         }
     }

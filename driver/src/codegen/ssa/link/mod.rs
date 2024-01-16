@@ -123,15 +123,16 @@ fn link_output_kind(sess: &Session, crate_type: ModuleType) -> LinkOutputKind {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_order_independent_options(
     cmd: &mut dyn Linker,
-    sess: &Session,
+    _sess: &Session,
     link_output_kind: LinkOutputKind,
-    flavor: LinkerFlavor,
+    _flavor: LinkerFlavor,
     module_type: ModuleType,
-    codegen_results: &CodegenResults,
+    _codegen_results: &CodegenResults,
     out_filename: &Path,
-    tmpdir: &Path,
+    _tmpdir: &Path,
 ) {
     cmd.output_filename(out_filename);
 
@@ -164,10 +165,10 @@ fn add_late_link_args(
     }
 }
 
-fn linker_with_args<'a>(
+fn linker_with_args(
     path: &Path,
     flavor: LinkerFlavor,
-    sess: &'a Session,
+    sess: &Session,
     module_type: ModuleType,
     tmpdir: &Path,
     out_filename: &Path,
@@ -199,10 +200,10 @@ fn linker_with_args<'a>(
 }
 
 fn exec_linker(
-    sess: &Session,
+    _sess: &Session,
     cmd: &Command,
     out_filename: &Path,
-    tmpdir: &Path,
+    _tmpdir: &Path,
 ) -> io::Result<Output> {
     #[cfg(not(windows))]
     fn flush_linked_file(_: &io::Result<Output>, _: &Path) -> io::Result<()> {
@@ -211,7 +212,7 @@ fn exec_linker(
 
     #[cfg(windows)]
     fn flush_linked_file(output: &io::Result<Output>, out_filename: &Path) -> io::Result<()> {
-        if let &Ok(ref out) = output {
+        if let Ok(out) = output {
             if out.status.success() {
                 if let Ok(of) = fs::OpenOptions::new().write(true).open(out_filename) {
                     of.sync_all()?;
@@ -303,7 +304,7 @@ fn escape_linker_output(s: &[u8], flavour: LinkerFlavor) -> String {
         return escape_string(s);
     }
     match std::str::from_utf8(s) {
-        Ok(s) => return s.to_owned(),
+        Ok(s) => s.to_owned(),
         Err(_) => match win::locale_byte_str_to_string(s, win::oem_code_page()) {
             Some(s) => s,
             // The string is not UTF-8 and isn't valid for the OEM code page
@@ -333,8 +334,8 @@ impl IntoDiagnostic<'_> for LinkingFailed<'_> {
     }
 }
 
-fn link_natively<'a>(
-    sess: &'a Session,
+fn link_natively(
+    sess: &Session,
     module_type: ModuleType,
     out_filename: &Path,
     codegen_results: &CodegenResults,
@@ -416,11 +417,7 @@ fn link_natively<'a>(
     sess.abort_if_errors();
 }
 
-pub fn link_binary<'a>(
-    sess: &'a Session,
-    codegen_results: &CodegenResults,
-    outputs: &OutputFilenames,
-) {
+pub fn link_binary(sess: &Session, codegen_results: &CodegenResults, outputs: &OutputFilenames) {
     for &module_type in &codegen_results.info.module_types {
         let tmpdir = tempfile::Builder::new()
             .prefix("zxc")

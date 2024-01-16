@@ -1,4 +1,4 @@
-[#ERROR_PLACEHOLDER] Error: mismatch types
+Error[#ERROR_PLACEHOLDER]: mismatch types
    ╭─[empty:1:19]
    │
  1 │ fn foo(x: i32) -> i32 { }

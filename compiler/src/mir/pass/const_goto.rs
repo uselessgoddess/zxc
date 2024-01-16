@@ -47,7 +47,7 @@ impl<'tcx> Visitor<'tcx> for ConstGotoOptimizationFinder<'_, 'tcx> {
 
                 // The `StorageDead(..)` statement does not affect the functionality of mir.
                 // We can move this part of the statement up to the predecessor.
-                let mut stmts_move_up = Vec::new();
+                let stmts_move_up = Vec::new();
 
                 let target_bb_terminator = target_bb.terminator();
                 let (discr, targets) = target_bb_terminator.as_switch()?;

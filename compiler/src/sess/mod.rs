@@ -2,7 +2,7 @@ mod diagnostic;
 mod errors;
 pub mod output;
 
-use std::ffi::OsStr;
+use std::{ffi::OsStr, sync::Arc};
 pub use {
     diagnostic::{
         Diagnostic, DiagnosticBuilder, DynEmitter, EarlyErrorHandler, Emission, Emitter,
@@ -18,16 +18,13 @@ use {
     crate::{
         spec,
         spec::{RelocModel, Target},
-        FatalError,
     },
+    ::errors::{DiagnosticMessage, SourceMap},
     bitflags::bitflags,
     std::{
-        collections::BTreeMap,
         env,
         fmt::{self, Formatter},
-        io::{self, Write},
-        ops::{Deref, DerefMut},
-        path::{Path, PathBuf},
+        path::PathBuf,
     },
 };
 
@@ -48,6 +45,7 @@ pub enum ModuleType {
     Staticlib,
 }
 
+#[allow(dead_code)]
 mod parse {
     use {
         crate::sess::OptLevel,
@@ -140,7 +138,7 @@ mod parse {
     }
 }
 
-#[allow(non_upper_case_globals)]
+#[allow(non_upper_case_globals, dead_code)]
 mod desc {
     pub const parse_string: &str = "a string";
     pub const parse_opt_string: &str = parse_string;
@@ -303,7 +301,7 @@ impl Session {
         self.diagnostic().emit_note(err)
     }
 
-    pub fn fatal(&self, msg: impl Into<String>) -> ! {
+    pub fn fatal(&self, msg: impl Into<DiagnosticMessage>) -> ! {
         self.handler.fatal(msg).raise()
     }
 
@@ -397,14 +395,9 @@ pub struct CompilerIO {
     pub temps_dir: Option<PathBuf>,
 }
 
-pub fn build_session(opts: Options, io: CompilerIO) -> Session {
+pub fn build_session(opts: Options, io: CompilerIO, sm: Arc<SourceMap>) -> Session {
     let host = spec::targets::x86_64_windows_msvc::target();
 
-    Session {
-        target: host.clone(),
-        host,
-        opts,
-        io,
-        handler: Handler::with_emitter(Box::new(EmitterWriter::stderr())),
-    }
+    let emitter = Box::new(EmitterWriter::stderr(Some(sm)));
+    Session { target: host.clone(), host, opts, io, handler: Handler::with_emitter(emitter) }
 }

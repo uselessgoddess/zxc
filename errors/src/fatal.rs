@@ -1,5 +1,5 @@
 use {
-    crate::sess::{Diagnostic, DiagnosticBuilder, Emission, Handler, Level},
+    crate::{Diagnostic, DiagnosticBuilder, DiagnosticMessage, Emission, Handler, Level},
     std::marker::PhantomData,
 };
 
@@ -20,7 +20,10 @@ impl FatalError {
 }
 
 impl<'a> DiagnosticBuilder<'a, FatalError> {
-    pub(crate) fn new_almost_fatal(handler: &'a Handler, message: impl Into<String>) -> Self {
+    pub(crate) fn new_almost_fatal(
+        handler: &'a Handler,
+        message: impl Into<DiagnosticMessage>,
+    ) -> Self {
         Self {
             handler,
             diagnostic: Diagnostic::new_with_code(Level::Fatal, message.into()),
@@ -35,7 +38,10 @@ impl Emission for FatalError {
         FatalError
     }
 
-    fn make_guarantee(handler: &Handler, message: String) -> DiagnosticBuilder<'_, Self> {
+    fn make_guarantee(
+        handler: &Handler,
+        message: DiagnosticMessage,
+    ) -> DiagnosticBuilder<'_, Self> {
         DiagnosticBuilder::new_almost_fatal(handler, message)
     }
 }

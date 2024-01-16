@@ -21,7 +21,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyConstCondition {
 
             *terminator = match terminator {
                 Terminator::SwitchInt {
-                    discr: Operand::Const(const_, ty), ref targets, ..
+                    discr: Operand::Const(const_, _ty), ref targets, ..
                 } => {
                     let constant = match const_ {
                         ConstValue::Scalar(scalar) => Some(scalar.data),

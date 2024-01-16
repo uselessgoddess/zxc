@@ -1,7 +1,7 @@
 mod arenas;
 pub mod intern;
 
-use std::{fmt, io};
+use std::fmt;
 pub use {
     arenas::{DroplessArena, TypedArena},
     intern::Interned,

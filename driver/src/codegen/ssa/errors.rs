@@ -63,7 +63,7 @@ diagnostic! {
 }
 
 diagnostic! {
-    ["could not exec the linker"]
+    ["couldn't exec the linker {:?}", linker_path]
     [note: "{}", error]
     [note: "{}", command_formatted]
     pub struct UnableToExeLinker {

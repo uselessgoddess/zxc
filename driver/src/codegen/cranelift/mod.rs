@@ -3,7 +3,6 @@ use {
     crate::codegen::ssa::CodegenResults,
     compiler::{
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
-        hir::HirCtx,
         mir::{
             ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
             Local, Operand, Place, Rvalue, Statement, Terminator, Ty, UnOp,
@@ -101,7 +100,6 @@ pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<typ
             IntTy::I32 => types::I32,
             IntTy::I64 => types::I64,
             IntTy::Isize => pointer_ty(tcx),
-            _ => todo!(),
         },
         _ => return None,
     })
@@ -128,13 +126,12 @@ pub(crate) fn type_sign(ty: Ty<'_>) -> bool {
 }
 
 pub(crate) fn pointer_ty(tcx: Tx<'_>) -> types::Type {
-    // match tcx.data_layout.pointer_size.bits() {
-    //     16 => types::I16,
-    //     32 => types::I32,
-    //     64 => types::I64,
-    //     bits => todo!("unknown bits: {bits}"),
-    // }
-    types::I64
+    match tcx.sess.target.pointer_width {
+        16 => types::I16,
+        32 => types::I32,
+        64 => types::I64,
+        bits => todo!("unknown bits: {bits}"),
+    }
 }
 
 pub(crate) fn scalar_to_clif(tcx: Tx<'_>, scalar: Scalar) -> types::Type {
@@ -277,7 +274,7 @@ fn codegen_stmt<'tcx>(
                     };
                     place.write_cvalue(fx, res);
                 }
-                Rvalue::Cast(kind, operand, cast_ty) => {
+                Rvalue::Cast(_kind, operand, cast_ty) => {
                     let operand = codegen_operand(fx, operand);
                     let from_ty = operand.layout().ty;
 
@@ -396,10 +393,10 @@ fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, default: isa::CallConv, abi: &FnAbi<'tcx>) 
     }
 }
 
-pub(crate) fn codegen_fn<'tcx>(
-    hix: Hx<'tcx>,
+pub(crate) fn codegen_fn(
+    hix: Hx,
     def: DefId,
-    mono_item: &MonoItemData,
+    _mono_item: &MonoItemData,
     module: &mut dyn Module,
 ) -> (Symbol, FuncId, Function) {
     let tcx = hix.tcx;
@@ -583,15 +580,12 @@ fn build_isa(sess: &Session) -> Result<Arc<dyn isa::TargetIsa + 'static>, SetErr
     let flags = settings::Flags::new(flags);
 
     let isa_builder = match None {
-        Some("native") => {
-            let builder = cranelift_native::builder_with_options(true).unwrap();
-            builder
-        }
+        Some("native") => cranelift_native::builder_with_options(true).unwrap(),
         Some(value) => {
             let mut builder = isa::lookup(target_triple.clone()).unwrap_or_else(|err| {
                 sess.fatal(format!("can't compile for {target_triple}: {err}"));
             });
-            if let Err(_) = builder.enable(value) {
+            if builder.enable(value).is_err() {
                 sess.fatal("the specified target cpu isn't currently supported by Cranelift.");
             }
             builder
@@ -633,7 +627,7 @@ fn make_module(sess: &Session, name: String) -> ObjectModule {
 
 fn emit_module(
     name: String,
-    mut object: cranelift_object::object::write::Object<'_>,
+    object: cranelift_object::object::write::Object<'_>,
     output_filenames: &OutputFilenames,
 ) -> Result<CompiledModule, String> {
     let tmp_file = output_filenames.temp_path(OutputType::Object, Some(&name));
@@ -653,7 +647,7 @@ fn emit_cgu(
     module: ObjectModule,
     output_filenames: &OutputFilenames,
 ) -> Result<CodegenModule, String> {
-    let mut product = module.finish();
+    let product = module.finish();
 
     Ok(CodegenModule { regular: emit_module(name, product.object, output_filenames)? })
 }

@@ -3,7 +3,7 @@ use {
     std::any::Any,
 };
 
-mod errors;
+pub(crate) mod errors;
 pub mod link;
 
 pub use link::{CodegenResults, CompiledModule, ModuleInfo};

@@ -17,7 +17,7 @@
     never_type,
     negative_impls
 )]
-#![allow(clippy::unit_arg)]
+#![allow(clippy::unit_arg, clippy::missing_safety_doc, clippy::should_implement_trait)]
 #![allow(internal_features)]
 #![deny(unused_must_use)]
 
@@ -28,8 +28,9 @@ pub mod tcx;
 
 mod fx;
 
-mod fatal;
-mod idx;
+#[allow(clippy::all, dead_code)]
+mod idx; // inspired from rustc_index
+
 pub(crate) mod index;
 mod man;
 pub mod par;
@@ -41,8 +42,7 @@ pub mod tls;
 pub(crate) mod util;
 
 pub use {
-    ariadne,
-    fatal::{FatalError, FatalErrorMarker},
+    errors::{self, ariadne, FatalError, FatalErrorMarker},
     idx::{Idx, IndexSlice, IndexVec},
     mir::pretty,
     sess::Session,
@@ -103,11 +103,18 @@ macro_rules! diagnostic {
 
     (@impl
         [$fmt:literal $(, $arg:ident)*]
+        $([code: $code:ident])?
+        $([primary($plevel:expr, $pspan:ident): $fmt_p:literal $(, $arg_p:ident)*])*
         $([note: $fmt_notes:literal $(, $arg_notes:ident)*])*
     ) => {
         fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, E> {
+            #[allow(unused_mut)]
             let mut diag = handler.struct_diagnostic(format!($fmt $(, self.$arg )*));
 
+            $( diag.code($crate::errors::Code::$code); )?
+            $(
+                diag.primary($plevel, self.$pspan, format!($fmt_p $(, self.$arg_p )*));
+            )*
             $(
                 diag.note(format!($fmt_notes $(, self.$arg_notes )*));
             )*

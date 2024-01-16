@@ -27,7 +27,7 @@ pub(crate) fn analyze(fx: &FunctionCx<'_, '_, '_>) -> IndexVec<Local, SsaKind> {
     for bb in fx.mir.basic_blocks.iter() {
         for stmt in bb.statements.iter() {
             match stmt {
-                Statement::Assign(place, rvalue) => match rvalue {
+                Statement::Assign(_place, rvalue) => match rvalue {
                     // TODO: address is one possible case when ssa unavailable
                     // Rvalue::Ref(_, _, place) | Rvalue::AddressOf(_, place) => {
                     //     flag_map[place.local] = SsaKind::NotSsa;

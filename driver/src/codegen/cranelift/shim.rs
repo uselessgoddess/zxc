@@ -1,16 +1,14 @@
 use {
     compiler::{
         abi::Conv,
-        hir::{self, HirCtx, Hx},
-        mir::{self, InstanceData},
+        hir::{self, Hx},
+        mir,
     },
     cranelift::{
         codegen::Context,
-        prelude::{
-            types, AbiParam, FunctionBuilder, FunctionBuilderContext, InstBuilder, Signature,
-        },
+        prelude::{AbiParam, FunctionBuilder, FunctionBuilderContext, InstBuilder, Signature},
     },
-    cranelift_module::{Linkage, Module, ModuleResult},
+    cranelift_module::{Linkage, Module},
 };
 
 pub fn create_entry_wrapper(hix: Hx, m: &mut dyn Module, main_def: mir::DefId, is_main: bool) {
@@ -48,7 +46,7 @@ pub fn create_entry_wrapper(hix: Hx, m: &mut dyn Module, main_def: mir::DefId, i
         let argc = bcx.append_block_param(block, isize);
         let argv = bcx.append_block_param(block, isize);
 
-        let main_ref = m.declare_func_in_func(main_id, &mut bcx.func);
+        let main_ref = m.declare_func_in_func(main_id, bcx.func);
 
         let ret = if !is_main {
             // using user-defined start fn

@@ -1,4 +1,5 @@
 #![feature(let_chains, try_blocks, never_type, associated_type_bounds)]
+#![allow(clippy::let_unit_value, clippy::manual_range_contains)]
 
 mod cli;
 mod codegen;
@@ -8,36 +9,30 @@ mod style;
 use {
     anyhow::Context as _,
     concolor::{ColorChoice, Stream},
-    cranelift::{
-        codegen::{isa, Context},
-        prelude::{settings, Configurable},
-    },
-    cranelift_module::{self as module, Module},
-    cranelift_object::{ObjectBuilder, ObjectModule},
+    cranelift::{codegen::isa, prelude::settings},
 };
 
 use compiler::{
     ariadne::{self, Color, Label, Report, ReportKind},
-    hir::{self, FnSig, HirCtx, ReportSettings, Stmt},
-    mir::{self, InstanceDef, MirPass},
+    errors::{color, SourceFile, SourceMap},
+    hir::{self, HirCtx, Hx, ReportSettings},
+    mir::{self, InstanceDef},
     par::WorkerLocal,
     rayon::prelude::*,
-    sess::{self, Options},
+    sess::{self, EarlyErrorHandler, Options},
     symbol::Symbol,
     Tx, TyCtx,
 };
 
 use {
     chumsky::Parser,
-    compiler::{hir::Hx, sess::EarlyErrorHandler},
-    lexer::{Block, ItemFn, ParseBuffer},
+    lexer::ParseBuffer,
     std::{
         collections::BTreeMap,
-        fmt::{self, Write as _},
-        fs,
-        io::{self, Write as _},
+        fmt, fs, io,
         path::{Path, PathBuf},
-        process::{self, Command},
+        process,
+        sync::Arc,
     },
 };
 
@@ -82,7 +77,7 @@ fn parse_items<'lex>(
 fn print_report<'hir>(hix: Hx<'hir>, err: &hir::Error<'hir>, name: &'hir str, src: &'hir str) {
     let settings = ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
     // fixme: get access to label spans
-    let (code, reason, first, labels) = err.report(&hix, name, settings);
+    let (code, reason, first, labels) = err.report(hix, name, settings);
     let mut report =
         Report::build(ReportKind::Error, name, first.start).with_code(code).with_message(reason);
     for label in labels {
@@ -107,14 +102,14 @@ fn driver_impl<'tcx>(
 ) -> Result<(), Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
-    let mut items = parse_items(tcx, &mut input).or_else(|err| {
+    let mut items = parse_items(tcx, &mut input).map_err(|err| {
         Report::build(ReportKind::Error, name, 5)
             .with_message(err.to_string())
             .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
             .finish()
             .eprint((name, ariadne::Source::from(src)))
             .unwrap();
-        Err(Error::Guaranteed)
+        Error::Guaranteed
     })?;
 
     let analyze = hir::analyze_module(hix, &mut items);
@@ -147,7 +142,7 @@ fn driver_impl<'tcx>(
             (def, hix.optimized_mir(def))
         })
         .collect::<Vec<_>>();
-    mir::pass::emit_mir(&hix, &mir)?;
+    mir::pass::emit_mir(hix, &mir)?;
 
     let codegen = codegen::cranelift::CraneliftBackend;
 
@@ -162,13 +157,19 @@ fn parent_dir(path: &Path) -> &Path {
     if let Some(parent) = path.parent() { parent } else { path }
 }
 
-fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(), Error> {
+fn driver(
+    early: &EarlyErrorHandler,
+    compiler: &interface::Compiler,
+    source_map: Arc<SourceMap>,
+) -> Result<(), Error> {
     let sess = &compiler.sess;
     let input = &sess.io.input;
     let src = fs::read_to_string(input).with_context(|| format!("{}", input.display()))?;
 
-    if concolor::get(Stream::Stdout).ansi_color() {
-        println!("{}", yansi::Paint::magenta(&src));
+    if concolor::get(Stream::Stdout).color() {
+        use ariadne::Fmt;
+
+        println!("{}", src.clone().fg(color::Magenta));
     } else {
         println!("{src}");
     }
@@ -186,14 +187,13 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
     };
     let temps = sess.opts.Z.temps_dir.as_ref().map(PathBuf::from).unwrap_or(out_dir.clone());
     fs::create_dir_all(&temps).with_context(|| format!("{}", temps.display()))?;
-    let out = out_dir.join(out);
 
     let name = input
         .file_stem()
         .unwrap()
         .to_str()
         .unwrap_or_else(|| early.early_error("non UTF-8 file name"));
-    let emit = temps.join(art.with_extension("emit"));
+    source_map.sources.write().push(SourceFile { name: PathBuf::from(input), src: src.to_owned() });
 
     let outputs = sess::OutputFilenames {
         out_directory: out_dir,
@@ -205,7 +205,7 @@ fn driver(early: &EarlyErrorHandler, compiler: &interface::Compiler) -> Result<(
 
     // FIXME: strainge borrow checker error - suppress by leaking
     let arena = Box::leak(Box::new(WorkerLocal::new(|_| Default::default())));
-    let tcx = TyCtx::enter(&arena, &compiler.sess, outputs);
+    let tcx = TyCtx::enter(arena, &compiler.sess, outputs);
     let mut hix = HirCtx::pure(&tcx, Symbol::intern("main"));
     driver_impl(&tcx, &mut hix, &src, name)?;
 
@@ -240,11 +240,14 @@ fn main() {
             Emit::IR => sess::Emit::IR,
         };
     }
+
+    let source_map = Arc::new(SourceMap { sources: vec![].into() });
     let mut config = Config {
         opts: Options { Z: z_opts, C: c_opts, emit: emit_flags, ..Default::default() },
         input,
         output_dir,
         output_file: output,
+        source_map: source_map.clone(),
     };
     if let Some(target) = target {
         config.opts.triple = target;
@@ -252,7 +255,7 @@ fn main() {
     println!("{config:#?}");
 
     interface::run_compiler(config, |compiler| {
-        if let Err(err) = driver(&early, compiler) {
+        if let Err(err) = driver(&early, compiler, source_map) {
             if let Error::Error(err) = err {
                 early.early_error(err.to_string())
             }

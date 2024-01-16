@@ -27,7 +27,6 @@ impl CastKind {
 
         Some(match (from, cast) {
             (CastTy::Int(_), CastTy::Int(_)) => Self::IntToInt,
-            _ => todo!(),
         })
     }
 }

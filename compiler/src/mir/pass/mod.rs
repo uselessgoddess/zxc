@@ -92,8 +92,8 @@ pub fn should_run_pass<'tcx, P: MirPass<'tcx> + ?Sized>(tcx: Tx<'tcx>, pass: &P)
 
     let overridden_passes = &tcx.sess.opts.C.mir_enable_passes;
     let overridden =
-        overridden_passes.iter().rev().find(|(s, _)| s == &*name).map(|(_, polarity)| *polarity);
-    overridden.unwrap_or_else(|| pass.is_enabled(&tcx.sess))
+        overridden_passes.iter().rev().find(|(s, _)| s == name).map(|(_, polarity)| *polarity);
+    overridden.unwrap_or_else(|| pass.is_enabled(tcx.sess))
 }
 
 fn run_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>, passes: &[&dyn MirPass<'tcx>]) {

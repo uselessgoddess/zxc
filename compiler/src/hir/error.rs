@@ -1,12 +1,12 @@
 use {
     crate::{
+        ariadne::{Color, Fmt, Label},
         hir::{self, Ty},
         mir,
         pretty::{self, DisplayCtx, Print, Printer},
         symbol::{Ident, Symbol},
         util,
     },
-    ariadne::{Color, Fmt, Label},
     lexer::Span,
     std::{fmt, ops::Range},
 };
@@ -80,8 +80,6 @@ impl<'a> Error<'a> {
     ) -> (&str, String, Span, Vec<Label<Spanned<'a>>>) {
         let fmt = |hx, ty: mir::Ty<'a>| format!("`{}`", ty.to_string(hx)).fg(colors.err_kw);
         let s = |span: &Span| (src_loc, span.into_range());
-
-        use ariadne::Fmt;
 
         match self {
             Error::TypeMismatch { expected, found } => (

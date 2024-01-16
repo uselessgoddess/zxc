@@ -18,12 +18,9 @@ impl<'tcx> MirPass<'tcx> for PeepSimplify {
 
         for block in &mut body.basic_blocks {
             for statement in block.statements.iter_mut() {
-                match statement {
-                    Statement::Assign(_, rvalue) => {
-                        ctx.simplify_bool_cmp(rvalue);
-                        ctx.simplify_cast(rvalue);
-                    }
-                    _ => {}
+                if let Statement::Assign(_, rvalue) = statement {
+                    ctx.simplify_bool_cmp(rvalue);
+                    ctx.simplify_cast(rvalue);
                 }
             }
             simplify::simplify_duplicate_switch_targets(block.terminator_mut());
@@ -36,6 +33,7 @@ struct SimplifyContext<'tcx, 'l> {
     local_decls: &'l LocalDecls<'tcx>,
 }
 
+#[allow(clippy::clone_on_copy)]
 impl<'tcx> SimplifyContext<'tcx, '_> {
     fn try_eval_bool(&self, x: &Operand<'_>) -> Option<bool> {
         if let Some((x, ty)) = x.constant()
@@ -48,46 +46,43 @@ impl<'tcx> SimplifyContext<'tcx, '_> {
     }
 
     fn simplify_bool_cmp(&self, rvalue: &mut Rvalue<'tcx>) {
-        match rvalue {
-            Rvalue::BinaryOp(op @ (BinOp::Eq | BinOp::Ne), a, b) => {
-                let new = match (op, self.try_eval_bool(a), self.try_eval_bool(b)) {
-                    // Transform "Eq(a, true)" ==> "a"
-                    (BinOp::Eq, _, Some(true)) => Some(Rvalue::Use(a.clone())),
+        if let Rvalue::BinaryOp(op @ (BinOp::Eq | BinOp::Ne), a, b) = rvalue {
+            let new = match (op, self.try_eval_bool(a), self.try_eval_bool(b)) {
+                // Transform "Eq(a, true)" ==> "a"
+                (BinOp::Eq, _, Some(true)) => Some(Rvalue::Use(a.clone())),
 
-                    // Transform "Ne(a, false)" ==> "a"
-                    (BinOp::Ne, _, Some(false)) => Some(Rvalue::Use(a.clone())),
+                // Transform "Ne(a, false)" ==> "a"
+                (BinOp::Ne, _, Some(false)) => Some(Rvalue::Use(a.clone())),
 
-                    // Transform "Eq(true, b)" ==> "b"
-                    (BinOp::Eq, Some(true), _) => Some(Rvalue::Use(b.clone())),
+                // Transform "Eq(true, b)" ==> "b"
+                (BinOp::Eq, Some(true), _) => Some(Rvalue::Use(b.clone())),
 
-                    // Transform "Ne(false, b)" ==> "b"
-                    (BinOp::Ne, Some(false), _) => Some(Rvalue::Use(b.clone())),
+                // Transform "Ne(false, b)" ==> "b"
+                (BinOp::Ne, Some(false), _) => Some(Rvalue::Use(b.clone())),
 
-                    // Transform "Eq(false, b)" ==> "Not(b)"
-                    (BinOp::Eq, Some(false), _) => Some(Rvalue::UnaryOp(UnOp::Not, b.clone())),
+                // Transform "Eq(false, b)" ==> "Not(b)"
+                (BinOp::Eq, Some(false), _) => Some(Rvalue::UnaryOp(UnOp::Not, b.clone())),
 
-                    // Transform "Ne(true, b)" ==> "Not(b)"
-                    (BinOp::Ne, Some(true), _) => Some(Rvalue::UnaryOp(UnOp::Not, b.clone())),
+                // Transform "Ne(true, b)" ==> "Not(b)"
+                (BinOp::Ne, Some(true), _) => Some(Rvalue::UnaryOp(UnOp::Not, b.clone())),
 
-                    // Transform "Eq(a, false)" ==> "Not(a)"
-                    (BinOp::Eq, _, Some(false)) => Some(Rvalue::UnaryOp(UnOp::Not, a.clone())),
+                // Transform "Eq(a, false)" ==> "Not(a)"
+                (BinOp::Eq, _, Some(false)) => Some(Rvalue::UnaryOp(UnOp::Not, a.clone())),
 
-                    // Transform "Ne(a, true)" ==> "Not(a)"
-                    (BinOp::Ne, _, Some(true)) => Some(Rvalue::UnaryOp(UnOp::Not, a.clone())),
+                // Transform "Ne(a, true)" ==> "Not(a)"
+                (BinOp::Ne, _, Some(true)) => Some(Rvalue::UnaryOp(UnOp::Not, a.clone())),
 
-                    _ => None,
-                };
+                _ => None,
+            };
 
-                if let Some(new) = new {
-                    *rvalue = new;
-                }
+            if let Some(new) = new {
+                *rvalue = new;
             }
-            _ => {}
         }
     }
 
     fn simplify_cast(&self, rvalue: &mut Rvalue<'tcx>) {
-        if let Rvalue::Cast(kind, operand, cast_ty) = rvalue {
+        if let Rvalue::Cast(_kind, operand, cast_ty) = rvalue {
             if operand.ty(self.local_decls, self.tcx) == *cast_ty {
                 *rvalue = Rvalue::Use(operand.clone());
             }

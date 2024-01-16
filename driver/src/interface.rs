@@ -1,5 +1,6 @@
 use {
     compiler::{
+        errors::SourceMap,
         par,
         rayon::ThreadPoolBuilder,
         sess::{self, CompilerIO, Options},
@@ -21,6 +22,7 @@ pub struct Config {
     pub input: PathBuf,
     pub output_dir: Option<PathBuf>,
     pub output_file: Option<PathBuf>,
+    pub source_map: Arc<SourceMap>,
 }
 
 pub fn run_thread_pool_with_globals<F: FnOnce() -> R + Send, R: Send>(threads: usize, f: F) -> R {
@@ -55,6 +57,7 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
                     output_file: config.output_file,
                     temps_dir,
                 },
+                config.source_map,
             )),
         })
     })

@@ -62,7 +62,7 @@ impl<'hir> Item<'hir> {
     pub fn analyze(tcx: Tx<'hir>, item: lexer::Item<'hir>) -> Self {
         use lexer::{ForeignMod, ItemFn};
 
-        let mut meta = &[][..];
+        let meta;
         let span = item.span();
         let kind =
             match item {
@@ -461,7 +461,7 @@ unsafe fn assert_same_types_allow_never<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Resul
 }
 
 fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
-    return if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) };
+    if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) }
 }
 
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
@@ -613,8 +613,10 @@ fn analyze_expr<'hir>(
             let (ty, place) = acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?;
             if let Some(place) = place {
                 (ty, Operand::Copy(place))
+            } else if ty.is_zst() {
+                (ty, Operand::Const(ConstValue::Zst, ty.kind))
             } else {
-                if ty.is_zst() { (ty, Operand::Const(ConstValue::Zst, ty.kind)) } else { panic!() }
+                panic!()
             }
         }
         expr::Assign(lvalue, rvalue) => {
@@ -774,7 +776,7 @@ fn analyze_expr<'hir>(
 
                 if !types.iter().eq_by(sig.inputs(), |hir, mir| &hir.kind == mir) {
                     return Err(Error::WrongFnArgs {
-                        expect: sig.inputs().iter().copied().collect(),
+                        expect: sig.inputs().to_vec(),
                         found: types,
                         caller: call.span,
                         target: Some(span),
@@ -825,7 +827,7 @@ fn analyze_expr<'hir>(
                 let never = Ty::new(ty.span, acx.tcx.types.never);
                 (never, acx.unit_const(never))
             } else {
-                return Err(todo!());
+                todo!()
             }
         }
         expr::Break(break_) => {
@@ -943,7 +945,7 @@ fn analyze_local_block_unclosed<'hir>(
     Ok(())
 }
 
-fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, ty: Ty<'hir>, operand: Operand<'hir>) {
+fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
     if let Some(Statement::Assign(place, _)) = acx.block.statements.last_mut() {
         place.local = Local::RETURN_PLACE;
     } else {
@@ -1109,7 +1111,7 @@ impl<'hir> HirCtx<'hir> {
         }
 
         let mut start_fn = None;
-        for (&name, &def) in &self.decls {
+        for &def in self.decls.values() {
             let attrs = self.attrs(def);
             if attr::contains_name(attrs, sym::start) {
                 if let Some(start) = start_fn {
@@ -1118,7 +1120,10 @@ impl<'hir> HirCtx<'hir> {
                     //     def: self.def_span(start),
                     //     redef: self.def_span(def),
                     // });
-                    self.tcx.sess.emit_err(errors::MultipleStartFunctions);
+                    self.tcx.sess.emit_err(errors::MultipleStartFunctions {
+                        label: self.def_span(def),
+                        previous: self.def_span(start),
+                    });
                 } else {
                     start_fn = Some(def);
                 }
@@ -1127,13 +1132,11 @@ impl<'hir> HirCtx<'hir> {
 
         if let Some(start) = start_fn {
             Some((start, EntryFnType::Start))
+        } else if let Some(&main) = self.decls.get(&sym::main) {
+            Some((main, EntryFnType::Main))
         } else {
-            if let Some(&main) = self.decls.get(&sym::main) {
-                Some((main, EntryFnType::Main))
-            } else {
-                self.tcx.sess.emit_err(errors::NoMainErr);
-                None
-            }
+            self.tcx.sess.emit_err(errors::NoMainErr);
+            None
         }
     }
 }

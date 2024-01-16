@@ -55,6 +55,7 @@ impl<T, P> Punctuated<T, P> {
         self.inner.iter_mut().map(|(item, _)| item).chain(self.last.as_deref_mut())
     }
 
+    #[allow(clippy::should_implement_trait)] // todo: fix lint
     pub fn into_iter(self) -> impl DoubleEndedIterator<Item = T> {
         self.inner.into_iter().map(|(item, _)| item).chain(self.last.map(|x| *x))
     }

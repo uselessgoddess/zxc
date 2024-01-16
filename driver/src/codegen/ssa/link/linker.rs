@@ -87,7 +87,7 @@ pub fn get_linker<'a>(
     if matches!(flavor, LinkerFlavor::Msvc(..)) && t.vendor == "uwp" {
         if let Some(ref tool) = msvc_tool {
             let original_path = tool.path();
-            if let Some(ref root_lib_path) = original_path.ancestors().nth(4) {
+            if let Some(root_lib_path) = original_path.ancestors().nth(4) {
                 let arch = match t.arch.as_ref() {
                     "x86_64" => Some("x64"),
                     "x86" => Some("x86"),
@@ -164,19 +164,18 @@ pub struct GccLinker<'a> {
 impl<'a> GccLinker<'a> {
     fn linker_args(&mut self, args: &[impl AsRef<OsStr>]) -> &mut Self {
         if self.is_ld {
-            args.into_iter().for_each(|a| {
+            args.iter().for_each(|a| {
                 self.cmd.arg(a);
             });
-        } else {
-            if !args.is_empty() {
-                let mut s = OsString::from("-Wl");
-                for a in args {
-                    s.push(",");
-                    s.push(a);
-                }
-                self.cmd.arg(s);
+        } else if !args.is_empty() {
+            let mut s = OsString::from("-Wl");
+            for a in args {
+                s.push(",");
+                s.push(a);
             }
+            self.cmd.arg(s);
         }
+
         self
     }
 

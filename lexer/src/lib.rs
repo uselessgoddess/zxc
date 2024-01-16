@@ -1,5 +1,5 @@
 #![feature(let_chains, slice_ptr_len, slice_ptr_get, assert_matches, box_patterns)]
-#![allow(clippy::unit_arg, clippy::let_unit_value)]
+#![allow(clippy::unit_arg, clippy::let_unit_value, clippy::missing_safety_doc)]
 
 #[macro_use]
 pub mod ast;
@@ -16,6 +16,8 @@ pub mod token {
 
     pub use parse::delim::{Brace, Bracket, Paren};
 }
+
+pub use {lexer::*, parse::*};
 
 #[cfg(test)]
 mod util {
@@ -36,5 +38,3 @@ mod util {
 
     pub(crate) use lex_it;
 }
-
-pub use {lexer::*, parse::*};

@@ -27,7 +27,7 @@ pub fn join_fmt_debug<T: fmt::Debug>(slice: &[T]) -> String {
         None => return String::new(),
     };
 
-    let mut fmt = |t| fmt(t).to_string();
+    let fmt = |t| fmt(t).to_string();
     let mut place = String::with_capacity(128);
 
     place.push_str(&fmt(first));
