@@ -42,7 +42,7 @@ pub mod tls;
 pub(crate) mod util;
 
 pub use {
-    errors::{self, ariadne, FatalError, FatalErrorMarker},
+    errors::{self, ariadne, ErrorGuaranteed, FatalError, FatalErrorMarker},
     idx::{Idx, IndexSlice, IndexVec},
     mir::pretty,
     sess::Session,
@@ -57,6 +57,8 @@ pub(crate) use {
 };
 
 pub use {rayon, rayon_core};
+
+pub type Result<T> = std::result::Result<T, ErrorGuaranteed>;
 
 macro_rules! assert_size {
     ($ty:ty as $size:literal) => {
@@ -113,7 +115,7 @@ macro_rules! diagnostic {
 
             $( diag.code($crate::errors::Code::$code); )?
             $(
-                diag.primary($plevel, self.$pspan, format!($fmt_p $(, self.$arg_p )*));
+                diag.primary($plevel, self.$pspan, Some(format!($fmt_p $(, self.$arg_p )*)));
             )*
             $(
                 diag.note(format!($fmt_notes $(, self.$arg_notes )*));

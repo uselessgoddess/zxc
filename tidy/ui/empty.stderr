@@ -1,0 +1,9 @@
+error[E0002]: type mismatch
+   ╭─[empty.src:1:1]
+   │
+ 1 │ fn foo(x: i32) -> i32 { }
+   │ ^^^^^^^^^^^^^^^^^^~~╮  
+   │                     ╰── expected due to this
+   │                     │  
+   │                     ╰── expected `i32`, found `@unit`
+───╯

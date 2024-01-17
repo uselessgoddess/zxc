@@ -13,7 +13,7 @@ use {
         },
         spec::{Cc, LinkOutputKind, LinkerFlavor, Lld, RelocModel},
         symbol::Symbol,
-        Session, Tx,
+        ErrorGuaranteed, Session, Tx,
     },
     std::{
         fs, io, mem,
@@ -321,7 +321,7 @@ pub struct LinkingFailed<'a> {
 }
 
 impl IntoDiagnostic<'_> for LinkingFailed<'_> {
-    fn into_diagnostic(self, handler: &Handler) -> DiagnosticBuilder<'_, ()> {
+    fn into_diagnostic(self, handler: &Handler) -> DiagnosticBuilder<'_, ErrorGuaranteed> {
         let mut db = handler.struct_err(format!(
             "linking with `{}` failed: {}",
             self.linker_path.display(),

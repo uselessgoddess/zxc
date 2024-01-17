@@ -19,7 +19,7 @@ use {
         spec,
         spec::{RelocModel, Target},
     },
-    ::errors::{DiagnosticMessage, SourceMap},
+    ::errors::{DiagnosticMessage, ErrorGuaranteed, SourceMap},
     bitflags::bitflags,
     std::{
         env,
@@ -293,7 +293,7 @@ impl Session {
         self.diagnostic().abort_if_errors()
     }
 
-    pub fn emit_err<'a>(&'a self, err: impl IntoDiagnostic<'a>) {
+    pub fn emit_err<'a>(&'a self, err: impl IntoDiagnostic<'a>) -> ErrorGuaranteed {
         self.diagnostic().emit_err(err)
     }
 
@@ -356,7 +356,7 @@ impl Session {
 
         if let Some(s) = self.io.input.file_stem().and_then(OsStr::to_str) {
             if s.starts_with('-') {
-                self.emit_err(errors::ModuleNameInvalid { name: s })
+                self.emit_err(errors::ModuleNameInvalid { name: s });
             } else {
                 return validate(s.replace('-', "_"));
             }

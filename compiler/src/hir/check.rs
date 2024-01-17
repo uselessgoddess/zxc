@@ -1,5 +1,6 @@
 use crate::{
-    hir::{EntryFnType, Error, HirCtx},
+    hir,
+    hir::{EntryFnType, HirCtx},
     mir,
 };
 
@@ -19,7 +20,11 @@ fn check_main(hix: &mut HirCtx<'_>, def: mir::DefId) {
     let main = &hix.instances[def];
 
     if main.sig != hix.tcx.sigs.main {
-        hix.emit.error(Error::WrongMainSig { sig: main.sig, span: main.span });
+        hix.err.emit(hir::errors::MismatchMainSig {
+            expect: hix.sig_fmt(hix.tcx.sigs.main.inputs()),
+            found: hix.sig_fmt(main.sig.inputs()),
+            span: main.span,
+        });
     }
 }
 
@@ -27,6 +32,10 @@ fn check_start(hix: &mut HirCtx<'_>, def: mir::DefId) {
     let main = &hix.instances[def];
 
     if main.sig != hix.tcx.sigs.start {
-        hix.emit.error(Error::WrongStartSig { sig: main.sig, span: main.span });
+        hix.err.emit(hir::errors::MismatchStartSig {
+            expect: hix.sig_fmt(hix.tcx.sigs.main.inputs()),
+            found: hix.sig_fmt(main.sig.inputs()),
+            span: main.span,
+        });
     }
 }

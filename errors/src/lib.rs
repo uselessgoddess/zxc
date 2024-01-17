@@ -35,6 +35,7 @@ pub mod color {
 
     pub const Red: Color = Color::Rgb(239, 89, 111);
     pub const Cyan: Color = Color::Rgb(86, 182, 194);
+    pub const Crab: Color = Color::Rgb(208, 154, 102);
     pub const Magenta: Color = Color::Rgb(198, 120, 221);
 }
 
@@ -83,7 +84,7 @@ pub struct Diagnostic {
     pub code: Option<Code>,
     pub(crate) level: Level,
     pub message: (DiagnosticMessage, Style),
-    pub primary: Vec<(DiagnosticMessage, Level, Span)>,
+    pub primary: Vec<(Option<DiagnosticMessage>, Level, Span)>,
     pub children: Vec<SubDiagnostic>,
 }
 
@@ -110,8 +111,14 @@ impl Diagnostic {
         self
     }
 
-    pub fn primary(&mut self, level: Level, span: Span, msg: impl Into<DiagnosticMessage>) {
-        self.primary.push((msg.into(), level, span));
+    pub fn primary(
+        &mut self,
+        level: Level,
+        span: Span,
+        msg: Option<impl Into<DiagnosticMessage>>,
+    ) -> &mut Self {
+        self.primary.push((msg.map(Into::into), level, span));
+        self
     }
 
     pub fn code(&mut self, code: Code) -> &mut Self {
@@ -135,7 +142,12 @@ impl Diagnostic {
 
 pub type DynEmitter = dyn Emitter + Send;
 
-struct HandlerInner {
+type Hash128 = u128;
+
+use std::collections::HashSet;
+
+pub struct HandlerInner {
+    emitted_diagnostics: HashSet<Hash128>, // TODO: reorganize project to use `FxHashMap`
     emitter: Box<DynEmitter>,
     errors: usize,
 }
@@ -151,26 +163,40 @@ impl fmt::Debug for Handler {
 }
 
 impl HandlerInner {
-    pub fn emit_diagnostic(&mut self, diagnostic: Diagnostic) {
+    pub fn emit_diagnostic(&mut self, diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
+        let mut guaranteed = None;
+
         if diagnostic.is_error() {
             self.errors += 1;
+
+            #[allow(deprecated)]
+            {
+                guaranteed = Some(ErrorGuaranteed::unchecked());
+            }
         }
 
         self.emitter.emit_diagnostic(diagnostic);
+
+        guaranteed
     }
 
     fn has_errors(&self) -> bool {
         self.errors > 0
     }
 
+    fn err_count(&self) -> usize {
+        self.errors
+    }
+
     fn abort_if_errors(&mut self) {
         if self.has_errors() {
-            crate::FatalError.raise();
+            FatalError.raise();
         }
     }
 
-    fn emit(&mut self, level: Level, msg: impl Into<DiagnosticMessage>) {
-        self.emit_diagnostic(Diagnostic::new_with_code(level, msg.into()))
+    /// Emit an error; level should be `Error` or `Fatal`.
+    fn emit(&mut self, level: Level, msg: impl Into<DiagnosticMessage>) -> ErrorGuaranteed {
+        self.emit_diagnostic(Diagnostic::new_with_code(level, msg.into())).unwrap()
     }
 
     pub fn fatal(&mut self, msg: impl Into<DiagnosticMessage>) -> FatalError {
@@ -181,14 +207,20 @@ impl HandlerInner {
 
 impl Handler {
     pub fn with_emitter(emitter: Box<DynEmitter>) -> Self {
-        Self { inner: Mutex::new(HandlerInner { emitter, errors: 0 }) }
+        Self {
+            inner: Mutex::new(HandlerInner {
+                emitted_diagnostics: Default::default(),
+                emitter,
+                errors: 0,
+            }),
+        }
     }
 
-    pub fn emit_diagnostic(&self, diagnostic: Diagnostic) {
+    pub fn emit_diagnostic(&self, diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
         self.inner.lock().emit_diagnostic(diagnostic)
     }
 
-    pub fn emit_err<'a>(&'a self, err: impl IntoDiagnostic<'a>) {
+    pub fn emit_err<'a>(&'a self, err: impl IntoDiagnostic<'a>) -> ErrorGuaranteed {
         err.into_diagnostic(self).emit()
     }
 
@@ -200,8 +232,11 @@ impl Handler {
         DiagnosticBuilder::new_fatal(self, msg.into())
     }
 
-    pub fn struct_err(&self, msg: impl Into<DiagnosticMessage>) -> DiagnosticBuilder<'_, ()> {
-        DiagnosticBuilder::new(self, Level::Error, msg.into())
+    pub fn struct_err(
+        &self,
+        msg: impl Into<DiagnosticMessage>,
+    ) -> DiagnosticBuilder<'_, ErrorGuaranteed> {
+        DiagnosticBuilder::new_guaranteeing_error(self, msg.into())
     }
 
     pub fn struct_diagnostic<E: Emission>(
@@ -217,6 +252,17 @@ impl Handler {
 
     pub fn abort_if_errors(&self) {
         self.inner.lock().abort_if_errors()
+    }
+
+    pub fn has_errors(&self) -> Option<ErrorGuaranteed> {
+        self.inner.lock().has_errors().then(|| {
+            #[allow(deprecated)]
+            ErrorGuaranteed::unchecked()
+        })
+    }
+
+    pub fn err_count(&self) -> usize {
+        self.inner.lock().err_count()
     }
 }
 
@@ -433,8 +479,8 @@ pub struct SourceMap {
 }
 
 impl SourceMap {
-    pub fn span_to_filename(&self) -> PathBuf {
-        self.sources.read()[0].name.clone()
+    pub fn span_to_filename(&self) -> String {
+        self.sources.read()[0].name.file_name().unwrap().to_string_lossy().to_string()
     }
 
     pub fn span_to_content(&self) -> String {
@@ -452,15 +498,15 @@ impl EmitterWriter {
         code: Option<Code>,
         level: Level,
         (message, style): &(DiagnosticMessage, Style),
-        primary: &[(DiagnosticMessage, Level, Span)],
+        primary: &[(Option<DiagnosticMessage>, Level, Span)],
         children: &[SubDiagnostic],
         is_primary: bool,
     ) -> fmt::Result {
         use {ariadne::Fmt, std::fmt::Write};
 
         let (src_id, src) = if let Some(sm) = self.source_map() {
-            let file = sm.span_to_filename().to_string_lossy().to_string();
-            (file, Source::from(sm.span_to_content())) // source map has only one file
+            // source map has only one file
+            (sm.span_to_filename(), Source::from(sm.span_to_content()))
         } else {
             ("<unknown>".into(), Source::from(String::new()))
         };
@@ -484,12 +530,15 @@ impl EmitterWriter {
         }
 
         for (message, level, span) in primary {
-            report.add_label(
-                Label::new((&src_id, span.into_range()))
-                    .with_message(message)
+            report.add_label({
+                let mut label = Label::new((&src_id, span.into_range()))
                     .with_underline(level.underline())
-                    .with_color(level.as_color()),
-            );
+                    .with_color(level.as_color());
+                if let Some(message) = message {
+                    label = label.with_message(message);
+                }
+                label
+            });
         }
         let msg = normalize_whitespace(message).fg(style.as_color());
         report.with_message(msg).finish().write((&src_id, src), &mut self.dest).unwrap();
@@ -508,7 +557,6 @@ impl Emitter for EmitterWriter {
         Diagnostic { code, level, ref message, ref primary, ref children }: Diagnostic,
     ) {
         self.emit_default(code, level, message, primary, children, true).unwrap();
-        writeln!(self.dest).unwrap();
     }
 
     fn source_map(&self) -> Option<&Arc<SourceMap>> {
@@ -516,8 +564,50 @@ impl Emitter for EmitterWriter {
     }
 }
 
-pub trait IntoDiagnostic<'a, T: Emission = ()> {
+pub trait IntoDiagnostic<'a, T: Emission = ErrorGuaranteed> {
     fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, T>;
+}
+
+pub struct ErrorGuaranteed(());
+
+impl ErrorGuaranteed {
+    #[deprecated]
+    pub(crate) fn unchecked() -> Self {
+        Self(())
+    }
+}
+
+impl Emission for ErrorGuaranteed {
+    fn emit_guarantee(db: DiagnosticBuilder<'_, Self>) -> Self {
+        assert!(
+            db.diagnostic.is_error(),
+            "emitted non-error ({:?}) diagnostic \
+                     from `DiagnosticBuilder<ErrorGuaranteed>`",
+            db.diagnostic.level
+        );
+        db.handler.emit_diagnostic(db.diagnostic).unwrap()
+    }
+
+    fn make_guarantee(
+        handler: &Handler,
+        message: DiagnosticMessage,
+    ) -> DiagnosticBuilder<'_, Self> {
+        DiagnosticBuilder::new_guaranteeing_error(handler, message)
+    }
+}
+
+impl<'a> DiagnosticBuilder<'a, ErrorGuaranteed> {
+    #[track_caller]
+    pub(crate) fn new_guaranteeing_error<M: Into<DiagnosticMessage>>(
+        handler: &'a Handler,
+        message: M,
+    ) -> Self {
+        Self {
+            handler,
+            diagnostic: Diagnostic::new_with_code(Level::Error, message.into()),
+            _marker: PhantomData,
+        }
+    }
 }
 
 pub use {

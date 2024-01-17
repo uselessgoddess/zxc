@@ -1,0 +1,7 @@
+error[E0007]: const evaluation error
+   ╭─[max.src:2:13]
+   │
+ 2 │     let x = 2147483647 + 1;
+   │             ^^^^^^^^^^^^^╮  
+   │                          ╰── this arithmetic operation will overflow
+───╯

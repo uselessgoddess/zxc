@@ -15,17 +15,18 @@ use {
 use compiler::{
     ariadne::{self, Color, Label, Report, ReportKind},
     errors::{color, SourceFile, SourceMap},
-    hir::{self, HirCtx, Hx, ReportSettings},
+    hir::{self, HirCtx, Hx},
     mir::{self, InstanceDef},
     par::WorkerLocal,
     rayon::prelude::*,
     sess::{self, EarlyErrorHandler, Options},
     symbol::Symbol,
-    Tx, TyCtx,
+    ErrorGuaranteed, Tx, TyCtx,
 };
 
 use {
     chumsky::Parser,
+    compiler::errors::{DynEmitter, EmitterWriter, Handler},
     lexer::ParseBuffer,
     std::{
         collections::BTreeMap,
@@ -63,6 +64,14 @@ impl_error! {
     cranelift_module::ModuleError
 }
 
+impl From<ErrorGuaranteed> for Error {
+    fn from(_: ErrorGuaranteed) -> Self {
+        Self::Guaranteed
+    }
+}
+
+type Result<T, E = Error> = std::result::Result<T, E>;
+
 fn parse_items<'lex>(
     tcx: Tx<'lex>,
     input: &mut ParseBuffer<'lex>,
@@ -72,26 +81,6 @@ fn parse_items<'lex>(
         items.push(hir::Item::analyze(tcx, input.parse()?));
     }
     Ok(items)
-}
-
-fn print_report<'hir>(hix: Hx<'hir>, err: &hir::Error<'hir>, name: &'hir str, src: &'hir str) {
-    let settings = ReportSettings { err_kw: Color::Magenta, err: Color::Red, kw: Color::Magenta };
-    // fixme: get access to label spans
-    let (code, reason, first, labels) = err.report(hix, name, settings);
-    let mut report =
-        Report::build(ReportKind::Error, name, first.start).with_code(code).with_message(reason);
-    for label in labels {
-        report = report.with_label(label.with_color(Color::Red));
-    }
-    report
-        .with_config(
-            ariadne::Config::default()
-                // .with_cross_gap(true)
-                .with_underlines(true),
-        )
-        .finish()
-        .eprint((name, ariadne::Source::from(src)))
-        .unwrap();
 }
 
 fn driver_impl<'tcx>(
@@ -112,26 +101,12 @@ fn driver_impl<'tcx>(
         Error::Guaranteed
     })?;
 
-    let analyze = hir::analyze_module(hix, &mut items);
-    hir::check::post_typeck(hix);
-
-    let errors = hix.errors(|errors| {
-        for err in errors {
-            print_report(hix, err, name, src);
-        }
-    });
-
-    match (analyze, errors) {
-        (Err(err), _) => {
-            print_report(hix, &err, name, src);
-            return Err(Error::Guaranteed);
-        }
-        (_, Some(_)) => {
-            return Err(Error::Guaranteed);
-        }
-        _ => {}
-    }
+    let _: Result<_> = try {
+        hir::analyze_module(hix, &mut items)?;
+        hir::check::post_typeck(hix);
+    };
     tcx.sess.abort_if_errors();
+    hix.err.abort_if_errors();
 
     let cgu = hix.as_codegen_unit();
     let mir = cgu
@@ -206,10 +181,18 @@ fn driver(
     // FIXME: strainge borrow checker error - suppress by leaking
     let arena = Box::leak(Box::new(WorkerLocal::new(|_| Default::default())));
     let tcx = TyCtx::enter(arena, &compiler.sess, outputs);
-    let mut hix = HirCtx::pure(&tcx, Symbol::intern("main"));
+    let mut hix = HirCtx::pure(
+        &tcx,
+        Symbol::intern("main"),
+        Handler::with_emitter(default_emitter(source_map)),
+    );
     driver_impl(&tcx, &mut hix, &src, name)?;
 
     Ok(())
+}
+
+fn default_emitter(source_map: Arc<SourceMap>) -> Box<DynEmitter> {
+    Box::new(EmitterWriter::stderr(Some(source_map)))
 }
 
 use crate::{
@@ -259,7 +242,7 @@ fn main() {
             if let Error::Error(err) = err {
                 early.early_error(err.to_string())
             }
-            process::exit(1)
+            process::exit(101)
         }
     });
 }

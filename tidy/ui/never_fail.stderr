@@ -1,0 +1,9 @@
+error[E0002]: type mismatch
+   ╭─[never_fail.src:4:16]
+   │
+ 4 │     return x + 12.isize;
+   │            ┬   ^^^^^^^╮  
+   │            ╰───────────── expected due to this
+   │                       │  
+   │                       ╰── expected `!`, found `isize`
+───╯

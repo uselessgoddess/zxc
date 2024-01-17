@@ -13,10 +13,5 @@ extern "C" {
 
 #[start]
 fn main(_: isize, _: isize) -> isize {
-    0.isize
-}
-
-#[start]
-fn main2(_: isize, _: isize) -> isize {
-    0.isize
+    64 * 64
 }

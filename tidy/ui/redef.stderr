@@ -1,0 +1,18 @@
+error[E0008]: the name: `foo` is defined multiple times
+   ╭─[redef.src:1:1]
+   │
+ 1 │ fn foo() {}
+ 2 │ fn foo() {}
+   │ ^^^^^^^╮  
+   │        ╰── `foo` redefined here
+───╯
+error[E0008]: the name: `foo` is defined multiple times
+   ╭─[redef.src:1:1]
+   │
+ 1 │ fn foo() {}
+   │ 
+ 3 │ fn foo() {}
+   │ ^^^^^^^╮  
+   │        ╰── `foo` redefined here
+───╯
+error:  `main` function not found in file

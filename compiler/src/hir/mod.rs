@@ -18,20 +18,21 @@ use {
             MonoItem, MonoItemData, Mutability, Operand, Place, Rvalue, ScalarRepr, Statement,
             SwitchTargets, Terminator,
         },
+        pretty::{FmtPrinter, Print, Printer},
         sess::ModuleType,
         sym,
         symbol::{Ident, Symbol},
-        FxHashMap, Span, Tx,
+        FxHashMap, Result, Span, Tx,
+    },
+    ::errors::{
+        ariadne::{Color, Fmt},
+        color, DiagnosticMessage, Handler,
     },
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
     smallvec::SmallVec,
-    std::{collections::hash_map::Entry, iter, marker::PhantomData, mem, num::NonZeroU8},
+    std::{collections::hash_map::Entry, fmt, iter, marker::PhantomData, mem, num::NonZeroU8},
 };
-pub use {
-    error::{Error, ReportSettings, Result},
-    scope::Scope,
-    ty::Ty,
-};
+pub use {scope::Scope, ty::Ty};
 
 #[derive(Debug, Copy, Clone)]
 pub struct ForeignItem<'hir> {
@@ -323,6 +324,8 @@ struct AnalyzeCx<'mir, 'hir> {
     block: mir::BasicBlockData<'hir>,
     body: &'mir mut mir::Body<'hir>,
     scope: Option<&'hir mut Scope<'hir>>,
+
+    err: &'mir mut error::TyErrCtx,
 }
 
 impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
@@ -446,22 +449,37 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
             self.tcx.types.bool,
         )
     }
+
+    /// # Safety
+    /// There's really nothing dangerous about it, but let `unsafe`
+    /// emphasize the fine line of using the `never` type
+    unsafe fn assert_same_types_allow_never(
+        &mut self,
+        a: Ty<'hir>,
+        b: Ty<'hir>,
+    ) -> Result<Ty<'hir>> {
+        Ok(match (a.is_never(), b.is_never()) {
+            (true, true) => a,
+            (true, _) => b,
+            (_, true) => a,
+            _ => self.assert_same_types(a, b)?,
+        })
+    }
+
+    pub fn assert_same_types(&mut self, a: Ty<'hir>, b: Ty<'hir>) -> Result<Ty<'hir>> {
+        if a == b {
+            Ok(a)
+        } else {
+            Err(self.err.emit(errors::TypeMismatch {
+                expect: self.hix.ty_msg(a),
+                found: self.hix.ty_msg(b),
+            }))
+        }
+    }
 }
 
-/// # Safety
-/// There's really nothing dangerous about it, but let `unsafe`
-/// emphasize the fine line of using the `never` type
-unsafe fn assert_same_types_allow_never<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
-    Ok(match (a.is_never(), b.is_never()) {
-        (true, true) => a,
-        (true, _) => b,
-        (_, true) => a,
-        _ => assert_same_types(a, b)?,
-    })
-}
-
-fn assert_same_types<'hir>(a: Ty<'hir>, b: Ty<'hir>) -> Result<'hir, Ty<'hir>> {
-    if a == b { Ok(a) } else { Err(Error::TypeMismatch { expected: a, found: b }) }
+fn quoted(f: impl fmt::Display, color: Color) -> String {
+    format!("`{f}`").fg(color).to_string()
 }
 
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
@@ -470,7 +488,7 @@ fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
 
 /// Lazy mir operand
 // type Lazy<'hir> =
-//      impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>;
+//      impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<(Ty<'hir>, Operand<'hir>)>;
 
 macro_rules! lazy {
     (|$acx:ident| $expr:expr) => {{ (|$acx: &mut AnalyzeCx<'_, 'hir>| $expr) }};
@@ -480,15 +498,13 @@ macro_rules! lazy {
 fn analyze_branch_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     cond: &'hir Expr<'hir>,
-    then_expr: impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>,
-    else_expr: Option<
-        impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<'hir, (Ty<'hir>, Operand<'hir>)>,
-    >,
-) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
+    then_expr: impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<(Ty<'hir>, Operand<'hir>)>,
+    else_expr: Option<impl FnOnce(&mut AnalyzeCx<'_, 'hir>) -> Result<(Ty<'hir>, Operand<'hir>)>>,
+) -> Result<(Ty<'hir>, Operand<'hir>)> {
     let (ty, discr) = analyze_expr(acx, cond)?;
 
     let bool = acx.tcx.types.bool;
-    assert_same_types(Ty::new(cond.span, bool), ty)?;
+    acx.assert_same_types(Ty::new(cond.span, bool), ty)?;
 
     acx.scoped(|acx| {
         let ret_place = acx.typed_place(acx.tcx.types.unit);
@@ -519,7 +535,7 @@ fn analyze_branch_expr<'hir>(
             Some(Terminator::Goto { target: next_block });
 
         // Safety: we do not create zst constants if the expression type is reduced to `never'
-        let ret_ty = unsafe { assert_same_types_allow_never(else_ty, then_ty)? };
+        let ret_ty = unsafe { acx.assert_same_types_allow_never(else_ty, then_ty)? };
         acx.body.local_decls[ret_place.local].ty = ret_ty.kind;
 
         acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
@@ -590,7 +606,7 @@ fn coerce_const_scalar<'tcx>(
 fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
-) -> Result<'hir, (Ty<'hir>, Operand<'hir>)> {
+) -> Result<(Ty<'hir>, Operand<'hir>)> {
     let (ty, rvalue) = match expr.kind {
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
             let ty = acx.tcx.types.i32;
@@ -610,7 +626,9 @@ fn analyze_expr<'hir>(
             )
         }
         expr::Local(ident) => {
-            let (ty, place) = acx.scope().get_var(ident.name).ok_or(Error::NotFoundLocal(ident))?;
+            let (ty, place) = acx.scope().get_var(ident.name).ok_or_else(|| {
+                acx.err.emit(errors::NotFoundLocal { local: ident.name, span: ident.span })
+            })?;
             if let Some(place) = place {
                 (ty, Operand::Copy(place))
             } else if ty.is_zst() {
@@ -626,11 +644,11 @@ fn analyze_expr<'hir>(
             if let Some(place) = lhs.place()
                 && acx.body.local_decls[place.local].mutability.is_mut()
             {
-                let ty = assert_same_types(lty, rty)?;
+                let ty = acx.assert_same_types(lty, rty)?;
                 acx.block.statements.push(Statement::Assign(place, Rvalue::Use(rhs)));
                 (ty, Operand::Copy(place))
             } else {
-                return Err(Error::InvalidLvalue(lty.span));
+                return Err(acx.err.emit(errors::InvalidLvalue { span: lty.span }));
             }
         }
         expr::Unary(op, expr) => match op {
@@ -652,36 +670,40 @@ fn analyze_expr<'hir>(
                             Operand::Const(ConstValue::Scalar(b), _),
                         ) => {
                             assert_eq!(lhs.kind, ty);
-                            assert_same_types(lhs, rhs)?;
+                            acx.assert_same_types(lhs, rhs)?;
 
                             if op == mir::BinOp::Div && b.is_null() {
-                                return Err(Error::ConstArithmetic {
+                                let eval = format!(
+                                    "{:#?}",
+                                    mir::consts::ConstInt::new(
+                                        a,
+                                        ty.is_signed(),
+                                        ty.is_ptr_sized_int(),
+                                    )
+                                );
+                                return Err(acx.err.emit(errors::ConstArithmetic {
                                     case: "this arithmetic operation will trapped at runtime",
                                     note: Some(format!(
-                                        "attempt to divide {:#?} by zero",
-                                        mir::consts::ConstInt::new(
-                                            a,
-                                            ty.is_signed(),
-                                            ty.is_ptr_sized_int(),
-                                        )
+                                        "attempt to divide {} by zero",
+                                        eval.fg(color::Crab)
                                     )),
                                     span: expr.span,
-                                });
+                                }));
                             }
 
                             return if let Some(s) = const_eval_operand(op, a, b, ty.is_signed()) {
                                 Ok((lhs, Operand::Const(ConstValue::Scalar(s), ty)))
                             } else {
-                                Err(Error::ConstArithmetic {
+                                Err(acx.err.emit(errors::ConstArithmetic {
                                     case: "this arithmetic operation will overflow",
                                     note: None,
                                     span: expr.span,
-                                })
+                                }))
                             };
                         }
                         // it should be unreachable
                         (a @ Operand::Const(_, _), b @ Operand::Const(_, _)) => {
-                            assert_same_types(lhs, rhs)?;
+                            acx.assert_same_types(lhs, rhs)?;
                             (a, b) // add simple const evaluation
                         }
                         (Operand::Const(ConstValue::Scalar(a), _), b) => {
@@ -691,7 +713,7 @@ fn analyze_expr<'hir>(
                             (a, coerce_const_scalar(acx.tcx, b, lhs.kind))
                         }
                         (a, b) => {
-                            assert_same_types(lhs, rhs)?;
+                            acx.assert_same_types(lhs, rhs)?;
                             (a, b)
                         }
                     };
@@ -699,7 +721,7 @@ fn analyze_expr<'hir>(
                     let kind = op.ty(acx.tcx, lhs.kind, lhs.kind);
                     acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
                 } else {
-                    assert_same_types(lhs, rhs)?;
+                    acx.assert_same_types(lhs, rhs)?;
                     let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
                     acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
                 }
@@ -742,7 +764,7 @@ fn analyze_expr<'hir>(
         expr::Call(call, args) => {
             let operands =
                 args.iter().map(|expr| analyze_expr(acx, expr)).collect::<Result<Vec<_>>>()?;
-            let types: Vec<_> = operands.iter().map(|(t, _)| *t).collect();
+            let types: Vec<_> = operands.iter().map(|(t, _)| t.kind).collect();
             let args: Vec<_> = operands.iter().map(|(_, o)| *o).collect();
 
             if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
@@ -756,31 +778,36 @@ fn analyze_expr<'hir>(
                 };
 
                 if let [(from, operand)] = operands[..] {
-                    let kind = CastKind::from_cast(from.kind, cast)
-                        .ok_or(Error::NonPrimitiveCast { from, cast })?;
+                    let kind = CastKind::from_cast(from.kind, cast).ok_or_else(|| {
+                        acx.err.emit(errors::NonPrimitiveCast {
+                            span: from.span,
+                            from: acx.hix.ty_fmt(from.kind),
+                            cast: acx.hix.ty_fmt(cast),
+                        })
+                    })?;
                     acx.push_temp_rvalue(
                         Ty::new(from.span, cast),
                         Rvalue::Cast(kind, operand, cast),
                     )
                 } else {
-                    return Err(Error::WrongFnArgs {
-                        expect: vec![cast],
-                        found: types,
+                    return Err(acx.err.emit(errors::MismatchFnSig {
+                        expect: acx.hix.sig_fmt(&[cast]),
+                        found: acx.hix.sig_fmt(&types),
                         caller: call.span,
                         target: None,
-                    });
+                    }));
                 }
             } else if let Some(&def) = acx.hix.decls.get(&call.name) {
                 let InstanceData { sig, span, symbol, hsig, .. } = acx.hix.instances[def];
                 assert_eq!(symbol, call.name); // todo: impossible?
 
-                if !types.iter().eq_by(sig.inputs(), |hir, mir| &hir.kind == mir) {
-                    return Err(Error::WrongFnArgs {
-                        expect: sig.inputs().to_vec(),
-                        found: types,
+                if !types.iter().eq(sig.inputs()) {
+                    return Err(acx.err.emit(errors::MismatchFnSig {
+                        expect: acx.hix.sig_fmt(sig.inputs()),
+                        found: acx.hix.sig_fmt(&types),
                         caller: call.span,
                         target: Some(span),
-                    });
+                    }));
                 }
 
                 let dest = acx.typed_place(sig.output());
@@ -796,7 +823,7 @@ fn analyze_expr<'hir>(
                 });
                 (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
             } else {
-                return Err(Error::NotFoundLocal(call));
+                return Err(acx.err.emit(errors::NotFoundLocal::ident(call)));
             }
         }
         expr::If(cond, then, else_) => analyze_branch_expr(
@@ -818,7 +845,7 @@ fn analyze_expr<'hir>(
                 if ty.is_never() {
                     let _ = mem::take(&mut acx.block);
                 } else {
-                    let ty = assert_same_types(ret_ty, ty)?;
+                    let ty = acx.assert_same_types(ret_ty, ty)?;
                     make_return(acx, ty, ret);
                 }
                 acx.end_of_block(Terminator::Return);
@@ -855,7 +882,7 @@ fn analyze_expr<'hir>(
                 let unit = Ty::new(expr.span, acx.tcx.types.unit);
                 let (loop_ty, _) =
                     analyze_expr(acx, &Expr { kind: expr::Block(stmts, span), span })?;
-                assert_same_types(unit, loop_ty)?;
+                acx.assert_same_types(unit, loop_ty)?;
 
                 let _looped = acx.end_of_block(Terminator::Goto { target: entry });
                 let exit = acx.current_block();
@@ -875,7 +902,7 @@ fn analyze_expr<'hir>(
                                 Ty::new(expr.span, operand.ty(&acx.body.local_decls, acx.tcx));
                             if let Some(ty) = infer {
                                 // TODO: propagate break span
-                                assert_same_types(ty, break_ty)?;
+                                acx.assert_same_types(ty, break_ty)?;
                             } else {
                                 infer = Some(break_ty);
                             }
@@ -884,7 +911,7 @@ fn analyze_expr<'hir>(
                                 .statements
                                 .push(Statement::Assign(break_place, Rvalue::Use(operand)));
                         } else {
-                            assert_same_types(infer.unwrap_or(unit), unit)?;
+                            acx.assert_same_types(infer.unwrap_or(unit), unit)?;
                         }
 
                         if let Some(infer) = infer {
@@ -907,7 +934,7 @@ fn analyze_stmt<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmt: &Stmt<'hir>,
     terminator: fn(&mut AnalyzeCx) -> Terminator<'hir>,
-) -> Result<'hir, Option<(Ty<'hir>, Operand<'hir>)>> {
+) -> Result<Option<(Ty<'hir>, Operand<'hir>)>> {
     Ok(match stmt.kind {
         ref stmt @ (stmt::Local(LocalStmt { init: expr, .. }) | stmt::Expr(expr, _)) => {
             let (ty, operand) = analyze_expr(acx, expr)?;
@@ -938,7 +965,7 @@ fn analyze_stmt<'hir>(
 fn analyze_local_block_unclosed<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmts: &[Stmt<'hir>],
-) -> Result<'hir, ()> {
+) -> Result<()> {
     for stmt in stmts {
         analyze_stmt(acx, stmt, goto_next)?;
     }
@@ -959,7 +986,7 @@ fn analyze_body<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmts: &[Stmt<'hir>],
     ret: Ty<'hir>,
-) -> Result<'hir, ()> {
+) -> Result<()> {
     if let Some((last, stmts)) = stmts.split_last() {
         analyze_local_block_unclosed(acx, stmts)?;
 
@@ -972,7 +999,8 @@ fn analyze_body<'hir>(
 
             if !ty.is_zst() {
                 unsafe {
-                    make_return(acx, assert_same_types_allow_never(ret, ty)?, operand);
+                    let ret = acx.assert_same_types_allow_never(ret, ty)?;
+                    make_return(acx, ret, operand);
                 }
             }
             acx.end_of_block(Terminator::Return);
@@ -981,18 +1009,18 @@ fn analyze_body<'hir>(
             assert!(stmt.is_none());
 
             if !acx.scope().returned {
-                assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
+                acx.assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
             }
             acx.end_of_block(Terminator::Return);
         });
     } else {
         let span = acx.scope().sig.map(|sig| sig.span).unwrap_or(ret.span);
-        assert_same_types(ret, Ty::new(span, acx.tcx.types.unit))?;
+        acx.assert_same_types(ret, Ty::new(span, acx.tcx.types.unit))?;
     }
     Ok(())
 }
 
-fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) -> Result<'hir, ()> {
+fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) -> Result<()> {
     acx.body.argc = sig.inputs.len();
     for &(mutability, pat, ty) in sig.inputs {
         let local = acx.body.local_decls.push(LocalDecl { mutability, ty: ty.kind });
@@ -1008,7 +1036,8 @@ pub fn analyze_fn_definition<'hir>(
     hix: &HirCtx<'hir>,
     sig: FnSig<'hir>,
     stmts: &[Stmt<'hir>],
-) -> Result<'hir, mir::Body<'hir>> {
+    err: &mut error::TyErrCtx,
+) -> Result<mir::Body<'hir>> {
     let ret = match sig.decl.output {
         FnRetTy::Default(span) => Ty::new(span, tcx.types.unit),
         FnRetTy::Return(ty) => ty,
@@ -1024,6 +1053,7 @@ pub fn analyze_fn_definition<'hir>(
         block: mir::BasicBlockData { statements: vec![], terminator: None },
         body: &mut body,
         scope: Some(tcx.empty_hir_scope(sig)),
+        err,
     };
 
     analyze_fn_prelude(&mut acx, sig.decl)?;
@@ -1036,15 +1066,6 @@ pub fn analyze_fn_definition<'hir>(
     }
 
     Ok(body)
-}
-
-#[derive(Debug)]
-pub struct Emit<'hir>(Vec<Error<'hir>>);
-
-impl<'hir> Emit<'hir> {
-    pub fn error(&mut self, err: Error<'hir>) {
-        self.0.push(err);
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -1061,16 +1082,12 @@ pub struct HirCtx<'hir> {
 
     pub defs: IndexVec<mir::DefId, mir::Body<'hir>>,
     pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
-    pub emit: Emit<'hir>,
+    pub err: error::TyErrCtx,
 }
 
 pub type Hx<'hir> = &'hir HirCtx<'hir>;
 
 impl<'hir> HirCtx<'hir> {
-    pub fn errors<R>(&self, f: impl FnOnce(&[Error<'hir>]) -> R) -> Option<R> {
-        if !self.emit.0.is_empty() { Some(f(&self.emit.0)) } else { None }
-    }
-
     pub fn symbol_name(&'hir self, def: mir::DefId) -> mir::SymbolName<'hir> {
         mir::SymbolName::new(self.tcx, &man::compute_symbol_name(self, def))
     }
@@ -1139,6 +1156,22 @@ impl<'hir> HirCtx<'hir> {
             None
         }
     }
+
+    fn ty_msg(&self, ty: Ty<'hir>) -> (DiagnosticMessage, Span) {
+        (self.ty_fmt(ty.kind), ty.span)
+    }
+
+    fn ty_fmt(&self, ty: mir::Ty<'hir>) -> DiagnosticMessage {
+        let mut cx = FmtPrinter::new(self);
+        ty.print(&mut cx).unwrap();
+        quoted(cx.into_buf(), color::Magenta).into()
+    }
+
+    fn sig_fmt(&self, sig: &[mir::Ty<'hir>]) -> DiagnosticMessage {
+        let mut cx = FmtPrinter::new(self);
+        cx.print_fn_sig(sig, self.tcx.types.unit).unwrap();
+        quoted(cx.into_buf(), color::Magenta).into()
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Hash, Debug)]
@@ -1148,14 +1181,14 @@ pub enum EntryFnType {
 }
 
 impl<'hir> HirCtx<'hir> {
-    pub fn pure(tcx: Tx<'hir>, name: Symbol) -> Self {
+    pub fn pure(tcx: Tx<'hir>, name: Symbol, handler: Handler) -> Self {
         Self {
             tcx,
             name,
             decls: Default::default(),
             defs: Default::default(),
             instances: Default::default(),
-            emit: Emit(vec![]),
+            err: error::TyErrCtx { handler },
         }
     }
 }
@@ -1173,15 +1206,15 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
     mir::FnSig { inputs_and_output: tcx.mk_type_list(&io), abi }
 }
 
-pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: &mut [Item<'hir>]) -> Result<'hir, ()> {
+pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: &mut [Item<'hir>]) -> Result<()> {
     let mut defs = Vec::with_capacity(32);
 
     let mut define =
         |hsig @ FnSig { decl, abi, span }, body: Option<_>, attrs| match hix.decls.entry(decl.name)
         {
             Entry::Occupied(prev) => {
-                hix.emit.error(Error::DefinedMultiple {
-                    name: decl.name,
+                hix.err.emit(errors::DefinedMultiple {
+                    name: quoted(decl.name, color::Magenta).into(),
                     def: hix.instances[*prev.get()].span,
                     redef: span,
                 });
@@ -1229,10 +1262,13 @@ pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: &mut [Item<'hir>]) ->
     //     }
     // }
 
+    let err = &mut hix.err as *mut _;
+
     let mut mir = IndexVec::<mir::DefId, _>::with_capacity(128);
     for (def, stmts) in defs {
         if let Some((sig, stmts)) = stmts {
-            let body = analyze_fn_definition(hix.tcx, hix, sig, stmts)?;
+            // Safety: todo
+            let body = analyze_fn_definition(hix.tcx, hix, sig, stmts, unsafe { &mut *err })?;
             assert_eq!(def, mir.push(body));
         }
     }

@@ -1,9 +1,0 @@
-[#ERROR_PLACEHOLDER] Error: mismatch types
-   ╭─[never_fail:4:12]
-   │
- 4 │     return x + 12.isize;
-   │            ┬   ────┬───  
-   │            ╰───────────── expected `!` 
-   │                    │     
-   │                    ╰───── found `isize` 
-───╯

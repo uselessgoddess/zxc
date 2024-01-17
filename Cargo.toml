@@ -4,5 +4,6 @@ members = [
     "lexer",
     "compiler",
     "driver",
-    "driver/trybuild"
-, "errors"]
+    "errors",
+    "tidy",
+]
