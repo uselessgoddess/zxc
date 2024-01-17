@@ -1,6 +1,6 @@
-[submodule "driver/trybuild"]
-	path = driver/trybuild
+[submodule "tidy/trybuild"]
+	path = tidy/trybuild
 	url = https://github.com/uselessgoddess/trybuild.git
-[submodule "errors/ariadne"]
-	path = errors/ariadne
+[submodule "compiler/errors/ariadne"]
+	path = compiler/errors/ariadne
 	url = https://github.com/uselessgoddess/ariadne.git

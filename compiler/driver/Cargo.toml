@@ -12,18 +12,17 @@ target-lexicon = { version = "0.12.12" }
 
 chumsky = { version = "1.0.0-alpha.6" }
 
-middle = { path = "../middle" }
-lexer = { path = "../lexer" }
-
-yansi = "1.0.0-rc.1"
-num_cpus = "1.16.0"
+yansi = { version = "1.0.0-rc.1" }
+num_cpus = { version = "1.16.0" }
 tempfile = { version = "3.9" }
 anyhow = { version = "1.0.79" }
 concolor = { version = "0.1.1", features = ["auto", "api"] }
 clap = { version = "4.4.11", features = ["derive"] }
 anstyle = { version = "1.0.4" }
-
 cc = { version = "1.0.83" }
+
+middle = { path = "../middle" }
+lexer = { path = "../lexer" }
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.52.0", features = ["Win32_Globalization"] }

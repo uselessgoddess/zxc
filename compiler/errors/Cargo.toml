@@ -6,6 +6,6 @@ edition = "2021"
 [dependencies]
 parking_lot = { version = "0.12.1" }
 yansi = { version = "1.0.0-rc.1" }
-ariadne = { path = "./ariadne", features = ["auto-color"] }
 
+ariadne = { path = "./ariadne", features = ["auto-color"] }
 lexer = { path = "../lexer" }

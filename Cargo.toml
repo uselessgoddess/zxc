@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "lexer",
-    "middle",
-    "driver",
-    "errors",
+    "compiler/driver",
     "tidy",
 ]
