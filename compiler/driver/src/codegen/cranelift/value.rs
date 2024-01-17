@@ -1,12 +1,12 @@
 use {
     super::FunctionCx,
-    middle::{
-        abi::{Abi, Align, Size, TyAbi},
-        mir::{ty, Local, ScalarRepr},
-    },
     cranelift::{
         codegen::ir::{immediates::Offset32, StackSlot},
         prelude::{InstBuilder, MemFlags, Type, Value, Variable},
+    },
+    middle::{
+        abi::{Abi, Align, Size, TyAbi},
+        mir::{ty, Local, ScalarRepr},
     },
 };
 

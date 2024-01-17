@@ -1,14 +1,14 @@
 use {
-    middle::{
-        abi::Conv,
-        hir::{self, Hx},
-        mir,
-    },
     cranelift::{
         codegen::Context,
         prelude::{AbiParam, FunctionBuilder, FunctionBuilderContext, InstBuilder, Signature},
     },
     cranelift_module::{Linkage, Module},
+    middle::{
+        abi::Conv,
+        hir::{self, Hx},
+        mir,
+    },
 };
 
 pub fn create_entry_wrapper(hix: Hx, m: &mut dyn Module, main_def: mir::DefId, is_main: bool) {

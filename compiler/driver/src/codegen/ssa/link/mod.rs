@@ -7,14 +7,13 @@ use {
     cc::windows_registry,
     command::Command,
     middle::{
-        MaybeTempDir,
         sess::{
             self, output, DiagnosticBuilder, Handler, IntoDiagnostic, ModuleType, OutputFilenames,
             OutputType,
         },
         spec::{Cc, LinkOutputKind, LinkerFlavor, Lld, RelocModel},
         symbol::Symbol,
-        ErrorGuaranteed, Session, Tx,
+        ErrorGuaranteed, MaybeTempDir, Session, Tx,
     },
     std::{
         fs, io, mem,
@@ -373,9 +372,9 @@ fn link_natively(
                 if let Some(code) = link.status.code() {
                     if sess.target.is_like_msvc
                         && flavor == LinkerFlavor::Msvc(Lld::No)
-                        // && sess.opts.C.linker.is_none()
                         && linker_path.to_str() == Some("link.exe")
                         && (code < 1000 || code > 9999)
+                    // && sess.opts.C.linker.is_none()
                     {
                         let is_vs_installed = windows_registry::find_vs_version().is_ok();
                         let has_linker =

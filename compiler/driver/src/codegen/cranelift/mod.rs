@@ -1,15 +1,6 @@
 use {
     self::value::{CPlace, CValue, Pointer},
     crate::codegen::ssa::CodegenResults,
-    middle::{
-        abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
-        mir::{
-            ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
-            Local, Operand, Place, Rvalue, Statement, Terminator, Ty, UnOp,
-        },
-        sess::{OptLevel, OutputFilenames},
-        IndexVec, Session, Tx,
-    },
     cranelift::{
         codegen::{
             ir::{Function, UserFuncName},
@@ -23,6 +14,15 @@ use {
         },
     },
     cranelift_module::{FuncId, Linkage, Module, ModuleError},
+    middle::{
+        abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
+        mir::{
+            ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
+            Local, Operand, Place, Rvalue, Statement, Terminator, Ty, UnOp,
+        },
+        sess::{OptLevel, OutputFilenames},
+        IndexVec, Session, Tx,
+    },
     std::{any::Any, fs::File, sync::Arc},
     target_lexicon::PointerWidth,
 };
@@ -607,13 +607,13 @@ fn build_isa(sess: &Session) -> Result<Arc<dyn isa::TargetIsa + 'static>, SetErr
 }
 
 use {
+    cranelift_object::{ObjectBuilder, ObjectModule},
     middle::{
         hir::Hx,
         mir::{InstanceDef, MonoItem, MonoItemData},
         sess::OutputType,
         symbol::Symbol,
     },
-    cranelift_object::{ObjectBuilder, ObjectModule},
 };
 
 fn make_module(sess: &Session, name: String) -> ObjectModule {

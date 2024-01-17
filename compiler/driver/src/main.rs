@@ -14,7 +14,7 @@ use {
 
 use middle::{
     ariadne::{self, Color, Label, Report, ReportKind},
-    errors::{color, SourceFile, SourceMap},
+    errors::{color, DynEmitter, EmitterWriter, Handler, SourceFile, SourceMap},
     hir::{self, HirCtx, Hx},
     mir::{self, InstanceDef},
     par::WorkerLocal,
@@ -22,7 +22,6 @@ use middle::{
     sess::{self, EarlyErrorHandler, Options},
     symbol::Symbol,
     ErrorGuaranteed, Tx, TyCtx,
-    errors::{DynEmitter, EmitterWriter, Handler},
 };
 
 use {

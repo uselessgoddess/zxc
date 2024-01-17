@@ -1,7 +1,7 @@
 use {
     super::{type_sign, value::CValue, FunctionCx},
-    middle::mir::BinOp,
     cranelift::prelude::{InstBuilder, IntCC},
+    middle::mir::BinOp,
 };
 
 pub(crate) fn bin_op_to_int_cc(bin_op: BinOp, signed: bool) -> Option<IntCC> {
