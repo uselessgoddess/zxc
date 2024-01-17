@@ -23,13 +23,13 @@ impl dyn Linker + '_ {
 }
 
 use {
-    compiler::{spec::LinkerFlavor, Session},
+    middle::{spec::LinkerFlavor, Session},
     std::path::Path,
 };
 
 use {
     cc::windows_registry,
-    compiler::{
+    middle::{
         sess::OptLevel,
         spec::{Cc, LinkOutputKind, Lld},
     },

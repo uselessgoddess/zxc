@@ -1,5 +1,5 @@
 use {
-    compiler::{hir::Hx, mir, sess::OutputFilenames, Session},
+    middle::{hir::Hx, mir, sess::OutputFilenames, Session},
     std::any::Any,
 };
 

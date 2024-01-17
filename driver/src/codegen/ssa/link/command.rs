@@ -4,7 +4,7 @@
 //!  https://doc.rust-lang.org/stable/nightly-rustc/src/rustc_codegen_ssa/back/command.rs.html
 
 use {
-    compiler::spec::LldFlavor,
+    middle::spec::LldFlavor,
     std::{
         ffi::{OsStr, OsString},
         fmt, io, mem,

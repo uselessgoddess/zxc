@@ -1,5 +1,5 @@
 use {
-    compiler::{
+    middle::{
         errors::SourceMap,
         par,
         rayon::ThreadPoolBuilder,

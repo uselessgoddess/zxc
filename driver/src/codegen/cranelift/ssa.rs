@@ -1,6 +1,6 @@
 use {
     super::FunctionCx,
-    compiler::{
+    middle::{
         mir::{Local, Statement, Ty},
         IndexVec,
     },

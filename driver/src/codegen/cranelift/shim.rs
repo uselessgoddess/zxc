@@ -1,5 +1,5 @@
 use {
-    compiler::{
+    middle::{
         abi::Conv,
         hir::{self, Hx},
         mir,

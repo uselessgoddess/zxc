@@ -1,6 +1,6 @@
 use {
     super::FunctionCx,
-    compiler::{
+    middle::{
         abi::{Abi, Align, Size, TyAbi},
         mir::{ty, Local, ScalarRepr},
     },

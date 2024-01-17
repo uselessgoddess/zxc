@@ -12,7 +12,7 @@ use {
     cranelift::{codegen::isa, prelude::settings},
 };
 
-use compiler::{
+use middle::{
     ariadne::{self, Color, Label, Report, ReportKind},
     errors::{color, SourceFile, SourceMap},
     hir::{self, HirCtx, Hx},
@@ -22,11 +22,11 @@ use compiler::{
     sess::{self, EarlyErrorHandler, Options},
     symbol::Symbol,
     ErrorGuaranteed, Tx, TyCtx,
+    errors::{DynEmitter, EmitterWriter, Handler},
 };
 
 use {
     chumsky::Parser,
-    compiler::errors::{DynEmitter, EmitterWriter, Handler},
     lexer::ParseBuffer,
     std::{
         collections::BTreeMap,

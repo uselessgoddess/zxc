@@ -1,6 +1,6 @@
 use {
     super::{type_sign, value::CValue, FunctionCx},
-    compiler::mir::BinOp,
+    middle::mir::BinOp,
     cranelift::prelude::{InstBuilder, IntCC},
 };
 

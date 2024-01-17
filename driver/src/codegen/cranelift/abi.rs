@@ -1,6 +1,6 @@
 use {
     super::{codegen_operand, codegen_place, sig_from_abi, CPlace, CValue, FunctionCx},
-    compiler::{
+    middle::{
         abi::{ArgAbi, PassMode},
         mir::{self, ty, BasicBlock, Operand, Place},
     },

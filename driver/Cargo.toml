@@ -12,7 +12,7 @@ target-lexicon = { version = "0.12.12" }
 
 chumsky = { version = "1.0.0-alpha.6" }
 
-compiler = { path = "../compiler" }
+middle = { path = "../middle" }
 lexer = { path = "../lexer" }
 
 yansi = "1.0.0-rc.1"

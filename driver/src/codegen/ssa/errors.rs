@@ -1,5 +1,5 @@
 use {
-    compiler::{
+    middle::{
         diagnostic,
         sess::{DiagnosticBuilder, Emission, Handler, IntoDiagnostic},
     },

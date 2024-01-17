@@ -1,6 +1,6 @@
 use {
     clap::{Parser, ValueEnum},
-    compiler::sess::{EarlyErrorHandler, OptionDescrs},
+    middle::sess::{EarlyErrorHandler, OptionDescrs},
     std::path::PathBuf,
 };
 

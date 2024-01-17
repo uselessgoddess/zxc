@@ -6,7 +6,8 @@ use {
     crate::codegen::ssa::link::linker::Linker,
     cc::windows_registry,
     command::Command,
-    compiler::{
+    middle::{
+        MaybeTempDir,
         sess::{
             self, output, DiagnosticBuilder, Handler, IntoDiagnostic, ModuleType, OutputFilenames,
             OutputType,
@@ -266,6 +267,7 @@ mod win {
             if len_written as usize == len { cp } else { CP_OEMCP }
         }
     }
+
     /// Try to convert a multi-byte string to a UTF-8 string using the given code page
     /// The string does not need to be null terminated.
     ///
@@ -423,7 +425,7 @@ pub fn link_binary(sess: &Session, codegen_results: &CodegenResults, outputs: &O
             .prefix("zxc")
             .tempdir()
             .unwrap_or_else(|error| sess.emit_fatal(errors::CreateTempDir { error }));
-        let path = compiler::MaybeTempDir::new(tmpdir, false);
+        let path = MaybeTempDir::new(tmpdir, false);
         let output =
             sess::out_filename(sess, module_type, outputs, codegen_results.info.local_module_name);
         let module_name = codegen_results.info.local_module_name.as_str();

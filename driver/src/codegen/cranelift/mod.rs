@@ -1,7 +1,7 @@
 use {
     self::value::{CPlace, CValue, Pointer},
     crate::codegen::ssa::CodegenResults,
-    compiler::{
+    middle::{
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
         mir::{
             ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
@@ -607,7 +607,7 @@ fn build_isa(sess: &Session) -> Result<Arc<dyn isa::TargetIsa + 'static>, SetErr
 }
 
 use {
-    compiler::{
+    middle::{
         hir::Hx,
         mir::{InstanceDef, MonoItem, MonoItemData},
         sess::OutputType,

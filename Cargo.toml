@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "lexer",
-    "compiler",
+    "middle",
     "driver",
     "errors",
     "tidy",
