@@ -671,10 +671,6 @@ fn analyze_expr<'hir>(
             }
         }
         expr::Unary(op, expr) => match op {
-            UnOp::Neg => {
-                let (ty, operand) = analyze_expr(acx, expr)?;
-                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(mir::UnOp::Neg, operand))
-            }
             UnOp::Deref => {
                 let (ty, operand) = analyze_expr(acx, expr)?;
                 if let Operand::Copy(place) = operand
@@ -686,7 +682,20 @@ fn analyze_expr<'hir>(
                     return Err(acx.err.emit(errors::InvalidDeref { ty: acx.hix.ty_msg(ty) }));
                 }
             }
-            _ => todo!(),
+            mir => {
+                let (ty, operand) = analyze_expr(acx, expr)?;
+                acx.push_temp_rvalue(
+                    ty,
+                    Rvalue::UnaryOp(
+                        match mir {
+                            UnOp::Not => mir::UnOp::Not,
+                            UnOp::Neg => mir::UnOp::Neg,
+                            UnOp::Deref => unreachable!(),
+                        },
+                        operand,
+                    ),
+                )
+            }
         },
         expr::Binary(op, lhs, rhs) => {
             if let Some(op) = mir::BinOp::from_parse(op) {

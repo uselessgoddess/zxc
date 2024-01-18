@@ -1,0 +1,4 @@
+#[start]
+fn main(argc: isize, _: isize) -> isize {
+    (!0 != -1).isize
+}

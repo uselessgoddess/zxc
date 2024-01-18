@@ -2,6 +2,7 @@
 fn ui() {
     let t = trybuild::TestCases::new();
     t.pass("ui/if.src");
+    t.pass("ui/not.src");
     t.pass("ui/lazy_op.src");
     t.pass("ui/main.src");
     t.pass("ui/sample.src");
