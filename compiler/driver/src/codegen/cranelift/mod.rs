@@ -218,9 +218,18 @@ pub(crate) fn codegen_place<'tcx>(
     fx: &mut FunctionCx<'_, '_, 'tcx>,
     place: Place<'tcx>,
 ) -> CPlace<'tcx> {
-    assert!(place.projection.is_empty());
+    let mut cplace = fx.local_place(place.local);
 
-    fx.local_place(place.local)
+    for elem in place.projection {
+        match elem {
+            PlaceElem::Deref => {
+                cplace = cplace.place_deref(fx);
+            }
+            PlaceElem::Subtype(_) => todo!(),
+        }
+    }
+
+    cplace
 }
 
 pub(crate) fn codegen_operand<'tcx>(
@@ -243,12 +252,17 @@ fn codegen_stmt<'tcx>(
 ) {
     match stmt {
         Statement::Assign(place, rvalue) => {
-            let place = codegen_place(fx, *place);
-            let dst_ty = place.layout();
+            let lvalue = codegen_place(fx, *place);
+            let dst_ty = lvalue.layout();
             match *rvalue {
                 Rvalue::Use(operand) => {
                     let val = codegen_operand(fx, operand);
-                    place.write_cvalue(fx, val);
+                    lvalue.write_cvalue(fx, val);
+                }
+                Rvalue::Ref(_, place) => {
+                    let place = codegen_place(fx, place);
+                    let ref_ = place.place_ref(fx, lvalue.layout());
+                    lvalue.write_cvalue(fx, ref_);
                 }
                 Rvalue::UseDeref(_) => todo!(),
                 Rvalue::BinaryOp(op, lhs, rhs) => {
@@ -256,7 +270,7 @@ fn codegen_stmt<'tcx>(
                     let rhs = codegen_operand(fx, rhs);
 
                     let val = codegen_binop(fx, op, lhs, rhs);
-                    place.write_cvalue(fx, val);
+                    lvalue.write_cvalue(fx, val);
                 }
                 Rvalue::UnaryOp(op, operand) => {
                     let operand = codegen_operand(fx, operand);
@@ -272,7 +286,7 @@ fn codegen_stmt<'tcx>(
                             _ => unreachable!("un op Neg for {:?}", layout.ty),
                         },
                     };
-                    place.write_cvalue(fx, res);
+                    lvalue.write_cvalue(fx, res);
                 }
                 Rvalue::Cast(_kind, operand, cast_ty) => {
                     let operand = codegen_operand(fx, operand);
@@ -282,7 +296,7 @@ fn codegen_stmt<'tcx>(
                     let clif_ty = fx.clif_type(cast_ty).unwrap();
                     let from = operand.load_scalar(fx);
                     let val = cast::clif_intcast(fx, from, clif_ty, type_sign(from_ty));
-                    place.write_cvalue(fx, CValue::by_val(val, dst_ty))
+                    lvalue.write_cvalue(fx, CValue::by_val(val, dst_ty))
                 }
             }
         }
@@ -610,7 +624,7 @@ use {
     cranelift_object::{ObjectBuilder, ObjectModule},
     middle::{
         hir::Hx,
-        mir::{InstanceDef, MonoItem, MonoItemData},
+        mir::{InstanceDef, MonoItem, MonoItemData, PlaceElem},
         sess::OutputType,
         symbol::Symbol,
     },

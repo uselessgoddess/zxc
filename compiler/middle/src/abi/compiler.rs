@@ -40,6 +40,12 @@ impl<'tcx> TyCtx<'tcx> {
                         todo!()
                     }
                 }
+                TyKind::Ref(_, _) => LayoutKind {
+                    abi: Abi::Scalar(Scalar::Pointer),
+                    size: Size::from_bytes(8),
+                    align: Align::from_bytes(8).expect("compiler query"),
+                    shape: FieldsShape::Primitive,
+                },
                 TyKind::FnDef(_) => ZST_LAYOUT,
                 TyKind::Never => ZST_LAYOUT, // or unreachable?
             },
@@ -59,6 +65,7 @@ impl<'tcx> TyCtx<'tcx> {
                         PassMode::Direct
                     }
                 }
+                TyKind::Ref(_, _) => PassMode::Direct,
                 TyKind::FnDef(_) => PassMode::Ignore,
                 TyKind::Never => PassMode::Ignore,
             },

@@ -11,6 +11,7 @@ ast_enum_of_structs! {
         Ident(Ident<'lex>),
         Paren(Paren<'lex>),
         Tuple(Tuple<'lex>),
+        Reference(Reference<'lex>),
         Never(Never),
     }
 }
@@ -38,9 +39,22 @@ pub struct Tuple<'lex> {
     pub items: Punctuated<Type<'lex>, Token![,]>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Reference<'a> {
+    pub ref_token: Token![&],
+    pub mutability: Option<Token![mut]>,
+    pub ty: Box<Type<'a>>,
+}
+
 impl<'lex> Parse<'lex> for Type<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         parse_type(input)
+    }
+}
+
+impl<'lex> Parse<'lex> for Reference<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(Reference { ref_token: input.parse()?, mutability: input.parse()?, ty: input.parse()? })
     }
 }
 
@@ -77,6 +91,8 @@ fn parse_type<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Type<'lex>> 
         })
     } else if lookahead.peek(Ident) {
         input.parse().map(Type::Ident)
+    } else if lookahead.peek(Token![&]) {
+        input.parse().map(Type::Reference)
     } else if lookahead.peek(Token![!]) {
         input.parse().map(Type::Never)
     } else {

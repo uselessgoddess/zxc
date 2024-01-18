@@ -7,3 +7,4 @@ error[E0002]: type mismatch
    │                     │  
    │                     ╰── expected `i32`, found `@unit`
 ───╯
+error: aborting due to previous error

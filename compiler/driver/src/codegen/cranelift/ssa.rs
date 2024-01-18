@@ -1,7 +1,7 @@
 use {
     super::FunctionCx,
     middle::{
-        mir::{Local, Statement, Ty},
+        mir::{Local, Rvalue, Statement, Ty},
         IndexVec,
     },
 };
@@ -26,15 +26,10 @@ pub(crate) fn analyze(fx: &FunctionCx<'_, '_, '_>) -> IndexVec<Local, SsaKind> {
 
     for bb in fx.mir.basic_blocks.iter() {
         for stmt in bb.statements.iter() {
-            match stmt {
-                Statement::Assign(_place, rvalue) => match rvalue {
-                    // TODO: address is one possible case when ssa unavailable
-                    // Rvalue::Ref(_, _, place) | Rvalue::AddressOf(_, place) => {
-                    //     flag_map[place.local] = SsaKind::NotSsa;
-                    // }
-                    _ => {}
-                },
-                _ => {}
+            if let Statement::Assign(_, rvalue) = stmt
+                && let Rvalue::Ref(_, place) = rvalue
+            {
+                flag_map[place.local] = SsaKind::NotSsa;
             }
         }
     }

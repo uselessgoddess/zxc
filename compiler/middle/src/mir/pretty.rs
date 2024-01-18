@@ -5,7 +5,7 @@ use {
             self,
             consts::ConstInt,
             ty::{self, Abi},
-            BinOp, ConstValue, Mutability, Operand, Rvalue, Statement, Terminator,
+            BinOp, ConstValue, Mutability, Operand, PlaceElem, Rvalue, Statement, Terminator,
             TyKind::{self},
             UnOp,
         },
@@ -230,6 +230,9 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
                 p!(print(sig))
             }
             ty::Never => p!("!"),
+            ty::Ref(mutbl, ty) => {
+                p!("&", write("{}", mutbl.prefix_str()), print(ty));
+            }
         }
 
         Ok(())
@@ -262,11 +265,37 @@ impl<'tcx> Terminator<'tcx> {
     }
 }
 
+fn pre_fmt_projection(projection: &[PlaceElem<'_>], fmt: &mut impl fmt::Write) -> fmt::Result {
+    for &elem in projection.iter().rev() {
+        match elem {
+            PlaceElem::Subtype(_) => {
+                write!(fmt, "(")?;
+            }
+            PlaceElem::Deref => {
+                write!(fmt, "(*")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn post_fmt_projection(projection: &[PlaceElem<'_>], fmt: &mut impl fmt::Write) -> fmt::Result {
+    for &elem in projection.iter().rev() {
+        match elem {
+            PlaceElem::Subtype(ty) => write!(fmt, "as subtype {ty:?}")?,
+            PlaceElem::Deref => write!(fmt, ")")?,
+        }
+    }
+    Ok(())
+}
+
 define_print_and_forward_display! {
     (self, cx):
 
     mir::Place<'tcx> {
+        pre_fmt_projection(self.projection, cx)?;
         p!(write("_{}", self.local.raw()));
+        post_fmt_projection(self.projection, cx)?;
     }
 
     Operand<'tcx> {
@@ -310,6 +339,9 @@ define_print_and_forward_display! {
     Rvalue<'tcx> {
         match self {
             Rvalue::Use(operand) => p!(print(operand)),
+            Rvalue::Ref(mutbl, place) => {
+                p!(write("&{}", mutbl.prefix_str()), print(place))
+            },
             Rvalue::UseDeref(operand) =>p!("*", print(operand)),
             Rvalue::UnaryOp(op, operand) => {
                 let op = match op {

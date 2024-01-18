@@ -1,0 +1,4 @@
+fn main() {
+    let mut x = &mut &mut &mut 13;
+    x = 12;
+}

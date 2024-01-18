@@ -70,11 +70,17 @@ impl UintTy {
     }
 }
 
+pub struct TypeAndMut<'tcx> {
+    pub ty: Ty<'tcx>,
+    pub mutbl: Mutability,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TyKind<'cx> {
     Bool,
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
+    Ref(Mutability, Ty<'cx>),
     FnDef(mir::DefId), // has no generics now
     Never,
 }
@@ -98,6 +104,10 @@ impl<'cx> Ty<'cx> {
                 "isize" => tcx.types.isize,
                 _ => todo!(),
             },
+            Type::Reference(ty::Reference { mutability, ty, .. }) => tcx.intern_ty(Ref(
+                Mutability::from_bool(mutability.is_some()),
+                Self::analyze(tcx, ty),
+            )),
             Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
             Type::Tuple(Tuple { items, .. }) => tcx.intern.intern_ty(
                 tcx.arena,
@@ -157,6 +167,21 @@ impl<'cx> Ty<'cx> {
     pub fn is_ptr_sized_int(&self) -> bool {
         matches!(self.kind(), Int(IntTy::Isize) /* | Uint(ty::UintTy::Usize)*/)
     }
+
+    pub fn builtin_deref(self, _explicit: bool) -> Option<TypeAndMut<'cx>> {
+        match self.kind() {
+            Ref(mutbl, ty) => Some(TypeAndMut { ty, mutbl }),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn ref_mutability(self) -> Option<Mutability> {
+        match self.kind() {
+            Ref(mutability, _) => Some(mutability),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Debug for Ty<'_> {
@@ -177,6 +202,9 @@ impl fmt::Debug for Ty<'_> {
                     write!(f, "({})", util::join_fmt_debug(list))
                 }
             }
+            Ref(mutbl, ty) => {
+                write!(f, "&{}{ty:?}", mutbl.prefix_str())
+            }
             FnDef(def) => {
                 write!(f, "fn({def:?})")
             }
@@ -185,12 +213,15 @@ impl fmt::Debug for Ty<'_> {
     }
 }
 
-use crate::{
-    hir::HirCtx,
-    mir,
-    symbol::{sym, Symbol},
-    tcx::Interned,
-    util, Tx,
+use {
+    crate::{
+        hir::HirCtx,
+        mir::{self, Mutability},
+        symbol::{sym, Symbol},
+        tcx::Interned,
+        util, Tx,
+    },
+    lexer::ty,
 };
 pub use {list::List, sty::*, TyKind::*};
 

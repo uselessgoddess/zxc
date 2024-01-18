@@ -3,6 +3,7 @@ pub mod check;
 mod error;
 mod errors;
 mod scope;
+mod syntax;
 mod ty;
 
 use {
@@ -15,8 +16,8 @@ use {
             mono::{Linkage, Visibility},
             ty::Abi,
             CastKind, CodegenUnit, ConstValue, InstanceData, InstanceDef, Local, LocalDecl,
-            MonoItem, MonoItemData, Mutability, Operand, Place, Rvalue, ScalarRepr, Statement,
-            SwitchTargets, Terminator,
+            MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue, ScalarRepr,
+            Statement, SwitchTargets, Terminator, TyKind,
         },
         pretty::{FmtPrinter, Print, Printer},
         sess::ModuleType,
@@ -28,11 +29,11 @@ use {
         ariadne::{Color, Fmt},
         color, DiagnosticMessage, Handler,
     },
-    lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned, UnOp},
+    lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned},
     smallvec::SmallVec,
     std::{collections::hash_map::Entry, fmt, iter, marker::PhantomData, mem, num::NonZeroU8},
 };
-pub use {scope::Scope, ty::Ty};
+pub use {scope::Scope, syntax::UnOp, ty::Ty};
 
 #[derive(Debug, Copy, Clone)]
 pub struct ForeignItem<'hir> {
@@ -104,6 +105,7 @@ pub enum ExprKind<'hir> {
     Break(Option<&'hir Expr<'hir>>),
     Loop(&'hir [Stmt<'hir>], Span),
     Assign(&'hir Expr<'hir>, &'hir Expr<'hir>),
+    AddrOf(Mutability, &'hir Expr<'hir>),
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +127,7 @@ fn analyze_block<'tcx>(tcx: Tx<'tcx>, block: &lexer::Block<'tcx>) -> Expr<'tcx> 
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &lexer::Expr<'tcx>) -> Self {
         use lexer::expr::{
-            Assign, Binary, Block, Break, Call, If, Loop, Paren, Return, TailCall, Unary,
+            Assign, Binary, Block, Break, Call, If, Loop, Paren, Reference, Return, TailCall, Unary,
         };
 
         let span = expr.span();
@@ -133,7 +135,7 @@ impl<'tcx> Expr<'tcx> {
             lexer::Expr::Lit(lit) => expr::Lit(*lit),
             lexer::Expr::Paren(Paren { expr, .. }) => return Self::analyze(tcx, expr),
             lexer::Expr::Unary(Unary { op, expr }) => {
-                expr::Unary(*op, tcx.arena.expr.alloc(Self::analyze(tcx, expr)))
+                expr::Unary(UnOp::from_parse(*op), tcx.arena.expr.alloc(Self::analyze(tcx, expr)))
             }
             lexer::Expr::Binary(Binary { left, op, right }) => expr::Binary(
                 *op,
@@ -187,6 +189,10 @@ impl<'tcx> Expr<'tcx> {
             lexer::Expr::Assign(Assign { left, right, .. }) => expr::Assign(
                 tcx.arena.expr.alloc(Self::analyze(tcx, left)),
                 tcx.arena.expr.alloc(Self::analyze(tcx, right)),
+            ),
+            lexer::Expr::Reference(Reference { mutability, expr, .. }) => expr::AddrOf(
+                Mutability::from_bool(mutability.is_some()),
+                tcx.arena.expr.alloc(Self::analyze(tcx, expr)),
             ),
         };
         Self { kind, span }
@@ -329,6 +335,10 @@ struct AnalyzeCx<'mir, 'hir> {
 }
 
 impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
+    pub fn local_decls(&self) -> &mir::LocalDecls<'hir> {
+        &self.body.local_decls
+    }
+
     pub fn scope(&mut self) -> &mut Scope<'hir> {
         self.scope.as_mut().expect("calling `enter_scope` without `exit_scope`")
     }
@@ -406,7 +416,12 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     ) -> (Ty<'hir>, Place<'hir>) {
         // Simple one-level optimization of MIR
         match rvalue {
-            Rvalue::Use(Operand::Copy(place)) => (ty, place),
+            Rvalue::Use(Operand::Copy(place))
+                if self.body.local_decls[place.local].mutability == mutability =>
+            {
+                // otherwise you'll have to create new place
+                (ty, place)
+            }
             _ => {
                 let place =
                     Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
@@ -608,6 +623,7 @@ fn analyze_expr<'hir>(
     expr: &Expr<'hir>,
 ) -> Result<(Ty<'hir>, Operand<'hir>)> {
     let (ty, rvalue) = match expr.kind {
+        expr::Lit(Lit::Str(_)) | expr::Lit(Lit::Float(_)) => todo!(),
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
             let ty = acx.tcx.types.i32;
             (
@@ -641,8 +657,11 @@ fn analyze_expr<'hir>(
             let (lty, lhs) = analyze_expr(acx, lvalue)?;
             let (rty, rhs) = analyze_expr(acx, rvalue)?;
 
+            // it's either mutable reference or mutable place
+            //
             if let Some(place) = lhs.place()
-                && acx.body.local_decls[place.local].mutability.is_mut()
+                && let decl = acx.local_decls()[place.local]
+                && decl.ty.ref_mutability().unwrap_or_else(|| decl.mutability).is_mut()
             {
                 let ty = acx.assert_same_types(lty, rty)?;
                 acx.block.statements.push(Statement::Assign(place, Rvalue::Use(rhs)));
@@ -652,9 +671,20 @@ fn analyze_expr<'hir>(
             }
         }
         expr::Unary(op, expr) => match op {
-            UnOp::Neg(_) => {
+            UnOp::Neg => {
                 let (ty, operand) = analyze_expr(acx, expr)?;
-                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(mir::UnOp::from_parse(op), operand))
+                acx.push_temp_rvalue(ty, Rvalue::UnaryOp(mir::UnOp::Neg, operand))
+            }
+            UnOp::Deref => {
+                let (ty, operand) = analyze_expr(acx, expr)?;
+                if let Operand::Copy(place) = operand
+                    && let Some(place_ty) = place.ty(acx.tcx, acx.local_decls()).builtin_deref(true)
+                {
+                    let place = place.project_deeper(acx.tcx, &[PlaceElem::Deref]);
+                    (ty.map(|_| place_ty.ty), Operand::Copy(place))
+                } else {
+                    return Err(acx.err.emit(errors::InvalidDeref { ty: acx.hix.ty_msg(ty) }));
+                }
             }
             _ => todo!(),
         },
@@ -924,7 +954,28 @@ fn analyze_expr<'hir>(
                 })
             })?
         }
-        panic => todo!("{panic:?}"),
+        expr::AddrOf(mutability, expr) => {
+            let (ty, operand) = analyze_expr(acx, expr)?;
+
+            // fixme: Probably too long to find directly by scope locals map
+            //  so we only do it if the mutability checking is really necessary
+            // If it looks like a user-defined local. We should check its mutability
+            if mutability.is_mut()
+                && let Operand::Copy(place) = operand
+                && acx.body.local_decls[place.local].mutability != mutability
+                && let Some((&symbol, _)) = acx.scope().locals.iter().find(|(_, (_, p))| {
+                    if let Some(p) = p { p.local == place.local } else { false }
+                })
+            {
+                acx.err.emit(errors::MutBorrowImmut { local: symbol, borrow: expr.span });
+            }
+
+            let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
+            acx.push_temp_rvalue(
+                ty.map(|ty| acx.tcx.intern_ty(TyKind::Ref(mutability, ty))),
+                Rvalue::Ref(mutability, place),
+            )
+        }
     };
 
     Ok((ty.with_span(expr.span), rvalue))

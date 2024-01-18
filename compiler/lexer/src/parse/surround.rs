@@ -230,6 +230,18 @@ impl Spanned for ForeignMod<'_> {
     }
 }
 
+impl Spanned for expr::Reference<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.ref_token.span, self.expr.span())
+    }
+}
+
+impl Spanned for ty::Reference<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.ref_token.span, self.ty.span())
+    }
+}
+
 #[test]
 fn spanned() {
     use crate::{parenthesized, parse::Expr, util::lex_it};

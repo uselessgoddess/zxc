@@ -10,6 +10,8 @@ pub enum Code {
     E0006,
     E0007,
     E0008,
+    E0009,
+    E0010,
 }
 
 impl fmt::Display for Code {

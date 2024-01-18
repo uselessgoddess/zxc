@@ -52,7 +52,7 @@ impl<'tcx> Visitor<'tcx> for ConstGotoOptimizationFinder<'_, 'tcx> {
                 let target_bb_terminator = target_bb.terminator();
                 let (discr, targets) = target_bb_terminator.as_switch()?;
                 if discr.place() == Some(*place) {
-                    let switch_ty = place.ty(&self.body.local_decls, self.tcx);
+                    let switch_ty = place.ty(self.tcx, &self.body.local_decls);
                     debug_assert_eq!(switch_ty, *ty);
                     // We now know that the Switch matches on the const place
                     // Now find which value in the Switch matches the const value.

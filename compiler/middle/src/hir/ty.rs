@@ -9,6 +9,16 @@ pub struct Ty<'hir> {
     pub span: Span,
 }
 
+impl<'hir> Ty<'hir> {
+    pub fn map<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(mir::Ty<'hir>) -> mir::Ty<'hir>,
+    {
+        self.kind = f(self.kind);
+        self
+    }
+}
+
 impl Clone for Ty<'_> {
     fn clone(&self) -> Self {
         *self

@@ -96,6 +96,7 @@ impl<'lex> Parse<'lex> for BinOp {
 
 #[derive(Debug, Copy, Clone)]
 pub enum UnOp {
+    Deref(Token![*]),
     Not(Token![!]),
     Neg(Token![-]),
 }
@@ -104,7 +105,9 @@ impl<'lex> Parse<'lex> for UnOp {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         // TODO: add lookahead implementation to `BinOp`
         let mut lookahead = input.lookahead();
-        if lookahead.peek(Token![!]) {
+        if lookahead.peek(Token![*]) {
+            input.parse().map(UnOp::Deref)
+        } else if lookahead.peek(Token![!]) {
             input.parse().map(UnOp::Not)
         } else if lookahead.peek(Token![-]) {
             input.parse().map(UnOp::Neg)
@@ -130,6 +133,7 @@ ast_enum_of_structs! {
         Break(Break<'a>),
         Loop(Loop<'a>),
         Assign(Assign<'a>),
+        Reference(Reference<'a>),
     }
 }
 
@@ -208,6 +212,13 @@ pub struct Assign<'a> {
     pub right: Box<Expr<'a>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Reference<'a> {
+    pub ref_token: Token![&],
+    pub mutability: Option<Token![mut]>,
+    pub expr: Box<Expr<'a>>,
+}
+
 impl<'lex> Parse<'lex> for Expr<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         let lhs = unary_expr(input)?;
@@ -259,6 +270,12 @@ impl<'lex> Parse<'lex> for If<'lex> {
 impl<'lex> Parse<'lex> for Loop<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         Ok(Self { loop_token: input.parse()?, body: input.parse()? })
+    }
+}
+
+impl<'lex> Parse<'lex> for Reference<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(Self { ref_token: input.parse()?, mutability: input.parse()?, expr: input.parse()? })
     }
 }
 
@@ -334,7 +351,13 @@ fn parse_expr<'lex>(
 }
 
 fn unary_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
-    if input.peek(Token![!]) || input.peek(Token![-]) {
+    if input.peek(Token![&]) {
+        Ok(Expr::Reference(Reference {
+            ref_token: input.parse()?,
+            mutability: input.parse()?,
+            expr: Box::new(unary_expr(input)?),
+        }))
+    } else if input.peek(Token![!]) || input.peek(Token![-]) || input.peek(Token![*]) {
         Ok(Expr::Unary(Unary { op: input.parse()?, expr: Box::new(unary_expr(input)?) }))
     } else {
         trailer_expr(input)
@@ -631,4 +654,18 @@ fn loop_expr() {
             ..
         })
     );
+}
+
+#[test]
+fn ref_expr() {
+    let expr: Expr = lex_it!("&mut 12 + &12").parse().unwrap();
+    if let Expr::Binary(Binary {
+        left: box Expr::Reference(Reference { mutability: Some(_), expr: box Expr::Lit(_), .. }),
+        right: box Expr::Reference(Reference { mutability: None, expr: box Expr::Lit(_), .. }),
+        ..
+    }) = expr
+    {
+    } else {
+        panic!()
+    }
 }

@@ -1,17 +1,14 @@
-fn fib(n: isize) -> isize {
-    if n <= 1 {
-        return n;
+fn foo(mut x: &mut i32) {
+    if *x == 0 {
+        x = &mut 0;
+    } else {
+        *x = 1234;
     }
-    fib(n - 1.isize) + fib(n - 2.isize)
 }
-
-extern "C" {
-    fn abort() -> !;
-    fn exit(code: i32) -> !;
-}
-
 
 #[start]
 fn main(_: isize, _: isize) -> isize {
-    64 * 64
+    let mut x = 12;
+    foo(&mut x);
+    x.isize
 }

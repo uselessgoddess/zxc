@@ -1,8 +1,8 @@
 use {
     crate::{
         mir::{
-            BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Location, Operand,
-            Place, PlaceElem, PlaceRef, Rvalue, Statement, Terminator, Ty,
+            BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Location, Mutability,
+            Operand, Place, PlaceElem, PlaceRef, Rvalue, Statement, Terminator, Ty,
         },
         Tx,
     },
@@ -227,7 +227,16 @@ macro_rules! make_mir_visitor {
                     Rvalue::Use(operand) => {
                         self.visit_operand(operand, location);
                     }
-
+                    Rvalue::Ref(mutbl, path) => {
+                        let ctx = match mutbl {
+                            Mutability::Not => PlaceContext::NonMutatingUse(
+                                NonMutatingUseContext::SharedBorrow
+                            ),
+                            Mutability::Mut =>
+                                PlaceContext::MutatingUse(MutatingUseContext::Borrow),
+                        };
+                        self.visit_place(path, ctx, location);
+                    }
                     Rvalue::UseDeref(place) => {
                         self.visit_place(
                             place,

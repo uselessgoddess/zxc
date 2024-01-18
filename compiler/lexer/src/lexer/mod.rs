@@ -116,6 +116,7 @@ pub mod ast {
 
             "!" => Not
             "|" => Or
+            "&" => And
             "||" => OrOr
             "&&" => AndAnd
 

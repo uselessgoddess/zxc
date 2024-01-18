@@ -127,7 +127,7 @@ pub struct InvalidLvalue {
 
 impl<'a> IntoDiagnostic<'a> for InvalidLvalue {
     fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
-        let mut db = handler.struct_err("called function has another signature");
+        let mut db = handler.struct_err("temporary or immutable lvalue");
         db.code(Code::E0006).primary(Error, self.span, none());
         db
     }
@@ -165,6 +165,29 @@ impl<'a> IntoDiagnostic<'a> for DefinedMultiple {
 
         db.code(Code::E0008).primary(Error, def, none());
         db.primary(Error, redef, Some(format!("{name} redefined here")));
+        db
+    }
+}
+
+diagnostic! {
+    ["cannot borrow `{}` as mutable, as it is not declared as mutable", local]
+    [code: E0009]
+    [primary(Error, borrow): "cannot borrow as mutable"]
+    pub struct MutBorrowImmut {
+        pub local: Symbol,
+        pub borrow: Span,
+    }
+}
+
+pub struct InvalidDeref {
+    pub ty: (DiagnosticMessage, Span),
+}
+
+impl<'a> IntoDiagnostic<'a> for InvalidDeref {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
+        let (ty, span) = self.ty;
+        let mut db = handler.struct_err(format!("type {ty} cannot be dereferenced"));
+        db.code(Code::E0010).primary(Error, span, none());
         db
     }
 }

@@ -197,6 +197,17 @@ impl<'tcx> CPlace<'tcx> {
         }
     }
 
+    pub fn place_ref(self, fx: &mut FunctionCx<'_, '_, 'tcx>, layout: TyAbi<'tcx>) -> CValue<'tcx> {
+        CValue::by_val(self.to_ptr().get_addr(fx), layout)
+    }
+
+    pub fn place_deref(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> CPlace<'tcx> {
+        CPlace::for_ptr(
+            Pointer::new(self.to_cvalue(fx).load_scalar(fx)),
+            fx.tcx.layout_of(self.layout().ty.builtin_deref(true).unwrap().ty),
+        )
+    }
+
     pub(crate) fn to_cvalue(self, fx: &mut FunctionCx<'_, '_, 'tcx>) -> CValue<'tcx> {
         let layout = self.layout();
         match self.inner {
@@ -204,7 +215,6 @@ impl<'tcx> CPlace<'tcx> {
                 let val = fx.bcx.use_var(var);
                 CValue::by_val(val, layout)
             }
-
             CPlaceInner::Addr(ptr) => CValue::by_ref(ptr, layout),
         }
     }

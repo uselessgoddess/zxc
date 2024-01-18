@@ -194,17 +194,39 @@ impl<'tcx> Place<'tcx> {
         PlaceRef { local: self.local, projection: self.projection }
     }
 
-    pub fn ty(&self, local_decls: &LocalDecls<'tcx>, _tcx: Tx<'tcx>) -> Ty<'tcx> {
-        assert!(self.projection.is_empty());
+    pub fn ty(&self, tcx: Tx<'tcx>, local_decls: &LocalDecls<'tcx>) -> Ty<'tcx> {
+        self.projection
+            .iter()
+            .fold(local_decls[self.local].ty, |ty, elem| Self::projection_ty(tcx, ty, elem))
+    }
 
-        local_decls[self.local].ty
-        // projection
-        //     .iter()
-        //     .fold(local_decls[local].ty, |place_ty, &elem| place_ty.projection_ty(tcx, elem))
+    fn projection_ty(_tcx: Tx<'tcx>, ty: Ty<'tcx>, elem: PlaceElem<'tcx>) -> Ty<'tcx> {
+        match elem {
+            PlaceElem::Deref => {
+                ty.builtin_deref(true)
+                    .unwrap_or_else(|| {
+                        panic!("deref projection of non-dereferenceable ty {:?}", ty)
+                    })
+                    .ty
+            }
+            PlaceElem::Subtype(ty) => ty,
+        }
     }
 
     pub fn is_indirect(&self) -> bool {
         self.projection.iter().any(|elem| elem.is_indirect())
+    }
+
+    pub fn as_deref(&self) -> Option<Local> {
+        self.as_ref().as_deref()
+    }
+
+    pub fn local_or_deref(&self) -> Option<Local> {
+        self.as_ref().local_or_deref()
+    }
+
+    pub fn project_deeper(self, tcx: Tx<'tcx>, projections: &[PlaceElem<'tcx>]) -> Place<'tcx> {
+        self.as_ref().project_deeper(tcx, projections)
     }
 }
 
@@ -223,6 +245,36 @@ impl<'tcx> PlaceRef<'tcx> {
             let base = PlaceRef { local: self.local, projection: &self.projection[..i] };
             (base, *proj)
         })
+    }
+
+    pub fn as_deref(&self) -> Option<Local> {
+        match *self {
+            PlaceRef { local, projection: [PlaceElem::Deref] } => Some(local),
+            _ => None,
+        }
+    }
+
+    pub fn local_or_deref(&self) -> Option<Local> {
+        match *self {
+            PlaceRef { local, projection: [] }
+            | PlaceRef { local, projection: [PlaceElem::Deref] } => Some(local),
+            _ => None,
+        }
+    }
+
+    pub fn project_deeper(self, tcx: Tx<'tcx>, projections: &[PlaceElem<'tcx>]) -> Place<'tcx> {
+        let mut v: Vec<_>;
+
+        let projections = if self.projection.is_empty() {
+            projections
+        } else {
+            v = Vec::with_capacity(self.projection.len() + projections.len());
+            v.extend(self.projection);
+            v.extend(projections);
+            &v[..]
+        };
+
+        Place { local: self.local, projection: tcx.mk_place_elems(projections) }
     }
 }
 
@@ -415,21 +467,11 @@ pub enum UnOp {
     Neg,
 }
 
-impl UnOp {
-    pub fn from_parse(op: lexer::UnOp) -> Self {
-        use lexer::UnOp;
-
-        match op {
-            UnOp::Not(_) => Self::Not,
-            UnOp::Neg(_) => Self::Neg,
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum Rvalue<'tcx> {
     Use(Operand<'tcx>),
     UseDeref(Place<'tcx>),
+    Ref(Mutability, Place<'tcx>),
     UnaryOp(UnOp, Operand<'tcx>),
     BinaryOp(BinOp, Operand<'tcx>, Operand<'tcx>),
     Cast(CastKind, Operand<'tcx>, Ty<'tcx>),
@@ -492,6 +534,13 @@ impl Mutability {
 
     pub fn is_mut(&self) -> bool {
         matches!(self, Self::Mut)
+    }
+
+    pub fn prefix_str(&self) -> &'static str {
+        match self {
+            Mutability::Not => "",
+            Mutability::Mut => "mut ",
+        }
     }
 }
 

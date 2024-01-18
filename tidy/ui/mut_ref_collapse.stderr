@@ -1,0 +1,10 @@
+error[E0002]: type mismatch
+   ╭─[mut_ref_collapse.src:3:9]
+   │
+ 3 │     x = 12;
+   │     ┬   ^╮  
+   │     ╰─────── expected due to this
+   │          │  
+   │          ╰── expected `&mut &mut &mut i32`, found `i32`
+───╯
+error: aborting due to previous error

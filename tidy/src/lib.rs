@@ -13,4 +13,5 @@ fn ui() {
     t.compile_fail("ui/empty.src");
     t.compile_fail("ui/never_fail.src");
     t.compile_fail("ui/redef.src");
+    t.compile_fail("ui/mut_ref_collapse.src");
 }

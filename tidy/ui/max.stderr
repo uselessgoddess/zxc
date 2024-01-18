@@ -5,3 +5,4 @@ error[E0007]: const evaluation error
    │             ^^^^^^^^^^^^^╮  
    │                          ╰── this arithmetic operation will overflow
 ───╯
+error: aborting due to previous error
