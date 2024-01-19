@@ -4,6 +4,7 @@ mod multiple_return;
 mod peep_simplify;
 mod simplify;
 mod simplify_branches;
+mod simplify_int_cmp;
 
 pub use dump::emit_mir;
 
@@ -28,8 +29,12 @@ pub trait MirPass<'tcx> {
 }
 
 impl<'tcx> HirCtx<'tcx> {
-    pub fn optimized_mir(&self, def: mir::DefId) -> &Body<'tcx> {
-        self.tcx.arena.body.alloc(self.inner_optimized_mir(def))
+    pub fn assume_optimized_mir(&self, def: mir::DefId) -> &Body<'tcx> {
+        &self.defs[def]
+    }
+
+    pub fn optimized_mir(&self, def: mir::DefId) -> Body<'tcx> {
+        self.inner_optimized_mir(def)
     }
 
     fn inner_optimized_mir(&self, def: mir::DefId) -> Body<'tcx> {
@@ -79,7 +84,9 @@ fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
             &multiple_return::MultipleReturnTerminators,
             &peep_simplify::PeepSimplify,
             &const_goto::ConstGoto,
+            &simplify_branches::SimplifyConstCondition::AfterConstProp,
             &simplify::SimplifyLocals::AfterGVN,
+            &simplify_int_cmp::SimplifyIntegralCond,
             &simplify_branches::SimplifyConstCondition::Final,
             &simplify::SimplifyLocals::Final,
             &o1(simplify::SimplifyCfg::Final),

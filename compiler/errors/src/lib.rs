@@ -25,6 +25,7 @@ pub enum Level {
     Bug,
     Fatal,
     Error,
+    Warn,
     Note,
     Help,
 }
@@ -36,6 +37,7 @@ pub mod color {
     pub const Red: Color = Color::Rgb(239, 89, 111);
     pub const Cyan: Color = Color::Rgb(86, 182, 194);
     pub const Crab: Color = Color::Rgb(208, 154, 102);
+    pub const Sand: Color = Color::Rgb(229, 192, 123);
     pub const Magenta: Color = Color::Rgb(198, 120, 221);
 }
 
@@ -43,6 +45,7 @@ impl Level {
     fn as_color(&self) -> Color {
         match self {
             Level::Bug | Level::Fatal | Level::Error => color::Red,
+            Level::Warn => color::Sand,
             Level::Note => color::Magenta,
             Level::Help => color::Cyan,
         }
@@ -54,6 +57,7 @@ impl Level {
         match self {
             Level::Bug => "error: internal compiler error",
             Level::Fatal | Level::Error { .. } => "error",
+            Level::Warn => "warning",
             Level::Note => "note",
             Level::Help => "help",
         }
@@ -62,6 +66,7 @@ impl Level {
     pub fn underline(&self) -> char {
         match self {
             Level::Bug | Level::Fatal | Level::Error => '^',
+            Level::Warn => '^',
             Level::Note => '~',
             Level::Help => '-',
         }
@@ -92,7 +97,7 @@ impl Diagnostic {
     pub fn is_error(&self) -> bool {
         match self.level {
             Level::Bug | Level::Fatal | Level::Error => true,
-            Level::Note | Level::Help => false,
+            Level::Note | Level::Help | Level::Warn => false,
         }
     }
 
@@ -237,6 +242,10 @@ impl Handler {
         msg: impl Into<DiagnosticMessage>,
     ) -> DiagnosticBuilder<'_, ErrorGuaranteed> {
         DiagnosticBuilder::new_guaranteeing_error(self, msg.into())
+    }
+
+    pub fn struct_warn(&self, msg: impl Into<DiagnosticMessage>) -> DiagnosticBuilder<'_, ()> {
+        DiagnosticBuilder::new(self, Level::Warn, msg.into())
     }
 
     pub fn struct_diagnostic<E: Emission>(
@@ -402,6 +411,10 @@ impl EarlyErrorHandler {
 impl EarlyErrorHandler {
     pub fn early_error(&self, msg: impl Into<DiagnosticMessage>) -> ! {
         self.handler.struct_fatal(msg).emit()
+    }
+
+    pub fn early_warn(&self, msg: impl Into<DiagnosticMessage>) {
+        self.handler.struct_warn(msg).emit()
     }
 }
 

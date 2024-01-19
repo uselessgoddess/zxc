@@ -9,6 +9,7 @@ use {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum OutputType {
+    LlvmAssembly,
     Bitcode,
     Mir,
     Object,
@@ -18,6 +19,7 @@ pub enum OutputType {
 impl OutputType {
     pub fn extension(&self) -> &'static str {
         match *self {
+            OutputType::LlvmAssembly => "ll",
             OutputType::Bitcode => "bc",
             OutputType::Mir => "mir",
             OutputType::Object => "o",
@@ -51,20 +53,24 @@ pub struct OutputFilenames {
     pub file_stem: String,
     pub single_output_file: Option<OutFileName>,
     pub temps_directory: Option<PathBuf>,
-    pub outputs: BTreeMap<OutputType, OutFileName>,
+    pub outputs: BTreeMap<OutputType, Option<OutFileName>>,
 }
 
 impl OutputFilenames {
     pub fn path(&self, flavor: OutputType) -> OutFileName {
         self.outputs
             .get(&flavor)
-            .map(|p| p.to_owned())
+            .and_then(|p| p.to_owned())
             .or_else(|| self.single_output_file.clone())
             .unwrap_or_else(|| OutFileName::Real(self.output_path(flavor)))
     }
 
     pub fn output_path(&self, flavor: OutputType) -> PathBuf {
         self.with_directory_and_extension(&self.out_directory, flavor.extension())
+    }
+
+    pub fn with_extension(&self, extension: &str) -> PathBuf {
+        self.with_directory_and_extension(&self.out_directory, extension)
     }
 
     fn with_directory_and_extension(&self, directory: &Path, extension: &str) -> PathBuf {
@@ -157,7 +163,7 @@ pub fn out_filename(
     let out_filename = outputs
         .outputs
         .get(&OutputType::Exe)
-        .map(|s| s.to_owned())
+        .and_then(|s| s.to_owned())
         .or_else(|| outputs.single_output_file.clone())
         .unwrap_or(default_filename);
 

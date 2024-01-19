@@ -29,15 +29,15 @@ pub struct Args {
     #[arg(long = "out-dir")]
     pub output_dir: Option<PathBuf>,
 
-    #[arg(long = "emit")]
-    pub emit: Vec<Emit>,
-
     #[arg(long = "color", value_name = "WHEN")]
     pub color: Option<Color>,
 
     /// Target triple for which the code is compiled
     #[arg(long = "target")]
     pub target: Option<String>,
+
+    #[arg(long = "emit", value_parser = parse_emit)]
+    pub emit: Vec<(Emit, Option<String>)>,
 
     /// codegen flags to zxc
     #[arg(short = 'C', value_name = "FLAG", value_parser = parse_kv)]
@@ -46,6 +46,13 @@ pub struct Args {
     /// compiler flags to zxc
     #[arg(short = 'Z', value_name = "FLAG", value_parser = parse_kv)]
     pub z_flags: Vec<(String, Option<String>)>,
+}
+
+fn parse_emit(s: &str) -> Result<(Emit, Option<String>), String> {
+    Ok(match s.split_once('=') {
+        None => (Emit::from_str(s, true)?, None),
+        Some((k, v)) => (Emit::from_str(k, true)?, Some(v.into())),
+    })
 }
 
 fn parse_kv(s: &str) -> Result<(String, Option<String>), !> {

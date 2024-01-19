@@ -1,14 +1,11 @@
-fn foo(mut x: &mut i32) {
-    if *x == 0 {
-        x = &mut 0;
+fn foo(mut x: i32) {
+    let y = if x == 12 {
+        x + 1
     } else {
-        *x = 1234;
-    }
+        x
+    };
 }
 
-#[start]
-fn main(_: isize, _: isize) -> isize {
-    let mut x = 12;
-    foo(&mut x);
-    x.isize
+fn main() {
+
 }

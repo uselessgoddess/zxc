@@ -335,6 +335,13 @@ impl ScalarRepr {
     }
 
     #[inline(always)]
+    #[cfg_attr(debug_assertions, track_caller)]
+    pub fn assert_bits(self, target_size: Size) -> u128 {
+        self.to_bits(target_size)
+            .unwrap_or_else(|_| panic!("assertion failed: {self:?} fits {target_size:?}"))
+    }
+
+    #[inline(always)]
     fn check_data(self) {
         // Using a block `{self.data}` here to force a copy instead of using `self.data`
         // directly, because `debug_assert_eq` takes references to its arguments and formatting

@@ -1,7 +1,7 @@
 use {
     crate::{
         hir::HirCtx,
-        mir::{self, write_mir_pretty},
+        mir::write_mir_pretty,
         pretty::FmtPrinter,
         sess::{OutFileName, OutputType},
     },
@@ -11,13 +11,10 @@ use {
     },
 };
 
-pub fn emit_mir<'tcx>(
-    hix: &HirCtx<'tcx>,
-    mir: &[(mir::DefId, &mir::Body<'tcx>)],
-) -> io::Result<()> {
+pub fn emit_mir(hix: &HirCtx<'_>) -> io::Result<()> {
     let mut printer = FmtPrinter::new(hix);
 
-    for &(def, body) in mir {
+    for (def, body) in hix.defs.iter_enumerated() {
         write_mir_pretty(def, body, &mut printer).expect("fmt error");
     }
 

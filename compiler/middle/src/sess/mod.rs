@@ -2,7 +2,7 @@ mod diagnostic;
 mod errors;
 pub mod output;
 
-use std::{ffi::OsStr, sync::Arc};
+use std::{collections::BTreeMap, ffi::OsStr, sync::Arc};
 pub use {
     diagnostic::{
         Diagnostic, DiagnosticBuilder, DynEmitter, EarlyErrorHandler, Emission, Emitter,
@@ -206,56 +206,14 @@ options! {
         Passes that are not specified are enabled or disabled by other flags as usual."),
 }
 
-bitflags! {
-    #[derive(Copy, Clone)]
-    pub struct Emit: u8 {
-        const None = 0;
-        const IR   = 1 << 0;
-        const MIR  = 1 << 1;
-    }
-}
-
-impl Emit {
-    fn fmt_inner(self) -> &'static str {
-        const NONE: u8 = Emit::bits(&Emit::None);
-        const MIR: u8 = Emit::bits(&Emit::MIR);
-        const IR: u8 = Emit::bits(&Emit::IR);
-
-        match self.0.0 {
-            NONE => "None",
-            MIR => "Mir",
-            IR => "IR",
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl fmt::Debug for Emit {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut flags = self.iter();
-        write!(f, "Emit(")?;
-        if let Some(first) = flags.next() {
-            f.write_str(first.fmt_inner())?;
-            for elem in flags {
-                f.write_str("|")?;
-                f.write_str(elem.fmt_inner())?;
-            }
-        } else {
-            f.write_str("None")?;
-        }
-
-        write!(f, ")")
-    }
-}
-
 #[allow(non_snake_case)]
 #[derive(Debug)]
 pub struct Options {
     pub Z: CompilerOptions,
     pub C: CodegenOptions,
-    pub emit: Emit,
     pub triple: String,
     pub module_types: Vec<ModuleType>,
+    pub output_types: BTreeMap<OutputType, Option<OutFileName>>,
 }
 
 pub fn host_triple() -> String {
@@ -267,9 +225,9 @@ impl Default for Options {
         Self {
             Z: Default::default(),
             C: Default::default(),
-            emit: Emit::None,
             triple: host_triple(),
             module_types: Vec::new(),
+            output_types: Default::default(),
         }
     }
 }

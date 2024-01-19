@@ -21,12 +21,13 @@ use middle::{
     rayon::prelude::*,
     sess::{self, EarlyErrorHandler, Options},
     symbol::Symbol,
-    ErrorGuaranteed, Tx, TyCtx,
+    ErrorGuaranteed, IndexVec, Tx, TyCtx,
 };
 
 use {
     chumsky::Parser,
     lexer::ParseBuffer,
+    middle::sess::{OutFileName, OutputType},
     std::{
         collections::BTreeMap,
         fmt, fs, io,
@@ -107,16 +108,21 @@ fn driver_impl<'tcx>(
     tcx.sess.abort_if_errors();
     hix.err.abort_if_errors();
 
-    let cgu = hix.as_codegen_unit();
+    let mut cgu = hix.as_codegen_unit();
+
     let mir = cgu
         .items
         .par_iter()
         .map(|(def, _)| {
             let InstanceDef::Item(def) = def.def;
-            (def, hix.optimized_mir(def))
+            hix.optimized_mir(def)
         })
         .collect::<Vec<_>>();
-    mir::pass::emit_mir(hix, &mir)?;
+    hix.defs = IndexVec::from_raw(mir);
+
+    if tcx.sess.opts.output_types.contains_key(&OutputType::Mir) {
+        mir::pass::emit_mir(hix)?;
+    }
 
     let codegen = codegen::cranelift::CraneliftBackend;
 
@@ -174,7 +180,7 @@ fn driver(
         file_stem: art.file_stem().unwrap().to_str().unwrap().to_owned(),
         single_output_file: None,
         temps_directory: Some(temps),
-        outputs: BTreeMap::new(),
+        outputs: sess.opts.output_types.clone(),
     };
 
     // FIXME: strainge borrow checker error - suppress by leaking
@@ -215,17 +221,23 @@ fn main() {
     let c_opts = cli::build_options(&early, &c_flags, sess::C_OPTIONS, "C", "codegen");
     let z_opts = cli::build_options(&early, &z_flags, sess::Z_OPTIONS, "Z", "compiler");
 
-    let mut emit_flags = sess::Emit::None;
-    for e in emit {
-        emit_flags |= match e {
-            Emit::Mir => sess::Emit::MIR,
-            Emit::IR => sess::Emit::IR,
+    let mut output_types = BTreeMap::new();
+    for (emit, path) in emit {
+        let path = match path.as_deref() {
+            None => None,
+            Some("-") => Some(OutFileName::Stdout),
+            Some(path) => Some(OutFileName::Real(path.into())),
         };
+        let output_type = match emit {
+            Emit::Mir => OutputType::Mir,
+            Emit::IR => OutputType::LlvmAssembly,
+        };
+        output_types.insert(output_type, path);
     }
 
     let source_map = Arc::new(SourceMap { sources: vec![].into() });
     let mut config = Config {
-        opts: Options { Z: z_opts, C: c_opts, emit: emit_flags, ..Default::default() },
+        opts: Options { Z: z_opts, C: c_opts, output_types, ..Default::default() },
         input,
         output_dir,
         output_file: output,

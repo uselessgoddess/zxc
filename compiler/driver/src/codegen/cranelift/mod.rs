@@ -6,6 +6,7 @@ use {
             ir::{Function, UserFuncName},
             CodegenError, Context,
         },
+        frontend,
         prelude::{
             isa,
             settings::{self, SetError},
@@ -30,6 +31,7 @@ use {
 mod abi;
 mod cast;
 mod num;
+mod pretty;
 mod shim;
 mod ssa;
 mod value;
@@ -327,9 +329,11 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: FnAbi<'tcx>) {
             }
             Terminator::SwitchInt { discr, ref targets } => {
                 let discr = codegen_operand(fx, discr);
-                let discr = discr.load_scalar(fx);
+                let (discr, switch_ty) = (discr.load_scalar(fx), discr.layout().ty);
 
-                if let Some((test, then, otherwise)) = targets.as_static_if() {
+                if let Some((test, then, otherwise)) = targets.as_static_if()
+                    && switch_ty == fx.tcx.types.bool
+                {
                     let then_block = fx.block(then);
                     let else_block = fx.block(otherwise);
 
@@ -345,7 +349,12 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: FnAbi<'tcx>) {
                         fx.bcx.ins().brif(discr, then_block, &[], else_block, &[]);
                     }
                 } else {
-                    todo!("complex switches")
+                    let mut switch = frontend::Switch::new();
+                    for (value, block) in targets.iter() {
+                        switch.set_entry(value, fx.block(block));
+                    }
+                    let otherwise = fx.block(targets.otherwise());
+                    switch.emit(&mut fx.bcx, discr, otherwise);
                 }
             }
         }
@@ -433,7 +442,7 @@ pub(crate) fn codegen_fn(
 
     let mut bcx = FunctionBuilder::new(&mut fn_, &mut fn_ctx);
 
-    let mir = hix.optimized_mir(def);
+    let mir = hix.assume_optimized_mir(def);
     let start_block = bcx.create_block();
     let block_map: IndexVec<BasicBlock, Block> =
         (0..mir.basic_blocks.len()).map(|_| bcx.create_block()).collect();
@@ -678,6 +687,16 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
 
     let mut ctx = Context::new();
     for (symbol, id, func) in cg_functions {
+        if hix.tcx.sess.opts.output_types.contains_key(&OutputType::LlvmAssembly) {
+            pretty::write_clif_file(
+                hix.tcx.output_filenames(),
+                symbol.as_str(),
+                None,
+                module.isa(),
+                &func,
+            );
+        }
+
         ctx.clear();
         ctx.func = func;
 
@@ -689,6 +708,16 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
             }
             Err(err) => panic!("Error while defining {symbol}: {err:?}"),
             _ => {}
+        }
+
+        if hix.tcx.sess.opts.output_types.contains_key(&OutputType::LlvmAssembly) {
+            pretty::write_clif_file(
+                hix.tcx.output_filenames(),
+                symbol.as_str(),
+                Some("opt"),
+                module.isa(),
+                &ctx.func,
+            );
         }
     }
 
