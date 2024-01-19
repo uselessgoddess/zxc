@@ -7,7 +7,6 @@ use {
 };
 
 mod base;
-pub mod targets;
 
 /// Linker is called through a C/C++ compiler.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -127,6 +126,12 @@ pub struct Target {
     pub arch: Cow<str>,
     pub data_layout: TargetDataLayout,
     pub options: TargetOptions,
+}
+
+impl Target {
+    pub fn expect_builtin(target: &str) -> Option<Target> {
+        load_builtin(target)
+    }
 }
 
 impl Deref for Target {
@@ -280,4 +285,41 @@ pub enum RelocModel {
     Ropi,
     Rwpi,
     RopiRwpi,
+}
+
+macro_rules! supported_targets {
+    ( $(($triple:literal, $module:ident),)+ ) => {
+        mod targets {
+            $(pub(crate) mod $module;)+
+        }
+
+        /// List of supported targets
+        pub const TARGETS: &[&str] = &[$($triple),+];
+
+        fn load_builtin(target: &str) -> Option<Target> {
+            let mut t = match target {
+                $( $triple => targets::$module::target(), )+
+                _ => return None,
+            };
+            Some(t)
+        }
+
+        #[cfg(test)]
+        mod tests {
+            mod imp;
+
+            // Cannot put this into a separate file without duplication, make an exception.
+            $(
+                #[test] // `#[test]`
+                fn $module() {
+                    imp::test_target(crate::spec::targets::$module::target());
+                }
+            )+
+        }
+    };
+}
+
+supported_targets! {
+    ("x86_64-pc-windows-gnu", x86_64_pc_windows_gnu),
+    ("x86_64-pc-windows-msvc", x86_64_pc_windows_msvc),
 }

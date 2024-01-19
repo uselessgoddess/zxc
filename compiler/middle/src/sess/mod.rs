@@ -354,7 +354,7 @@ pub struct CompilerIO {
 }
 
 pub fn build_session(opts: Options, io: CompilerIO, sm: Arc<SourceMap>) -> Session {
-    let host = spec::targets::x86_64_windows_msvc::target();
+    let host = Target::expect_builtin(&host_triple()).unwrap();
 
     let emitter = Box::new(EmitterWriter::stderr(Some(sm)));
     Session { target: host.clone(), host, opts, io, handler: Handler::with_emitter(emitter) }

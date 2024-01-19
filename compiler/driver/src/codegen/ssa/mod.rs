@@ -9,6 +9,8 @@ pub mod link;
 pub use link::{CodegenResults, CompiledModule, ModuleInfo};
 
 pub trait CodegenBackend {
+    fn init(&self, _sess: &Session) {}
+
     fn codegen_module<'tcx>(
         &self,
         hix: Hx<'tcx>,

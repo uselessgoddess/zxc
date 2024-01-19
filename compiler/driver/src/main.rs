@@ -126,6 +126,8 @@ fn driver_impl<'tcx>(
 
     let codegen = codegen::cranelift::CraneliftBackend;
 
+    codegen.init(tcx.sess);
+
     let ongoing = codegen.codegen_module(hix, &[cgu]);
     let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
     let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());

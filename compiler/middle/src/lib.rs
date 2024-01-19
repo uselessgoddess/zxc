@@ -17,6 +17,7 @@
     never_type,
     negative_impls
 )]
+#![feature(assert_matches)]
 #![allow(clippy::unit_arg, clippy::missing_safety_doc, clippy::should_implement_trait)]
 #![allow(internal_features)]
 #![deny(unused_must_use)]
