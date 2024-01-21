@@ -14,7 +14,6 @@ use {
 impl<'m, 'cl, 'tcx: 'm> FunctionCx<'m, 'cl, 'tcx> {
     fn import_function(&mut self, def: mir::DefId) -> FuncId {
         let name = self.hix.symbol_name(def).name;
-        println!("IMPORT: {name}");
         let sig = sig_from_abi(
             self.tcx,
             self.module.target_config().default_call_conv,
