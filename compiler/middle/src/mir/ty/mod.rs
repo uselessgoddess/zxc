@@ -97,6 +97,7 @@ impl<'cx> Ty<'cx> {
 
         match ty {
             Type::Ident(name) => match name.ident() {
+                "bool" => tcx.types.bool,
                 "i8" => tcx.types.i8,
                 "i16" => tcx.types.i16,
                 "i32" => tcx.types.i32,

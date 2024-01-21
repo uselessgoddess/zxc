@@ -229,6 +229,10 @@ impl Handler {
         err.into_diagnostic(self).emit()
     }
 
+    pub fn emit_almost_fatal<'a>(&'a self, err: impl IntoDiagnostic<'a, FatalError>) -> FatalError {
+        err.into_diagnostic(self).emit()
+    }
+
     pub fn emit_note<'a>(&'a self, err: impl IntoDiagnostic<'a, Noted>) -> Noted {
         err.into_diagnostic(self).emit()
     }

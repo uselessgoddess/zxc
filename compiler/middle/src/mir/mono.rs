@@ -1,6 +1,19 @@
-use crate::{fx::FxHashMap, mir, symbol::Symbol};
+use crate::{
+    fx::FxHashMap,
+    hir::Hx,
+    mir::{self, InstanceDef, SymbolName},
+    symbol::Symbol,
+};
 
 pub type MonoItem<'tcx> = mir::Instance<'tcx>;
+
+impl<'tcx> MonoItem<'tcx> {
+    pub fn symbol_name(&self, hix: Hx<'tcx>) -> SymbolName<'tcx> {
+        match self.def {
+            InstanceDef::Item(instance) => hix.symbol_name(instance),
+        }
+    }
+}
 
 pub struct CodegenUnit<'tcx> {
     pub name: Symbol,
@@ -30,6 +43,7 @@ pub enum Visibility {
     Hidden,
 }
 
+#[derive(Debug, Copy, Clone)]
 pub struct MonoItemData {
     pub inlined: bool,
     pub linkage: Linkage,

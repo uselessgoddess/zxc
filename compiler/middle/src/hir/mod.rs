@@ -1,7 +1,7 @@
 pub mod attr;
 pub mod check;
 mod error;
-mod errors;
+pub mod errors;
 mod scope;
 mod syntax;
 mod ty;
@@ -15,9 +15,9 @@ use {
             self,
             mono::{Linkage, Visibility},
             ty::Abi,
-            CastKind, CodegenUnit, ConstValue, InstanceData, InstanceDef, Local, LocalDecl,
-            MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue, ScalarRepr,
-            Statement, SwitchTargets, Terminator, TyKind,
+            CastKind, CodegenUnit, ConstValue, Instance, InstanceData, InstanceDef, Local,
+            LocalDecl, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue,
+            ScalarRepr, Statement, SwitchTargets, Terminator, TyKind,
         },
         pretty::{FmtPrinter, Print, Printer},
         sess::ModuleType,
@@ -731,7 +731,8 @@ fn analyze_expr<'hir>(
                             }
 
                             return if let Some(s) = const_eval_operand(op, a, b, ty.is_signed()) {
-                                Ok((lhs, Operand::Const(ConstValue::Scalar(s), ty)))
+                                let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
+                                Ok((lhs.map(|_| kind), Operand::Const(ConstValue::Scalar(s), kind)))
                             } else {
                                 Err(acx.err.emit(errors::ConstArithmetic {
                                     case: "this arithmetic operation will overflow",
@@ -830,8 +831,8 @@ fn analyze_expr<'hir>(
                     )
                 } else {
                     return Err(acx.err.emit(errors::MismatchFnSig {
-                        expect: acx.hix.sig_fmt(&[cast]),
-                        found: acx.hix.sig_fmt(&types),
+                        expect: acx.hix.args_fmt(&[cast]),
+                        found: acx.hix.args_fmt(&types),
                         caller: call.span,
                         target: None,
                     }));
@@ -842,8 +843,8 @@ fn analyze_expr<'hir>(
 
                 if !types.iter().eq(sig.inputs()) {
                     return Err(acx.err.emit(errors::MismatchFnSig {
-                        expect: acx.hix.sig_fmt(sig.inputs()),
-                        found: acx.hix.sig_fmt(&types),
+                        expect: acx.hix.args_fmt(sig.inputs()),
+                        found: acx.hix.args_fmt(&types),
                         caller: call.span,
                         target: Some(span),
                     }));
@@ -1189,8 +1190,7 @@ impl<'hir> HirCtx<'hir> {
 
         let mut start_fn = None;
         for &def in self.decls.values() {
-            let attrs = self.attrs(def);
-            if attr::contains_name(attrs, sym::start) {
+            if attr::contains_name(self.attrs(def), sym::start) {
                 if let Some(start) = start_fn {
                     // self.tcx.sess.emit_err(Error::DefinedMultiple {
                     //     name,
@@ -1227,7 +1227,13 @@ impl<'hir> HirCtx<'hir> {
         quoted(cx.into_buf(), color::Magenta).into()
     }
 
-    fn sig_fmt(&self, sig: &[mir::Ty<'hir>]) -> DiagnosticMessage {
+    fn sig_fmt(&self, sig: mir::FnSig<'hir>) -> DiagnosticMessage {
+        let mut cx = FmtPrinter::new(self);
+        cx.print_fn_sig(sig.inputs(), sig.output()).unwrap();
+        quoted(cx.into_buf(), color::Magenta).into()
+    }
+
+    fn args_fmt(&self, sig: &[mir::Ty<'hir>]) -> DiagnosticMessage {
         let mut cx = FmtPrinter::new(self);
         cx.print_fn_sig(sig, self.tcx.types.unit).unwrap();
         quoted(cx.into_buf(), color::Magenta).into()

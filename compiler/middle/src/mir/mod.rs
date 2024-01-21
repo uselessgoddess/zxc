@@ -46,6 +46,12 @@ pub struct Instance<'tcx> {
     pub(crate) _marker: PhantomData<&'tcx ()>,
 }
 
+impl Instance<'_> {
+    pub fn def(def: InstanceDef) -> Self {
+        Self { def, _marker: PhantomData }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InstanceData<'tcx> {
     pub sig: FnSig<'tcx>,

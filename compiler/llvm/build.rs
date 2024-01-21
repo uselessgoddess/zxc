@@ -73,7 +73,7 @@ fn restore_library_path() {
 /// Supposed to be used for all variables except those set for build scripts by cargo
 /// <https://doc.rust-lang.org/cargo/reference/environment-variables.html>
 fn tracked_env_var_os<K: AsRef<OsStr> + Display>(key: K) -> Option<OsString> {
-    println!("cargo:rerun-if-env-changed={key}");
+    // println!("cargo:rerun-if-env-changed={key}");
     env::var_os(key)
 }
 
@@ -232,17 +232,18 @@ fn main() {
         cfg.debug(false);
     }
 
-    // no need features from llvm-wrapper
-    // rerun_if_changed_anything_in_dir(Path::new("llvm-wrapper"));
-    // cfg.file("llvm-wrapper/PassWrapper.cpp")
-    //     .file("llvm-wrapper/RustWrapper.cpp")
-    //     .file("llvm-wrapper/ArchiveWrapper.cpp")
-    //     .file("llvm-wrapper/CoverageMappingWrapper.cpp")
-    //     .file("llvm-wrapper/SymbolWrapper.cpp")
-    //     .file("llvm-wrapper/Linker.cpp")
-    //     .cpp(true)
-    //     .cpp_link_stdlib(None) // we handle this below
-    //     .compile("llvm-wrapper");
+    // The guys on the rust-lang team did a great job. Their wrapper is soooo handy.
+    // I will use it until it becomes part of LLVM
+    rerun_if_changed_anything_in_dir(Path::new("llvm-wrapper"));
+    cfg.file("llvm-wrapper/PassWrapper.cpp")
+        .file("llvm-wrapper/RustWrapper.cpp")
+        .file("llvm-wrapper/ArchiveWrapper.cpp")
+        .file("llvm-wrapper/CoverageMappingWrapper.cpp")
+        .file("llvm-wrapper/SymbolWrapper.cpp")
+        .file("llvm-wrapper/Linker.cpp")
+        .cpp(true)
+        .cpp_link_stdlib(None) // we handle this below
+        .compile("llvm-wrapper");
 
     let (llvm_kind, llvm_link_arg) = detect_llvm_link();
 
@@ -405,7 +406,7 @@ fn main() {
         }
     }
 
-    // Libstdc++ depends on pthread which Rust doesn't link on MinGW
+    // libstdc++ depends on pthread which Rust doesn't link on MinGW
     // since nothing else requires it.
     if target.ends_with("windows-gnu") {
         println!("cargo:rustc-link-lib=static:-bundle=pthread");

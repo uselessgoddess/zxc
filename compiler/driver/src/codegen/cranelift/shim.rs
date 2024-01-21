@@ -54,6 +54,7 @@ pub fn create_entry_wrapper(hix: Hx, m: &mut dyn Module, main_def: mir::DefId, i
             bcx.inst_results(call_inst)[0]
         } else {
             // ignore argc, argv -- `std` has no entry function now
+            bcx.ins().call(main_ref, &[]);
             bcx.ins().iconst(isize, 0)
         };
 

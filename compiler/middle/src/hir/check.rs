@@ -21,8 +21,8 @@ fn check_main(hix: &mut HirCtx<'_>, def: mir::DefId) {
 
     if main.sig != hix.tcx.sigs.main {
         hix.err.emit(hir::errors::MismatchMainSig {
-            expect: hix.sig_fmt(hix.tcx.sigs.main.inputs()),
-            found: hix.sig_fmt(main.sig.inputs()),
+            expect: hix.sig_fmt(hix.tcx.sigs.main),
+            found: hix.sig_fmt(main.sig),
             span: main.span,
         });
     }
@@ -33,8 +33,8 @@ fn check_start(hix: &mut HirCtx<'_>, def: mir::DefId) {
 
     if main.sig != hix.tcx.sigs.start {
         hix.err.emit(hir::errors::MismatchStartSig {
-            expect: hix.sig_fmt(hix.tcx.sigs.main.inputs()),
-            found: hix.sig_fmt(main.sig.inputs()),
+            expect: hix.sig_fmt(hix.tcx.sigs.start),
+            found: hix.sig_fmt(main.sig),
             span: main.span,
         });
     }

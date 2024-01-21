@@ -1,11 +1,11 @@
-fn foo(mut x: i32) {
-    let y = if x == 12 {
-        x + 1
-    } else {
-        x
-    };
+fn fib(n: isize) -> isize {
+    if n <= 1 {
+        return n;
+    }
+    fib(n - 1.isize) + fib(n - 2.isize)
 }
 
-fn main() {
-
+#[start]
+fn main(x: isize, y: isize) -> isize {
+    fib(36.isize).isize
 }

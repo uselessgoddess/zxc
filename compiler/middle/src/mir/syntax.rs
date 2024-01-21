@@ -186,6 +186,10 @@ pub struct Place<'tcx> {
 }
 
 impl<'tcx> Place<'tcx> {
+    pub fn return_place() -> Place<'tcx> {
+        Self::pure(RETURN_PLACE)
+    }
+
     pub fn pure(local: Local) -> Self {
         Self { local, projection: List::empty() }
     }
@@ -194,23 +198,8 @@ impl<'tcx> Place<'tcx> {
         PlaceRef { local: self.local, projection: self.projection }
     }
 
-    pub fn ty(&self, tcx: Tx<'tcx>, local_decls: &LocalDecls<'tcx>) -> Ty<'tcx> {
-        self.projection
-            .iter()
-            .fold(local_decls[self.local].ty, |ty, elem| Self::projection_ty(tcx, ty, elem))
-    }
-
-    fn projection_ty(_tcx: Tx<'tcx>, ty: Ty<'tcx>, elem: PlaceElem<'tcx>) -> Ty<'tcx> {
-        match elem {
-            PlaceElem::Deref => {
-                ty.builtin_deref(true)
-                    .unwrap_or_else(|| {
-                        panic!("deref projection of non-dereferenceable ty {:?}", ty)
-                    })
-                    .ty
-            }
-            PlaceElem::Subtype(ty) => ty,
-        }
+    pub fn as_local(&self) -> Option<Local> {
+        self.as_ref().as_local()
     }
 
     pub fn is_indirect(&self) -> bool {
@@ -227,6 +216,10 @@ impl<'tcx> Place<'tcx> {
 
     pub fn project_deeper(self, tcx: Tx<'tcx>, projections: &[PlaceElem<'tcx>]) -> Place<'tcx> {
         self.as_ref().project_deeper(tcx, projections)
+    }
+
+    pub fn ty(&self, tcx: Tx<'tcx>, local_decls: &LocalDecls<'tcx>) -> Ty<'tcx> {
+        self.as_ref().ty(tcx, local_decls)
     }
 }
 
@@ -245,6 +238,13 @@ impl<'tcx> PlaceRef<'tcx> {
             let base = PlaceRef { local: self.local, projection: &self.projection[..i] };
             (base, *proj)
         })
+    }
+
+    pub fn as_local(&self) -> Option<Local> {
+        match *self {
+            PlaceRef { local, projection: [] } => Some(local),
+            _ => None,
+        }
     }
 
     pub fn as_deref(&self) -> Option<Local> {
@@ -275,6 +275,25 @@ impl<'tcx> PlaceRef<'tcx> {
         };
 
         Place { local: self.local, projection: tcx.mk_place_elems(projections) }
+    }
+
+    pub fn ty(&self, tcx: Tx<'tcx>, local_decls: &LocalDecls<'tcx>) -> Ty<'tcx> {
+        self.projection
+            .iter()
+            .fold(local_decls[self.local].ty, |ty, &elem| Self::projection_ty(tcx, ty, elem))
+    }
+
+    fn projection_ty(_tcx: Tx<'tcx>, ty: Ty<'tcx>, elem: PlaceElem<'tcx>) -> Ty<'tcx> {
+        match elem {
+            PlaceElem::Deref => {
+                ty.builtin_deref(true)
+                    .unwrap_or_else(|| {
+                        panic!("deref projection of non-dereferenceable ty {:?}", ty)
+                    })
+                    .ty
+            }
+            PlaceElem::Subtype(ty) => ty,
+        }
     }
 }
 

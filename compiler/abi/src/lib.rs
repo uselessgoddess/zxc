@@ -31,7 +31,7 @@ impl FieldsShape {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Align {
     pow2: u8,
 }
@@ -170,6 +170,25 @@ impl Size {
 
         self.bytes().checked_mul(8).unwrap_or_else(|| overflow(self.bytes()))
     }
+
+    #[inline]
+    pub fn unsigned_int_max(&self) -> u128 {
+        u128::MAX >> (128 - self.bits())
+    }
+}
+
+use std::ops::Mul;
+
+impl Mul<u64> for Size {
+    type Output = Size;
+
+    #[inline]
+    fn mul(self, count: u64) -> Size {
+        match self.bytes().checked_mul(count) {
+            Some(bytes) => Size::from_bytes(bytes),
+            None => panic!("Size::mul: {} * {} doesn't fit in u64", self.bytes(), count),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -180,18 +199,106 @@ pub enum Integer {
     I64,
 }
 
+impl Integer {
+    #[inline]
+    pub fn size(self) -> Size {
+        use Integer::*;
+        match self {
+            I8 => Size::from_bytes(1),
+            I16 => Size::from_bytes(2),
+            I32 => Size::from_bytes(4),
+            I64 => Size::from_bytes(8),
+        }
+    }
+
+    pub fn align(self, dl: &TargetDataLayout) -> AbiPrefAlign {
+        use Integer::*;
+
+        match self {
+            I8 => dl.i8_align,
+            I16 => dl.i16_align,
+            I32 => dl.i32_align,
+            I64 => dl.i64_align,
+        }
+    }
+
+    pub fn approximate_align(data: &TargetDataLayout, wanted: Align) -> Integer {
+        use Integer::*;
+
+        for candidate in [I64, I32, I16] {
+            if wanted >= candidate.align(data).abi && wanted.bytes() >= candidate.size().bytes() {
+                return candidate;
+            }
+        }
+        I8
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WrappingRange {
+    pub start: u128,
+    pub end: u128,
+}
+
+impl WrappingRange {
+    pub fn full(size: Size) -> Self {
+        Self { start: 0, end: size.unsigned_int_max() }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub enum Scalar {
+pub enum Primitive {
     Int(Integer, bool),
     F32,
     F64,
     Pointer,
 }
 
+impl Primitive {
+    pub fn size(self, dl: &TargetDataLayout) -> Size {
+        use Primitive::*;
+
+        match self {
+            Int(i, _) => i.size(),
+            F32 => Size::from_bits(32),
+            F64 => Size::from_bits(64),
+            Pointer => dl.pointer_size,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum Scalar {
+    Initialized { value: Primitive, valid: WrappingRange },
+}
+
+impl Scalar {
+    pub fn size(self, dl: &TargetDataLayout) -> Size {
+        self.primitive().size(dl)
+    }
+
+    pub fn primitive(&self) -> Primitive {
+        match *self {
+            Scalar::Initialized { value, .. } => value,
+        }
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(
+            self,
+            Scalar::Initialized {
+                value: Primitive::Int(Integer::I8, false),
+                valid: WrappingRange { start: 0, end: 1 }
+            }
+        )
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Abi {
     Scalar(Scalar),
     Aggregate,
+    Uninhabited,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -206,8 +313,17 @@ impl LayoutKind {
     pub fn is_zst(&self) -> bool {
         match self.abi {
             Abi::Scalar(_) => false,
-            Abi::Aggregate => self.size.bytes() == 0,
+            Abi::Uninhabited | Abi::Aggregate => self.size.bytes() == 0,
         }
+    }
+
+    #[inline]
+    pub fn is_uninhabited(&self) -> bool {
+        matches!(self.abi, Abi::Uninhabited)
+    }
+
+    pub fn is_sized(&self) -> bool {
+        true
     }
 }
 

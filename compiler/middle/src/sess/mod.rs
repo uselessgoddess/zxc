@@ -15,17 +15,9 @@ pub use {
 };
 
 use {
-    crate::{
-        spec,
-        spec::{RelocModel, Target},
-    },
+    crate::spec::{RelocModel, Target},
     ::errors::{DiagnosticMessage, ErrorGuaranteed, SourceMap},
-    bitflags::bitflags,
-    std::{
-        env,
-        fmt::{self, Formatter},
-        path::PathBuf,
-    },
+    std::{env, path::PathBuf},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
@@ -188,6 +180,7 @@ options! {
     threads: usize = (0, parse_number, "use a thread pool with N threads"),
     temps_dir: Option<String> = (None, parse_opt_string,
         "the directory the intermediate files are written to"),
+    codegen_backend: Option<String> = (None, parse_opt_string, "the codegen backend"),
 }
 
 options! {
@@ -321,6 +314,17 @@ impl Session {
         }
 
         "zxc_out".into()
+    }
+
+    pub fn fewer_names(&self) -> bool {
+        let more_names = self.opts.output_types.contains_key(&OutputType::LlvmAssembly)
+            || self.opts.output_types.contains_key(&OutputType::Bitcode);
+        !more_names
+    }
+
+    pub fn needs_link(&self) -> bool {
+        self.opts.output_types.contains_key(&OutputType::Exe)
+            | self.opts.output_types.contains_key(&OutputType::Object)
     }
 }
 

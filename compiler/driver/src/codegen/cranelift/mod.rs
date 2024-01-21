@@ -11,7 +11,7 @@ use {
             isa,
             settings::{self, SetError},
             types, AbiParam, Block, Configurable, FunctionBuilder, FunctionBuilderContext,
-            InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
+            InstBuilder, IntCC, MemFlags, Signature, StackSlotData, StackSlotKind, TrapCode, Value,
         },
     },
     cranelift_module::{FuncId, Linkage, Module, ModuleError},
@@ -137,16 +137,16 @@ pub(crate) fn pointer_ty(tcx: Tx<'_>) -> types::Type {
 }
 
 pub(crate) fn scalar_to_clif(tcx: Tx<'_>, scalar: Scalar) -> types::Type {
-    match scalar {
-        Scalar::Int(int, _sign) => match int {
+    match scalar.primitive() {
+        Primitive::Int(int, _sign) => match int {
             Integer::I8 => types::I8,
             Integer::I16 => types::I16,
             Integer::I32 => types::I32,
             Integer::I64 => types::I64,
         },
-        Scalar::F32 => types::F32,
-        Scalar::F64 => types::F64,
-        Scalar::Pointer => pointer_ty(tcx),
+        Primitive::F32 => types::F32,
+        Primitive::F64 => types::F64,
+        Primitive::Pointer => pointer_ty(tcx),
     }
 }
 
@@ -281,6 +281,10 @@ fn codegen_stmt<'tcx>(
                     let res = match op {
                         UnOp::Not => match layout.ty.kind() {
                             ty::Int(_) => CValue::by_val(fx.bcx.ins().bnot(val), layout),
+                            ty::Bool => {
+                                let res = fx.bcx.ins().icmp_imm(IntCC::Equal, val, 0);
+                                CValue::by_val(res, layout)
+                            }
                             _ => unreachable!("un op Not for {:?}", layout.ty),
                         },
                         UnOp::Neg => match layout.ty.kind() {
@@ -399,6 +403,7 @@ fn param_from_abi<'tcx>(tcx: Tx<'tcx>, abi: ArgAbi<'tcx>) -> Option<AbiParam> {
         PassMode::Direct => Some(match abi.ty.layout.abi {
             Abi::Scalar(scalar) => AbiParam::new(scalar_to_clif(tcx, scalar)),
             Abi::Aggregate => todo!(),
+            Abi::Uninhabited => todo!(),
         }),
     }
 }
@@ -632,6 +637,7 @@ fn build_isa(sess: &Session) -> Result<Arc<dyn isa::TargetIsa + 'static>, SetErr
 use {
     cranelift_object::{ObjectBuilder, ObjectModule},
     middle::{
+        abi::Primitive,
         hir::Hx,
         mir::{InstanceDef, MonoItem, MonoItemData, PlaceElem},
         sess::OutputType,
@@ -740,9 +746,9 @@ impl super::ssa::CodegenBackend for CraneliftBackend {
     fn codegen_module<'tcx>(
         &self,
         hix: Hx<'tcx>,
-        mono_items: &[CodegenUnit<'tcx>],
+        mono_items: Vec<CodegenUnit<'tcx>>,
     ) -> Box<dyn Any> {
-        Box::new(driver(hix, mono_items))
+        Box::new(driver(hix, &mono_items))
     }
 
     fn join_codegen(

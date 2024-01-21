@@ -44,14 +44,14 @@ pub(crate) mod util;
 
 pub use {
     errors::{self, ariadne, ErrorGuaranteed, FatalError, FatalErrorMarker},
-    idx::{Idx, IndexSlice, IndexVec},
+    fx::*,
+    idx::{BitSet, Idx, IndexSlice, IndexVec},
     mir::pretty,
     sess::Session,
     tcx::{Arena, DroplessArena, Intern, Tx, TyCtx},
     temp::MaybeTempDir,
 };
 pub(crate) use {
-    fx::{FxHashMap, FxHashSet, FxHasher},
     lexer::Span,
     par::Lock,
     symbol::{sym, Symbol},

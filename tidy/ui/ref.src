@@ -1,0 +1,20 @@
+extern "C" {
+    fn abort() -> !;
+}
+
+fn assert(b: bool) {
+    if !b {
+        abort();
+    }
+}
+
+fn main() {
+    assert(true);
+
+    let mut x = 12;
+    let y = &mut x;
+    *y = 13;
+
+    assert(x == 13);
+    assert(*y == x);
+}

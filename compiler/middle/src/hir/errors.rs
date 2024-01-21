@@ -2,11 +2,10 @@ use {
     crate::{
         diagnostic,
         errors::Level::*,
-        hir,
         sess::{DiagnosticBuilder, Emission, Handler, IntoDiagnostic},
         symbol::{Ident, Symbol},
     },
-    errors::{Code, DiagnosticMessage, ErrorGuaranteed, Level},
+    errors::{Code, DiagnosticMessage, ErrorGuaranteed},
     lexer::Span,
 };
 
@@ -18,6 +17,15 @@ diagnostic! {
     pub struct MultipleStartFunctions {
         pub label: Span,
         pub previous: Span,
+    }
+}
+
+diagnostic! {
+    ["multiple `main` functions"]
+    [code: E0011]
+    [primary(Error, span): "multiple `main` functions"]
+    pub struct MultipleMainFunctions {
+        pub span: Span,
     }
 }
 

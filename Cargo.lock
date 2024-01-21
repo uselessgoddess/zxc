@@ -441,6 +441,7 @@ version = "0.0.0"
 dependencies = [
  "anstyle",
  "anyhow",
+ "bitflags 2.4.2",
  "cc",
  "chumsky",
  "clap",
@@ -638,6 +639,7 @@ checksum = "01cda141df6706de531b6c46c3a33ecca755538219bd484262fa09410c13539c"
 name = "llvm"
 version = "0.0.0"
 dependencies = [
+ "bitflags 2.4.2",
  "cc",
  "libc",
 ]
@@ -680,7 +682,6 @@ version = "0.0.0"
 dependencies = [
  "abi",
  "arrayvec",
- "bitflags 2.4.2",
  "errors",
  "indexmap",
  "lexer",

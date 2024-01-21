@@ -124,13 +124,30 @@ fn driver_impl<'tcx>(
         mir::pass::emit_mir(hix)?;
     }
 
-    let codegen = codegen::cranelift::CraneliftBackend;
+    let needs_codegen = true;
+
+    if !needs_codegen {
+        return Ok(());
+    }
+
+    let codegen: Box<dyn CodegenBackend> = if let Some(backend) = &tcx.sess.opts.Z.codegen_backend {
+        match &backend[..] {
+            "cranelift" => Box::new(codegen::cranelift::CraneliftBackend),
+            "llvm" => Box::new(codegen::llvm::LlvmBackend),
+            unsupported => tcx.sess.fatal(format!("`{unsupported}` backend is unsupported")),
+        }
+    } else {
+        Box::new(codegen::llvm::LlvmBackend)
+    };
 
     codegen.init(tcx.sess);
 
-    let ongoing = codegen.codegen_module(hix, &[cgu]);
+    let ongoing = codegen.codegen_module(hix, vec![cgu]);
     let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
-    let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());
+
+    if tcx.sess.needs_link() {
+        let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());
+    }
 
     Ok(())
 }
@@ -235,6 +252,9 @@ fn main() {
             Emit::IR => OutputType::LlvmAssembly,
         };
         output_types.insert(output_type, path);
+    }
+    if output_types.is_empty() {
+        output_types.insert(OutputType::Exe, None);
     }
 
     let source_map = Arc::new(SourceMap { sources: vec![].into() });

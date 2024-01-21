@@ -7,11 +7,17 @@ use crate::{
 impl<'tcx> TyCtx<'tcx> {
     pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
         // Safety: compiler intrinsics
-        let scalar = |ty, sign, (size, align)| LayoutKind {
-            abi: Abi::Scalar(Scalar::Int(ty, sign)),
-            size: Size::from_bytes(size),
-            align: Align::from_bytes(align).expect("compiler query"),
-            shape: FieldsShape::Primitive,
+        let scalar = |ty, sign, (size, align)| {
+            let size = Size::from_bytes(size);
+            LayoutKind {
+                abi: Abi::Scalar(Scalar::Initialized {
+                    value: Primitive::Int(ty, sign),
+                    valid: WrappingRange::full(size),
+                }),
+                size,
+                align: Align::from_bytes(align).expect("compiler query"),
+                shape: FieldsShape::Primitive,
+            }
         };
 
         pub const ZST_LAYOUT: LayoutKind = LayoutKind {
@@ -21,11 +27,19 @@ impl<'tcx> TyCtx<'tcx> {
             shape: FieldsShape::Primitive,
         };
 
-        // Safety: compiler intrinsics
+        let ptr_size = Size::from_bytes(8);
         let layout = self.intern.intern_layout(
             self.arena,
             match ty.kind() {
-                TyKind::Bool => scalar(Integer::I8, false, (1, 1)),
+                TyKind::Bool => LayoutKind {
+                    abi: Abi::Scalar(Scalar::Initialized {
+                        value: Primitive::Int(Integer::I8, false),
+                        valid: WrappingRange { start: 0, end: 1 },
+                    }),
+                    size: Size::from_bytes(1),
+                    align: Align::from_bytes(1).unwrap(),
+                    shape: FieldsShape::Primitive,
+                },
                 TyKind::Int(int) => match int {
                     IntTy::I8 => scalar(Integer::I8, true, (1, 1)),
                     IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
@@ -41,8 +55,11 @@ impl<'tcx> TyCtx<'tcx> {
                     }
                 }
                 TyKind::Ref(_, _) => LayoutKind {
-                    abi: Abi::Scalar(Scalar::Pointer),
-                    size: Size::from_bytes(8),
+                    abi: Abi::Scalar(Scalar::Initialized {
+                        value: Primitive::Pointer,
+                        valid: WrappingRange::full(ptr_size),
+                    }),
+                    size: ptr_size,
                     align: Align::from_bytes(8).expect("compiler query"),
                     shape: FieldsShape::Primitive,
                 },
