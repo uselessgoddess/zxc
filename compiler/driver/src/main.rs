@@ -115,10 +115,13 @@ fn driver_impl<'tcx>(
         .par_iter()
         .map(|(def, _)| {
             let InstanceDef::Item(def) = def.def;
-            hix.optimized_mir(def)
+            (def, hix.optimized_mir(def))
         })
         .collect::<Vec<_>>();
-    hix.defs = IndexVec::from_raw(mir);
+    // apply optimizations manually because `items` is not in deterministic order
+    for (def, body) in mir {
+        hix.defs[def] = body;
+    }
 
     if tcx.sess.opts.output_types.contains_key(&OutputType::Mir) {
         mir::pass::emit_mir(hix)?;
