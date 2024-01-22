@@ -4,67 +4,75 @@ use crate::{
     tcx::TyCtx,
 };
 
-impl<'tcx> TyCtx<'tcx> {
-    pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
-        // Safety: compiler intrinsics
-        let scalar = |ty, sign, (size, align)| {
-            let size = Size::from_bytes(size);
-            LayoutKind {
-                abi: Abi::Scalar(Scalar::Initialized {
-                    value: Primitive::Int(ty, sign),
-                    valid: WrappingRange::full(size),
-                }),
-                size,
-                align: Align::from_bytes(align).expect("compiler query"),
-                shape: FieldsShape::Primitive,
-            }
-        };
+use {Integer::*, Primitive::*};
 
-        pub const ZST_LAYOUT: LayoutKind = LayoutKind {
+pub fn ptr_sized(dl: &TargetDataLayout) -> Integer {
+    match dl.pointer_size.bits() {
+        16 => I16,
+        32 => I32,
+        64 => I64,
+        bits => panic!("ptr_sized: unknown pointer bit size {bits}"),
+    }
+}
+
+impl<'tcx> TyCtx<'tcx> {
+    pub fn data_layout(&self) -> &TargetDataLayout {
+        &self.sess.target.data_layout
+    }
+
+    pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
+        let dl = self.data_layout();
+
+        let scalar = |value: Primitive| {
+            LayoutKind::scalar(
+                dl,
+                Scalar::Initialized { value, valid: WrappingRange::full(value.size(dl)) },
+            )
+        };
+        let zst_layout = LayoutKind {
             abi: Abi::Aggregate,
             size: Size::ZERO,
-            align: if let Ok(align) = Align::from_bytes(1) { align } else { todo!() },
+            align: dl.i8_align.abi,
             shape: FieldsShape::Primitive,
         };
+        let never_layout = LayoutKind { abi: Abi::Uninhabited, ..zst_layout.clone() };
 
-        let ptr_size = Size::from_bytes(8);
         let layout = self.intern.intern_layout(
             self.arena,
             match ty.kind() {
-                TyKind::Bool => LayoutKind {
-                    abi: Abi::Scalar(Scalar::Initialized {
-                        value: Primitive::Int(Integer::I8, false),
+                TyKind::Bool => LayoutKind::scalar(
+                    dl,
+                    Scalar::Initialized {
+                        value: Int(I8, false),
                         valid: WrappingRange { start: 0, end: 1 },
-                    }),
-                    size: Size::from_bytes(1),
-                    align: Align::from_bytes(1).unwrap(),
-                    shape: FieldsShape::Primitive,
-                },
+                    },
+                ),
                 TyKind::Int(int) => match int {
-                    IntTy::I8 => scalar(Integer::I8, true, (1, 1)),
-                    IntTy::I16 => scalar(Integer::I16, true, (2, 2)),
-                    IntTy::I32 => scalar(Integer::I32, true, (4, 4)),
-                    IntTy::I64 => scalar(Integer::I64, true, (8, 8)),
-                    IntTy::Isize => scalar(Integer::I64, true, (8, 8)),
+                    IntTy::I8 => scalar(Int(I8, true)),
+                    IntTy::I16 => scalar(Int(I16, true)),
+                    IntTy::I32 => scalar(Int(I32, true)),
+                    IntTy::I64 => scalar(Int(I64, true)),
+                    IntTy::Isize => scalar(Int(ptr_sized(dl), true)),
                 },
                 TyKind::Tuple(list) => {
                     if list.is_empty() {
-                        ZST_LAYOUT
+                        zst_layout
                     } else {
                         todo!()
                     }
                 }
-                TyKind::Ref(_, _) => LayoutKind {
-                    abi: Abi::Scalar(Scalar::Initialized {
-                        value: Primitive::Pointer,
-                        valid: WrappingRange::full(ptr_size),
-                    }),
-                    size: ptr_size,
-                    align: Align::from_bytes(8).expect("compiler query"),
-                    shape: FieldsShape::Primitive,
-                },
-                TyKind::FnDef(_) => ZST_LAYOUT,
-                TyKind::Never => ZST_LAYOUT, // or unreachable?
+                TyKind::Ref(_, _) => {
+                    let mut ptr = scalar(Pointer);
+
+                    // always if ref
+                    if let Abi::Scalar(Scalar::Initialized { valid, .. }) = &mut ptr.abi {
+                        valid.start = 1;
+                    }
+
+                    ptr
+                }
+                TyKind::FnDef(_) => zst_layout,
+                TyKind::Never => never_layout,
             },
         );
         TyAbi { ty, layout }

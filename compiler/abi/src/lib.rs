@@ -281,6 +281,17 @@ impl Primitive {
             Pointer => dl.pointer_size,
         }
     }
+
+    pub fn align(self, dl: &TargetDataLayout) -> AbiPrefAlign {
+        use Primitive::*;
+
+        match self {
+            Int(i, _) => i.align(dl),
+            F32 => dl.f32_align,
+            F64 => dl.f64_align,
+            Pointer => dl.pointer_align,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -291,6 +302,11 @@ pub enum Scalar {
 impl Scalar {
     pub fn size(self, dl: &TargetDataLayout) -> Size {
         self.primitive().size(dl)
+    }
+
+    pub fn align(self, dl: &TargetDataLayout) -> Align {
+        // fixme: now this forced uses abi align
+        self.primitive().align(dl).abi
     }
 
     pub fn primitive(&self) -> Primitive {
@@ -358,6 +374,15 @@ impl LayoutKind {
 
     pub fn is_sized(&self) -> bool {
         true
+    }
+
+    pub fn scalar(dl: &TargetDataLayout, scalar: Scalar) -> Self {
+        Self {
+            abi: Abi::Scalar(scalar),
+            size: scalar.size(dl),
+            align: scalar.align(dl),
+            shape: FieldsShape::Primitive,
+        }
     }
 }
 
