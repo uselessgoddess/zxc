@@ -376,7 +376,10 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         self.block.terminator = Some(terminator);
 
         let block = mem::take(&mut self.block);
-        self.body.basic_blocks.push(block)
+        // note that the index of the next block is returned here.
+        // Since this is usually what is interesting when we are guaranteed
+        // to end a block with a terminator
+        self.body.basic_blocks.push(block) + 1
     }
 
     pub fn end_of_block_dummy(&mut self) -> mir::BasicBlock {
@@ -1011,6 +1014,9 @@ fn analyze_stmt<'hir>(
                     if !ty.is_zst() {
                         let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
                         acx.scope().declare_var(pat.name, (ty, Some(place)));
+                        // close block to avoid multiple initialization before loops
+                        // but now it is guaranteed by loops start block
+                        // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
                     } else {
                         acx.scope().declare_var(pat.name, (ty, None));
                     }

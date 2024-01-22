@@ -5,7 +5,23 @@ fn fib(n: isize) -> isize {
     fib(n - 1.isize) + fib(n - 2.isize)
 }
 
+fn fib_loop(mut n: isize) -> isize {
+    let mut a = 1;
+    let mut b = 1;
+
+    loop {
+        if n <= 0 {
+            break b;
+        }
+
+        let tmp = a;
+        a = b;
+        b = tmp + b;
+        n = n - 1;
+    }
+}
+
 #[start]
 fn main(x: isize, y: isize) -> isize {
-    fib(36.isize).isize
+    fib_loop(36.isize).isize
 }
