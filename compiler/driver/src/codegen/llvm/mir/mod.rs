@@ -5,12 +5,11 @@ mod num;
 use {
     super::{base, Bx, CodegenCx, FunctionCx},
     crate::codegen::llvm::{LPlace, LValue, LValueRepr},
-    llvm::Value,
     middle::{
         abi::{PassMode, TyAbi},
         mir::{
-            self, BasicBlockData, BinOp, CastKind, Instance, InstanceDef, Operand, PlaceElem,
-            Rvalue, Statement, Terminator, Ty, UnOp,
+            self, ty, BasicBlockData, CastKind, Instance, InstanceDef, Operand, PlaceElem, Rvalue,
+            Statement, Terminator, Ty, UnOp,
         },
         BitSet,
     },
@@ -95,8 +94,7 @@ fn codegen_place<'ll, 'tcx>(
     for elem in place.projection {
         match elem {
             PlaceElem::Deref => {
-                todo!()
-                // lplace = lplace.place_deref(fx);
+                lplace = lplace.load_lvalue(fx).deref(fx);
             }
             PlaceElem::Subtype(_) => todo!(),
         }
@@ -134,10 +132,19 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
     fx: &mut FunctionCx<'_, 'll, 'tcx>,
     rvalue: Rvalue<'tcx>,
 ) -> LValue<'ll, 'tcx> {
+    let tcx = fx.cx.tcx;
+
     match rvalue {
         Rvalue::Use(operand) => codegen_operand(fx, operand),
         Rvalue::UseDeref(_) => todo!(),
-        Rvalue::Ref(_, _) => todo!(),
+        Rvalue::Ref(mutbl, place) => {
+            let place = codegen_place(fx, place);
+            let ty = place.layout.ty;
+            LValue {
+                repr: LValueRepr::ByVal(place.llval),
+                layout: tcx.layout_of(Ty::new(tcx, ty::Ref(mutbl, ty))),
+            }
+        }
         Rvalue::UnaryOp(op, operand) => {
             let operand = codegen_operand(fx, operand);
             let llval = operand.load_scalar();

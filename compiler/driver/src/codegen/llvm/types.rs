@@ -3,12 +3,7 @@ use {
     crate::codegen::ssa,
     llvm::{Type, Value},
     middle::{
-        abi,
-        abi::{
-            Abi, Align, FieldsShape, Integer, Layout,
-            Primitive::{self, Int},
-            Scalar, Size,
-        },
+        abi::{Abi, Align, FieldsShape, Integer, Layout, Primitive, Scalar, Size},
         mir::ScalarRepr,
     },
 };
@@ -202,9 +197,12 @@ impl<'ll, 'tcx> CodegenCx<'ll, 'tcx> {
     }
 }
 
+use Primitive::{Int, Pointer};
+
 fn scalar_to_llvm<'ll>(cx: &CodegenCx<'ll, '_>, scalar: Scalar) -> &'ll Type {
     match scalar.primitive() {
         Int(i, _) => cx.type_from_integer(i),
+        Pointer => cx.type_ptr(),
         _ => todo!(),
     }
 }

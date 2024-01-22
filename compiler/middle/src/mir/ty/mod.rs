@@ -88,6 +88,10 @@ pub enum TyKind<'cx> {
 pub type Ty<'cx> = Interned<'cx, TyKind<'cx>>;
 
 impl<'cx> Ty<'cx> {
+    pub fn new(tcx: Tx<'cx>, kind: TyKind<'cx>) -> Ty<'cx> {
+        tcx.intern_ty(kind)
+    }
+
     pub fn kind(&self) -> TyKind<'cx> {
         *self.0
     }

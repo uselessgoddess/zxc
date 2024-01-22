@@ -4,8 +4,8 @@ use {
     llvm::Value,
     middle::{
         abi,
-        abi::{Abi, Align, TyAbi},
-        mir::{self, ConstValue, Ty},
+        abi::{Abi, Align, Primitive, TyAbi},
+        mir::{ConstValue, Ty},
     },
     std::fmt,
 };
@@ -82,6 +82,22 @@ impl<'ll, 'tcx> LValue<'ll, 'tcx> {
             }
         }
     }
+
+    pub fn deref(self, fx: &mut FunctionCx<'_, 'll, 'tcx>) -> LPlace<'ll, 'tcx> {
+        let layout = fx.cx.tcx.layout_of(
+            self.layout
+                .ty
+                .builtin_deref(true)
+                .unwrap_or_else(|| panic!("deref of non-pointer {self:?}"))
+                .ty,
+        );
+        let (llptr) = match self.repr {
+            LValueRepr::ByVal(llptr) => llptr,
+            LValueRepr::ByRef(..) => panic!("Deref of by-ref operand {self:?}"),
+            LValueRepr::Zst => panic!("Deref of ZST operand {self:?}"),
+        };
+        LPlace { llval: llptr, layout, align: layout.align }
+    }
 }
 
 impl fmt::Debug for LValue<'_, '_> {
@@ -155,7 +171,11 @@ impl<'ll, 'tcx> LPlace<'ll, 'tcx> {
                 {
                     init
                 } else {
-                    fx.bcx.load(llty, self.llval, self.align)
+                    let load = fx.bcx.load(llty, self.llval, self.align);
+                    if let Abi::Scalar(scalar) = self.layout.abi {
+                        scalar_assumes(&mut fx.bcx, load, scalar, self.layout);
+                    }
+                    load
                 }
             };
 
@@ -163,5 +183,41 @@ impl<'ll, 'tcx> LPlace<'ll, 'tcx> {
         } else {
             LValue { repr: LValueRepr::ByRef(self.llval, self.align), layout }
         }
+    }
+}
+
+pub fn scalar_assumes<'ll, 'tcx>(
+    bcx: &mut Bx<'_, 'll, 'tcx>,
+    load: &'ll Value,
+    scalar: abi::Scalar,
+    layout: TyAbi<'tcx>,
+) {
+    // if is non-uninit
+    bcx.assume_noundef(load);
+
+    let dl = &bcx.cx.tcx.sess.target.data_layout;
+    match scalar.primitive() {
+        int @ Primitive::Int(..) => {
+            // TODO: add uninitialized assumes in the future
+            if let abi::Scalar::Initialized { valid, .. } = scalar
+                && !valid.is_full_for(int.size(dl))
+            {
+                bcx.assume_range(load, valid)
+            }
+        }
+        Primitive::Pointer => {
+            if let abi::Scalar::Initialized { valid, .. } = scalar
+                && !valid.contains(0)
+            {
+                bcx.assume_nonnull(load);
+            }
+
+            if let Some(pointee) = layout.pointee_info(bcx.cx.tcx)
+                && pointee.safe.is_some()
+            {
+                bcx.assume_align(load, pointee.align);
+            }
+        }
+        Primitive::F32 | Primitive::F64 => {}
     }
 }

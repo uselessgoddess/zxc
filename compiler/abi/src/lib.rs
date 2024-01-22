@@ -244,6 +244,22 @@ impl WrappingRange {
     pub fn full(size: Size) -> Self {
         Self { start: 0, end: size.unsigned_int_max() }
     }
+
+    #[inline]
+    pub fn is_full_for(&self, size: Size) -> bool {
+        let max_value = size.unsigned_int_max();
+        debug_assert!(self.start <= max_value && self.end <= max_value);
+        self.start == (self.end.wrapping_add(1) & max_value)
+    }
+
+    #[inline(always)]
+    pub fn contains(&self, v: u128) -> bool {
+        if self.start <= self.end {
+            self.start <= v && v <= self.end
+        } else {
+            self.start <= v || v <= self.end
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -292,6 +308,24 @@ impl Scalar {
             }
         )
     }
+
+    pub fn is_full_range(&self, dl: &TargetDataLayout) -> bool {
+        match *self {
+            Scalar::Initialized { valid, .. } => valid.is_full_for(self.size(dl)),
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PointerKind {
+    Shared,
+    Mutable,
+}
+
+pub struct PointeeInfo {
+    pub size: Size,
+    pub align: Align,
+    pub safe: Option<PointerKind>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

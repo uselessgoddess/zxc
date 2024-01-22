@@ -12,7 +12,7 @@ use {
     std::{
         borrow::Cow,
         ffi::{c_char, CStr},
-        iter,
+        iter, ptr,
     },
 };
 
@@ -325,6 +325,8 @@ impl<'a, 'll, 'tcx> Bx<'a, 'll, 'tcx> {
         if scalar.is_bool() { self.trunc(val, self.cx.type_i1()) } else { val }
     }
 
+    /* assumes guarantees */
+
     pub fn assume_range(&mut self, load: &'ll Value, range: WrappingRange) {
         unsafe {
             let llty = load.type_of();
@@ -336,6 +338,38 @@ impl<'a, 'll, 'tcx> Bx<'a, 'll, 'tcx> {
             llvm::LLVMSetMetadata(
                 load,
                 llvm::MD_range as _,
+                llvm::LLVMMDNodeInContext(self.cx.llcx, v.as_ptr(), v.len() as _),
+            );
+        }
+    }
+
+    pub fn assume_noundef(&mut self, load: &'ll Value) {
+        unsafe {
+            llvm::LLVMSetMetadata(
+                load,
+                llvm::MD_noundef as _,
+                llvm::LLVMMDNodeInContext(self.cx.llcx, ptr::null(), 0),
+            );
+        }
+    }
+
+    pub fn assume_nonnull(&mut self, load: &'ll Value) {
+        unsafe {
+            llvm::LLVMSetMetadata(
+                load,
+                llvm::MD_nonnull as _,
+                llvm::LLVMMDNodeInContext(self.cx.llcx, ptr::null(), 0),
+            );
+        }
+    }
+
+    pub fn assume_align(&mut self, load: &'ll Value, align: Align) {
+        unsafe {
+            let v = [self.cx.const_u64(align.bytes())];
+
+            llvm::LLVMSetMetadata(
+                load,
+                llvm::MD_align as _,
                 llvm::LLVMMDNodeInContext(self.cx.llcx, v.as_ptr(), v.len() as _),
             );
         }
