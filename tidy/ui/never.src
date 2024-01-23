@@ -2,7 +2,7 @@ fn test(argc: i32) -> i32 {
     return (if true {
         return argc;
     } else {
-        return argc;
+        argc
     });
 }
 
@@ -10,11 +10,11 @@ fn fib(n: isize) -> isize {
     if n <= 1 {
         return n;
     } else {
-        fib(n - 1) + fib(n - 2);
+        fib(n - 1) + fib(n - 2)
     }
 }
 
 #[start]
 fn main(argc: isize, _: isize) -> isize {
-    (fib(argc) == 1 && argc == 1).isize - 1
+    (fib(argc) == 1 && fib(argc + 1) == 1 && argc == 1).isize - 1
 }

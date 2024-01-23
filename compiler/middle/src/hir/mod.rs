@@ -8,7 +8,7 @@ mod ty;
 
 use {
     crate::{
-        hir::{attr::MetaItem, error::TyErrCtx, scope::LoopData},
+        hir::{attr::MetaItem, scope::LoopData},
         idx::IndexVec,
         index_vec, man,
         mir::{
@@ -483,9 +483,8 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         b: Ty<'hir>,
     ) -> Result<Ty<'hir>> {
         Ok(match (a.is_never(), b.is_never()) {
-            (true, true) => a,
-            (true, _) => b,
-            (_, true) => a,
+            (true, false) => b,
+            (false, true) => a,
             _ => self.assert_same_types(a, b)?,
         })
     }
@@ -589,8 +588,16 @@ fn analyze_branch_expr<'hir>(
             Some(Terminator::Goto { target: next_block });
 
         // Safety: we do not create zst constants if the expression type is reduced to `never'
-        let ret_ty = unsafe { acx.assert_same_types_allow_never(else_ty, then_ty)? };
+        let mut ret_ty = unsafe { acx.assert_same_types_allow_never(else_ty, then_ty)? };
         acx.body.local_decls[ret_place.local].ty = ret_ty.kind;
+
+        use std::cmp::{max, min};
+
+        // TODO: move into `span` crate
+        fn merge_span(a: Span, b: Span) -> Span {
+            Span::new(min(a.start, b.start), max(a.end, b.end))
+        }
+        ret_ty.span = merge_span(else_ty.span, then_ty.span);
 
         acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
             discr,
@@ -1061,12 +1068,10 @@ fn analyze_body<'hir>(
 
         return Ok(if let stmt::Expr(expr, true) = &last.kind {
             let (ty, operand) = analyze_expr(acx, expr)?;
+            let ret = unsafe { acx.assert_same_types_allow_never(ret, ty)? };
 
-            if !ty.is_zst() {
-                unsafe {
-                    let ret = acx.assert_same_types_allow_never(ret, ty)?;
-                    make_return(acx, ret, operand);
-                }
+            if !ret.is_zst() {
+                make_return(acx, ret, operand);
             }
             acx.end_of_block(Terminator::Return);
         } else {
@@ -1138,7 +1143,7 @@ pub fn analyze_fn_definition<'hir>(
 
 struct InferOverwrite<'err, 'tcx> {
     tcx: Tx<'tcx>,
-    err: &'err mut TyErrCtx,
+    err: &'err mut error::TyErrCtx,
     vars: IndexVec<mir::InferId, Option<mir::Ty<'tcx>>>,
 }
 
