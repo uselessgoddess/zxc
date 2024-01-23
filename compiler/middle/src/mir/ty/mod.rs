@@ -3,8 +3,11 @@ mod list;
 mod sty;
 
 use {
-    smallvec::SmallVec,
-    std::{fmt, fmt::Formatter},
+    smallvec::{smallvec, SmallVec},
+    std::{
+        fmt,
+        fmt::{Formatter, Write},
+    },
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -75,6 +78,17 @@ pub struct TypeAndMut<'tcx> {
     pub mutbl: Mutability,
 }
 
+idx::define_index! {
+    #[derive(Debug)]
+    pub struct InferId = u32;
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Infer {
+    /// `{integer}`
+    Int(InferId),
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub enum TyKind<'cx> {
     Bool,
@@ -82,6 +96,7 @@ pub enum TyKind<'cx> {
     Tuple(&'cx List<Ty<'cx>>),
     Ref(Mutability, Ty<'cx>),
     FnDef(mir::DefId), // has no generics now
+    Infer(Infer),
     Never,
 }
 
@@ -162,7 +177,7 @@ impl<'cx> Ty<'cx> {
 
     #[inline]
     pub fn is_integer(&self) -> bool {
-        matches!(self.kind(), Int(_))
+        matches!(self.kind(), Int(_) | Infer(Infer::Int(_)))
     }
 
     pub fn is_signed(self) -> bool {
@@ -171,6 +186,11 @@ impl<'cx> Ty<'cx> {
 
     pub fn is_ptr_sized_int(&self) -> bool {
         matches!(self.kind(), Int(IntTy::Isize) /* | Uint(ty::UintTy::Usize)*/)
+    }
+
+    #[inline]
+    pub fn needs_infer(&self) -> bool {
+        matches!(self.kind(), Infer(_))
     }
 
     pub fn builtin_deref(self, _explicit: bool) -> Option<TypeAndMut<'cx>> {
@@ -185,6 +205,43 @@ impl<'cx> Ty<'cx> {
         match self.kind() {
             Ref(mutability, _) => Some(mutability),
             _ => None,
+        }
+    }
+
+    pub fn walk(self) -> TypeWalker<'cx> {
+        TypeWalker::new(self)
+    }
+}
+
+pub struct TypeWalker<'tcx> {
+    stack: SmallVec<Ty<'tcx>, 8>,
+    visited: FxHashSet<Ty<'tcx>>, // todo: use small storage optimized hash map
+}
+
+impl<'tcx> TypeWalker<'tcx> {
+    pub fn new(root: Ty<'tcx>) -> Self {
+        Self { stack: smallvec![root], visited: Default::default() }
+    }
+
+    fn push_impl(stack: &mut SmallVec<Ty<'tcx>, 8>, parent: Ty<'tcx>) {
+        match parent.kind() {
+            Bool | Int(_) | FnDef(_) | Infer(_) | Never => {}
+            Ref(_, ty) => stack.push(ty),
+            Tuple(_) => todo!(),
+        }
+    }
+}
+
+impl<'tcx> Iterator for TypeWalker<'tcx> {
+    type Item = Ty<'tcx>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let next = self.stack.pop()?;
+            if self.visited.insert(next) {
+                Self::push_impl(&mut self.stack, next);
+                return Some(next);
+            }
         }
     }
 }
@@ -214,6 +271,7 @@ impl fmt::Debug for Ty<'_> {
                 write!(f, "fn({def:?})")
             }
             Never => f.write_str("!"),
+            Infer(_) => f.write_str("{integer}"),
         }
     }
 }
@@ -221,10 +279,11 @@ impl fmt::Debug for Ty<'_> {
 use {
     crate::{
         hir::HirCtx,
+        idx,
         mir::{self, Mutability},
         symbol::{sym, Symbol},
         tcx::Interned,
-        util, Tx,
+        util, FxHashSet, Tx,
     },
     lexer::ty,
 };

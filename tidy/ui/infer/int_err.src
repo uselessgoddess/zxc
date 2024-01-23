@@ -1,0 +1,7 @@
+fn infer1(y: i16) -> isize {
+    let mut x = 12;
+    x = 13;
+    x + y
+}
+
+fn main() {}

@@ -1,0 +1,12 @@
+error[E0002]: type mismatch
+   ╭─[int_err.src:4:5]
+   │
+ 1 │ fn infer1(y: i16) -> isize {
+   │                      ~~~~╮  
+   │                          ╰── expected due to this
+   │ 
+ 4 │     x + y
+   │     ^^^^╮  
+   │         ╰── expected `isize`, found `i16`
+───╯
+error: aborting due to previous error

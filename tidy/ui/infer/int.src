@@ -1,0 +1,24 @@
+fn infer1() -> isize { 123 }
+
+fn infer2(x: isize) -> isize { x + 123 }
+
+fn infer3(y: i16) -> isize {
+    let mut x = 12; // {integer}
+    x = 13; // {integer}
+    12
+    // here `x` becomes `i32`
+}
+
+fn infer4(y: i16) -> i16 {
+    let mut x = 12;
+    x = 13;
+    x + y
+}
+
+fn infer5(y: i16) {
+    let mut x = 12;
+    x = 13;
+    let z = x + y; // i16
+}
+
+fn main() {}

@@ -2,7 +2,7 @@ fn fib(n: isize) -> isize {
     if n <= 1 {
         return n;
     }
-    fib(n - 1.isize) + fib(n - 2.isize)
+    fib(n - 1) + fib(n - 2)
 }
 
 fn fib_loop(mut n: isize) -> isize {
@@ -14,14 +14,26 @@ fn fib_loop(mut n: isize) -> isize {
             break b;
         }
 
-        let tmp = a;
+        let tmp = n * 0 + a; // n * 0 to infer tmp as `isize`
         a = b;
         b = tmp + b;
         n = n - 1;
     }
 }
 
+fn infer(y: i16) -> isize {
+    let mut x = 12;
+    x = 13;
+    12
+}
+
 #[start]
 fn main(x: isize, y: isize) -> isize {
-    fib_loop(36.isize).isize
+    0
 }
+let a = 1;
+let b = 1;
+
+let tmp = a;
+let a = b;
+let b = tmp + b;

@@ -14,5 +14,5 @@ fn main(argc: isize, _: isize) -> isize {
 
     let part2 = a + b + c + d;
 
-    (part1 + part2).isize
+    (part1 + part2)
 }

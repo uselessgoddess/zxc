@@ -200,6 +200,15 @@ impl<'a> IntoDiagnostic<'a> for InvalidDeref {
     }
 }
 
+diagnostic! {
+    ["can't infer type on ambiguous numeric type `{{integer}}`"]
+    [code: E0012]
+    [primary(Note, span): "you must specify a concrete type for this numeric value, like `i32`"]
+    pub struct InferInt {
+        pub span: Span,
+    }
+}
+
 fn none() -> Option<String> {
     None
 }

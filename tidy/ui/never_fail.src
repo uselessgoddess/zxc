@@ -1,5 +1,5 @@
 #[start]
 fn main(argc: isize, _: isize) -> isize {
-    let x = return 12.isize;
-    return x + 12.isize;
+    let x = return 12;
+    return x + 12;
 }

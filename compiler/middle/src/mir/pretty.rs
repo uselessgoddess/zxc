@@ -4,7 +4,7 @@ use {
         mir::{
             self,
             consts::ConstInt,
-            ty::{self, Abi},
+            ty::{self, Abi, Infer},
             BinOp, ConstValue, Mutability, Operand, PlaceElem, Rvalue, Statement, Terminator,
             TyKind::{self},
             UnOp,
@@ -233,6 +233,9 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
             ty::Ref(mutbl, ty) => {
                 p!("&", write("{}", mutbl.prefix_str()), print(ty));
             }
+            ty::Infer(infer) => match infer {
+                Infer::Int(_) => p!("{{integer}}"),
+            },
         }
 
         Ok(())

@@ -1,10 +1,8 @@
-error[E0002]: type mismatch
-   ╭─[mut_ref_collapse.src:3:9]
+error[E0012]: can't infer type on ambiguous numeric type `{integer}`
+   ╭─[mut_ref_collapse.src:2:32]
    │
- 3 │     x = 12;
-   │     ┬   ^╮  
-   │     ╰─────── expected due to this
-   │          │  
-   │          ╰── expected `&mut &mut &mut i32`, found `i32`
+ 2 │     let mut x = &mut &mut &mut 13;
+   │                                ~╮  
+   │                                 ╰── you must specify a concrete type for this numeric value, like `i32`
 ───╯
 error: aborting due to previous error

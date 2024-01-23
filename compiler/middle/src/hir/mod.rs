@@ -8,15 +8,16 @@ mod ty;
 
 use {
     crate::{
-        hir::{attr::MetaItem, scope::LoopData},
+        hir::{attr::MetaItem, error::TyErrCtx, scope::LoopData},
         idx::IndexVec,
         index_vec, man,
         mir::{
             self,
             mono::{Linkage, Visibility},
             ty::Abi,
-            CastKind, CodegenUnit, ConstValue, Instance, InstanceData, InstanceDef, Local,
-            LocalDecl, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue,
+            visit::{MutVisitor, TyContext},
+            CastKind, CodegenUnit, ConstValue, Infer, InstanceData, InstanceDef, Local, LocalDecl,
+            Location, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue,
             ScalarRepr, Statement, SwitchTargets, Terminator, TyKind,
         },
         pretty::{FmtPrinter, Print, Printer},
@@ -331,12 +332,17 @@ struct AnalyzeCx<'mir, 'hir> {
     body: &'mir mut mir::Body<'hir>,
     scope: Option<&'hir mut Scope<'hir>>,
 
+    vars: IndexVec<mir::InferId, Option<mir::Ty<'hir>>>,
     err: &'mir mut error::TyErrCtx,
 }
 
 impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     pub fn local_decls(&self) -> &mir::LocalDecls<'hir> {
         &self.body.local_decls
+    }
+
+    pub fn next_infer_var(&mut self) -> mir::InferId {
+        self.vars.push(None)
     }
 
     pub fn scope(&mut self) -> &mut Scope<'hir> {
@@ -419,12 +425,12 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     ) -> (Ty<'hir>, Place<'hir>) {
         // Simple one-level optimization of MIR
         match rvalue {
-            Rvalue::Use(Operand::Copy(place))
-                if self.body.local_decls[place.local].mutability == mutability =>
-            {
-                // otherwise you'll have to create new place
-                (ty, place)
-            }
+            // Rvalue::Use(Operand::Copy(place))
+            //     if self.body.local_decls[place.local].mutability == mutability =>
+            // {
+            //     // otherwise you'll have to create new place
+            //     (ty, place)
+            // }
             _ => {
                 let place =
                     Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
@@ -484,15 +490,45 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         })
     }
 
-    pub fn assert_same_types(&mut self, a: Ty<'hir>, b: Ty<'hir>) -> Result<Ty<'hir>> {
-        if a == b {
-            Ok(a)
-        } else {
-            Err(self.err.emit(errors::TypeMismatch {
-                expect: self.hix.ty_msg(a),
-                found: self.hix.ty_msg(b),
-            }))
+    pub fn infer_same_types(&mut self, a: Ty<'hir>, b: Ty<'hir>) -> Result<Ty<'hir>> {
+        use mir::{Infer::Int, TyKind::Infer};
+
+        let error_report =
+            |a, b| errors::TypeMismatch { expect: self.hix.ty_msg(a), found: self.hix.ty_msg(b) };
+
+        let mut infer = |var, to: Ty<'hir>, from: Ty<'hir>| {
+            if let Some(ty) = self.vars[var] {
+                self.assert_same_types(to, from.map(|_| ty)) // todo: can it cause stack overflow?
+            } else {
+                self.vars[var] = Some(to.kind);
+                Ok(to)
+            }
+        };
+
+        match (a.kind(), b.kind()) {
+            (Infer(Int(_)), Infer(Int(var))) => {
+                if self.vars[var].is_some() {
+                    Err(self.err.emit(errors::InferInt { span: a.span }))
+                } else {
+                    self.vars[var] = Some(a.kind);
+                    Ok(a)
+                }
+            }
+            (TyKind::Int(_), Infer(Int(var))) => infer(var, a, b),
+            (Infer(Int(var)), TyKind::Int(_)) => infer(var, b, a),
+            _ => Err(self.err.emit(error_report(a, b))), // has no infer
         }
+    }
+
+    pub fn assert_same_types(&mut self, a: Ty<'hir>, b: Ty<'hir>) -> Result<Ty<'hir>> {
+        let error_report =
+            |a, b| errors::TypeMismatch { expect: self.hix.ty_msg(a), found: self.hix.ty_msg(b) };
+
+        if a.needs_infer() || b.needs_infer() {
+            return self.infer_same_types(a, b);
+        }
+
+        if a == b { Ok(a) } else { Err(self.err.emit(error_report(a, b))) }
     }
 }
 
@@ -570,7 +606,7 @@ fn const_eval_operand(
     ScalarRepr { data: a, size }: ScalarRepr,
     ScalarRepr { data: b, .. }: ScalarRepr,
     signed: bool,
-) -> Option<ScalarRepr> {
+) -> ScalarRepr {
     use mir::BinOp::*;
 
     fn bool(s: bool) -> ScalarRepr {
@@ -578,10 +614,10 @@ fn const_eval_operand(
     }
 
     let scalar = match op {
-        Add | AddUnchecked => ScalarRepr { data: a.checked_add(b)?, size },
-        Sub | SubUnchecked => ScalarRepr { data: a.checked_sub(b)?, size },
-        Mul | MulUnchecked => ScalarRepr { data: a.checked_mul(b)?, size },
-        Div => ScalarRepr { data: a.checked_div(b)?, size },
+        Add | AddUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
+        Sub | SubUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
+        Mul | MulUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
+        Div => ScalarRepr { data: a.wrapping_div(b), size },
         Eq => bool(a == b),
         Lt => bool(a > b),
         Le => bool(a >= b),
@@ -607,7 +643,8 @@ fn const_eval_operand(
             _ => unreachable!(),
         }
     };
-    if scalar.data > max { None } else { Some(scalar) }
+    scalar
+    // if scalar.data > max { None } else { Some(scalar) }
 }
 
 fn coerce_const_scalar<'tcx>(
@@ -621,6 +658,21 @@ fn coerce_const_scalar<'tcx>(
     Operand::Const(ConstValue::Scalar(scalar), ty)
 }
 
+pub fn binop_ty<'tcx>(
+    acx: &mut AnalyzeCx<'_, 'tcx>,
+    op: mir::BinOp,
+    lhs: Ty<'tcx>,
+    rhs: Ty<'tcx>,
+) -> Result<Ty<'tcx>> {
+    use mir::BinOp::*;
+
+    let ty = acx.assert_same_types(lhs, rhs)?;
+    Ok(match op {
+        Add | Sub | Mul | Div | AddUnchecked | SubUnchecked | MulUnchecked => ty,
+        Eq | Lt | Le | Ne | Ge | Gt => lhs.map(|_| acx.tcx.types.bool),
+    })
+}
+
 fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
@@ -628,11 +680,8 @@ fn analyze_expr<'hir>(
     let (ty, rvalue) = match expr.kind {
         expr::Lit(Lit::Str(_)) | expr::Lit(Lit::Float(_)) => todo!(),
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
-            let ty = acx.tcx.types.i32;
-            (
-                Ty::new(span, ty),
-                Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit as u32)), ty),
-            )
+            let ty = acx.tcx.intern_ty(TyKind::Infer(Infer::Int(acx.next_infer_var())));
+            (Ty::new(span, ty), Operand::Const(ConstValue::Scalar(ScalarRepr::from(lit)), ty))
         }
         expr::Lit(Lit::Bool(LitBool { lit, span })) => {
             let ty = acx.tcx.types.bool;
@@ -705,69 +754,8 @@ fn analyze_expr<'hir>(
                 let (lhs, a) = analyze_expr(acx, lhs)?;
                 let (rhs, b) = analyze_expr(acx, rhs)?;
 
-                if lhs.is_integer() && rhs.is_integer() {
-                    let (a, b) = match (a, b) {
-                        (
-                            Operand::Const(ConstValue::Scalar(a), ty),
-                            Operand::Const(ConstValue::Scalar(b), _),
-                        ) => {
-                            assert_eq!(lhs.kind, ty);
-                            acx.assert_same_types(lhs, rhs)?;
-
-                            if op == mir::BinOp::Div && b.is_null() {
-                                let eval = format!(
-                                    "{:#?}",
-                                    mir::consts::ConstInt::new(
-                                        a,
-                                        ty.is_signed(),
-                                        ty.is_ptr_sized_int(),
-                                    )
-                                );
-                                return Err(acx.err.emit(errors::ConstArithmetic {
-                                    case: "this arithmetic operation will trapped at runtime",
-                                    note: Some(format!(
-                                        "attempt to divide {} by zero",
-                                        eval.fg(color::Crab)
-                                    )),
-                                    span: expr.span,
-                                }));
-                            }
-
-                            return if let Some(s) = const_eval_operand(op, a, b, ty.is_signed()) {
-                                let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
-                                Ok((lhs.map(|_| kind), Operand::Const(ConstValue::Scalar(s), kind)))
-                            } else {
-                                Err(acx.err.emit(errors::ConstArithmetic {
-                                    case: "this arithmetic operation will overflow",
-                                    note: None,
-                                    span: expr.span,
-                                }))
-                            };
-                        }
-                        // it should be unreachable
-                        (a @ Operand::Const(_, _), b @ Operand::Const(_, _)) => {
-                            acx.assert_same_types(lhs, rhs)?;
-                            (a, b) // add simple const evaluation
-                        }
-                        (Operand::Const(ConstValue::Scalar(a), _), b) => {
-                            (coerce_const_scalar(acx.tcx, a, rhs.kind), b)
-                        }
-                        (a, Operand::Const(ConstValue::Scalar(b), _)) => {
-                            (a, coerce_const_scalar(acx.tcx, b, lhs.kind))
-                        }
-                        (a, b) => {
-                            acx.assert_same_types(lhs, rhs)?;
-                            (a, b)
-                        }
-                    };
-                    // lhs is defining reality
-                    let kind = op.ty(acx.tcx, lhs.kind, lhs.kind);
-                    acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
-                } else {
-                    acx.assert_same_types(lhs, rhs)?;
-                    let kind = op.ty(acx.tcx, lhs.kind, rhs.kind);
-                    acx.push_temp_rvalue(Ty::new(lhs.span, kind), Rvalue::BinaryOp(op, a, b))
-                }
+                let ty = binop_ty(acx, op, lhs, rhs)?;
+                acx.push_temp_rvalue(ty, Rvalue::BinaryOp(op, a, b))
             } else {
                 let bool = Ty::new(rhs.span, acx.tcx.types.bool);
 
@@ -807,8 +795,10 @@ fn analyze_expr<'hir>(
         expr::Call(call, args) => {
             let operands =
                 args.iter().map(|expr| analyze_expr(acx, expr)).collect::<Result<Vec<_>>>()?;
-            let types: Vec<_> = operands.iter().map(|(t, _)| t.kind).collect();
-            let args: Vec<_> = operands.iter().map(|(_, o)| *o).collect();
+            let (types, args): (Vec<_>, Vec<_>) = operands.iter().copied().unzip();
+
+            // TODO: avoid this allocation
+            let types_mir: Vec<_> = types.iter().map(|&ty| ty.kind).collect();
 
             if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
                 let cast = match call.name {
@@ -835,7 +825,7 @@ fn analyze_expr<'hir>(
                 } else {
                     return Err(acx.err.emit(errors::MismatchFnSig {
                         expect: acx.hix.args_fmt(&[cast]),
-                        found: acx.hix.args_fmt(&types),
+                        found: acx.hix.args_fmt(&types_mir),
                         caller: call.span,
                         target: None,
                     }));
@@ -844,13 +834,20 @@ fn analyze_expr<'hir>(
                 let InstanceData { sig, span, symbol, hsig, .. } = acx.hix.instances[def];
                 assert_eq!(symbol, call.name); // todo: impossible?
 
-                if !types.iter().eq(sig.inputs()) {
-                    return Err(acx.err.emit(errors::MismatchFnSig {
-                        expect: acx.hix.args_fmt(sig.inputs()),
-                        found: acx.hix.args_fmt(&types),
-                        caller: call.span,
-                        target: Some(span),
-                    }));
+                for (&ty, &pass) in types.iter().zip(sig.inputs()) {
+                    // Now we have to use a fake span,
+                    // later we will have to calculate it from the arguments
+                    // TODO: fix this check
+                    if acx.assert_same_types(ty, ty.map(|_| pass)).is_err()
+                        || types.len() != sig.inputs().len()
+                    {
+                        return Err(acx.err.emit(errors::MismatchFnSig {
+                            expect: acx.hix.args_fmt(sig.inputs()),
+                            found: acx.hix.args_fmt(&types_mir),
+                            caller: call.span,
+                            target: Some(span),
+                        }));
+                    }
                 }
 
                 let dest = acx.typed_place(sig.output());
@@ -983,6 +980,11 @@ fn analyze_expr<'hir>(
                 acx.err.emit(errors::MutBorrowImmut { local: symbol, borrow: expr.span });
             }
 
+            // That's the limitation for today, deep type inference is forbidden.
+            if ty.needs_infer() {
+                return Err(acx.err.emit(errors::InferInt { span: ty.span }));
+            }
+
             let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
             acx.push_temp_rvalue(
                 ty.map(|ty| acx.tcx.intern_ty(TyKind::Ref(mutability, ty))),
@@ -1040,13 +1042,9 @@ fn analyze_local_block_unclosed<'hir>(
 }
 
 fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
-    if let Some(Statement::Assign(place, _)) = acx.block.statements.last_mut() {
-        place.local = Local::RETURN_PLACE;
-    } else {
-        acx.block
-            .statements
-            .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
-    }
+    acx.block
+        .statements
+        .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
 }
 
 fn analyze_body<'hir>(
@@ -1120,6 +1118,7 @@ pub fn analyze_fn_definition<'hir>(
         block: mir::BasicBlockData { statements: vec![], terminator: None },
         body: &mut body,
         scope: Some(tcx.empty_hir_scope(sig)),
+        vars: Default::default(),
         err,
     };
 
@@ -1132,7 +1131,58 @@ pub fn analyze_fn_definition<'hir>(
         acx.end_of_block(Terminator::Return);
     }
 
+    InferOverwrite { tcx, vars: acx.vars, err: acx.err }.visit_body(acx.body);
+
     Ok(body)
+}
+
+struct InferOverwrite<'err, 'tcx> {
+    tcx: Tx<'tcx>,
+    err: &'err mut TyErrCtx,
+    vars: IndexVec<mir::InferId, Option<mir::Ty<'tcx>>>,
+}
+
+impl<'tcx> MutVisitor<'tcx> for InferOverwrite<'_, 'tcx> {
+    fn tcx<'a>(&'a self) -> Tx<'tcx> {
+        self.tcx
+    }
+
+    fn visit_ty(&mut self, ty: &mut mir::Ty<'tcx>, _: TyContext) {
+        let i32 = self.tcx().types.i32;
+
+        while let TyKind::Infer(Infer::Int(var)) = ty.kind()
+            && let infer = self.vars[var].unwrap_or(i32)
+            && infer != *ty
+        {
+            *ty = infer;
+        }
+        if ty.needs_infer() {
+            // cyclic inferring now is unreachable
+            return unreachable!();
+
+            // limitation of this day
+            // TODO: get span from source_info that should be storage at body
+            // self.err.emit(errors::CantInferInt { span: Span::splat(0) });
+        }
+    }
+
+    fn visit_constant(
+        &mut self,
+        (const_, ty): (&mut ConstValue, &mut mir::Ty<'tcx>),
+        location: Location,
+    ) {
+        if let TyKind::Infer(Infer::Int(_)) = ty.kind()
+            && let ConstValue::Scalar(repr) = const_
+        {
+            self.visit_ty(ty, TyContext::Location(location));
+
+            // TODO: possible to use fallible `layout_of`
+            if !ty.needs_infer() {
+                repr.size = NonZeroU8::new(self.tcx().layout_of(*ty).size.bytes() as u8)
+                    .expect("integral type sizes in bytes should be non zero and less than 255");
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

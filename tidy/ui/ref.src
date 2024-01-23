@@ -15,6 +15,6 @@ fn main() {
     let y = &mut x;
     *y = 13;
 
-    assert(x == 13);
     assert(*y == x);
+    assert(x == 13);
 }

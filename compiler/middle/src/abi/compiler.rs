@@ -20,6 +20,7 @@ impl<'tcx> TyCtx<'tcx> {
         &self.sess.target.data_layout
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn layout_of(&self, ty: Ty<'tcx>) -> TyAbi<'tcx> {
         let dl = self.data_layout();
 
@@ -73,6 +74,7 @@ impl<'tcx> TyCtx<'tcx> {
                 }
                 TyKind::FnDef(_) => zst_layout,
                 TyKind::Never => never_layout,
+                TyKind::Infer(_) => panic!("Tx::layout_of: unexpected type `{ty:?}`"),
             },
         );
         TyAbi { ty, layout }
@@ -93,6 +95,7 @@ impl<'tcx> TyCtx<'tcx> {
                 TyKind::Ref(_, _) => PassMode::Direct,
                 TyKind::FnDef(_) => PassMode::Ignore,
                 TyKind::Never => PassMode::Ignore,
+                TyKind::Infer(_) => unreachable!(),
             },
         };
 

@@ -24,7 +24,7 @@ pub use {
         LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr, Statement,
         SwitchTargets, Terminator, UnOp,
     },
-    ty::{cast, FnSig, IntTy, Ty, TyKind, UintTy},
+    ty::{cast, FnSig, Infer, InferId, IntTy, Ty, TyKind, UintTy},
 };
 
 pub const START_BLOCK: BasicBlock = BasicBlock::START_BLOCK;
