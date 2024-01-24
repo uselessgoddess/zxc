@@ -133,23 +133,30 @@ fn driver_impl<'tcx>(
         return Ok(());
     }
 
-    let codegen: Box<dyn CodegenBackend> = if let Some(backend) = &tcx.sess.opts.Z.codegen_backend {
-        match &backend[..] {
-            "cranelift" => Box::new(codegen::cranelift::CraneliftBackend),
-            "llvm" => Box::new(codegen::llvm::LlvmBackend),
-            unsupported => tcx.sess.fatal(format!("`{unsupported}` backend is unsupported")),
+    {
+        use codegen::ssa::CodegenBackend;
+
+        let llvm = Box::new(codegen::llvm::LlvmBackend);
+        let codegen: Box<dyn CodegenBackend> = if let Some(backend) =
+            &tcx.sess.opts.Z.codegen_backend
+        {
+            match &backend[..] {
+                "llvm" => llvm,
+                "cranelift" => Box::new(codegen::cranelift::CraneliftBackend),
+                unsupported => tcx.sess.fatal(format!("`{unsupported}` backend is unsupported")),
+            }
+        } else {
+            llvm
+        };
+
+        codegen.init(tcx.sess);
+
+        let ongoing = codegen.codegen_module(hix, vec![cgu]);
+        let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
+
+        if tcx.sess.needs_link() {
+            let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());
         }
-    } else {
-        Box::new(codegen::llvm::LlvmBackend)
-    };
-
-    codegen.init(tcx.sess);
-
-    let ongoing = codegen.codegen_module(hix, vec![cgu]);
-    let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
-
-    if tcx.sess.needs_link() {
-        let _ = codegen.link_binary(tcx.sess, results, tcx.output_filenames());
     }
 
     Ok(())
@@ -224,7 +231,6 @@ fn default_emitter(source_map: Arc<SourceMap>) -> Box<DynEmitter> {
 
 use crate::{
     cli::{Args, Emit},
-    codegen::ssa::CodegenBackend,
     interface::Config,
 };
 

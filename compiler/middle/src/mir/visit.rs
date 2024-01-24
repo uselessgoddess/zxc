@@ -1,11 +1,6 @@
 use {
-    crate::{
-        mir::{
-            BasicBlock, BasicBlockData, Body, ConstValue, Local, LocalDecl, Location, Mutability,
-            Operand, Place, PlaceElem, PlaceRef, Rvalue, Statement, Terminator, Ty,
-        },
-        Tx,
-    },
+    crate::{mir::*, Tx},
+    lexer::Span,
     std::borrow::Cow,
 };
 
@@ -108,6 +103,20 @@ macro_rules! make_mir_visitor {
                 self.super_local_decl(local, local_decl);
             }
 
+            fn visit_source_info(
+                &mut self,
+                source_info: & $($mutability)? SourceInfo,
+            ) {
+                self.super_source_info(source_info);
+            }
+
+            fn visit_span(
+                &mut self,
+                span: $(& $mutability)? Span,
+            ) {
+                self.super_span(span);
+            }
+
             fn visit_local(
                 &mut self,
                 _local: $(& $mutability)? Local,
@@ -149,13 +158,16 @@ macro_rules! make_mir_visitor {
             fn super_statement(&mut self,
                                statement: & $($mutability)? Statement<'tcx>,
                                location: Location) {
-                match statement {
-                    Statement::Assign(
+                let Statement { source_info, kind } = statement;
+
+                self.visit_source_info(source_info);
+                match kind {
+                    StatementKind::Assign(
                         place, rvalue
                     ) => {
                         self.visit_assign(place, rvalue, location);
                     }
-                    Statement::Nop => {}
+                    StatementKind::Nop => {}
                 }
             }
 
@@ -174,9 +186,12 @@ macro_rules! make_mir_visitor {
             fn super_terminator(&mut self,
                                 terminator: &$($mutability)? Terminator<'tcx>,
                                 location: Location) {
-                match terminator {
-                    Terminator::Goto { .. } | Terminator::Unreachable => {}
-                    Terminator::Return => {
+                let Terminator { source_info, kind } = terminator;
+
+                self.visit_source_info(source_info);
+                match kind {
+                    TerminatorKind::Goto { .. } | TerminatorKind::Unreachable => {}
+                    TerminatorKind::Return => {
                         // `return` logically moves from the return place `_0`. Note that the place
                         // cannot be changed by any visitor, though.
                         let $($mutability)? local = Local::RETURN_PLACE;
@@ -193,14 +208,14 @@ macro_rules! make_mir_visitor {
                         );
                     }
 
-                    Terminator::SwitchInt {
+                    TerminatorKind::SwitchInt {
                         discr,
                         targets: _
                     } => {
                         self.visit_operand(discr, location);
                     }
 
-                    Terminator::Call {
+                    TerminatorKind::Call {
                         func,
                         args,
                         dest,
@@ -300,6 +315,17 @@ macro_rules! make_mir_visitor {
             }
 
             fn super_ty(&mut self, _ty: $(& $mutability)? Ty<'tcx>) {
+            }
+
+            fn super_span(&mut self, _span: $(& $mutability)? Span) {
+            }
+
+            fn super_source_info(&mut self, source_info: & $($mutability)? SourceInfo) {
+                let SourceInfo {
+                    span,
+                } = source_info;
+
+                self.visit_span($(& $mutability)? *span);
             }
 
             // Convenience methods

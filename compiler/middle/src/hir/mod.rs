@@ -15,10 +15,11 @@ use {
             self,
             mono::{Linkage, Visibility},
             ty::Abi,
-            visit::{MutVisitor, TyContext},
+            visit::{MutVisitor, TyContext, Visitor},
             CastKind, CodegenUnit, ConstValue, Infer, InstanceData, InstanceDef, Local, LocalDecl,
             Location, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue,
-            ScalarRepr, Statement, SwitchTargets, Terminator, TyKind,
+            ScalarRepr, SourceInfo, Statement, StatementKind, SwitchTargets, Terminator,
+            TerminatorKind, TyKind,
         },
         pretty::{FmtPrinter, Print, Printer},
         sess::ModuleType,
@@ -28,7 +29,7 @@ use {
     },
     ::errors::{
         ariadne::{Color, Fmt},
-        color, DiagnosticMessage, Handler,
+        color, DiagnosticMessage, Handler, Level,
     },
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned},
     smallvec::SmallVec,
@@ -378,8 +379,13 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         ret
     }
 
-    pub fn end_of_block(&mut self, terminator: Terminator<'hir>) -> mir::BasicBlock {
-        self.block.terminator = Some(terminator);
+    pub fn end_of_block(
+        &mut self,
+        span: Span,
+        terminator: TerminatorKind<'hir>,
+    ) -> mir::BasicBlock {
+        self.block.terminator =
+            Some(Terminator { source_info: SourceInfo { span }, kind: terminator });
 
         let block = mem::take(&mut self.block);
         // note that the index of the next block is returned here.
@@ -403,7 +409,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         mir::BasicBlock::new(self.body.basic_blocks.len() + 1)
     }
 
-    pub fn assign_rvalue(&mut self, place: Place<'hir>, val: Rvalue<'hir>) {
+    pub fn assign_rvalue(&mut self, place: Place<'hir>, val: Rvalue<'hir>, span: Span) {
         #[cfg(debug_assertions)]
         {
             let tcx = self.tcx;
@@ -414,7 +420,10 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
                 panic!("I don't think it's a good idea to allow it to be assigned to something")
             }
         }
-        self.block.statements.push(Statement::Assign(place, val))
+        self.block.statements.push(Statement {
+            source_info: SourceInfo { span },
+            kind: StatementKind::Assign(place, val),
+        })
     }
 
     pub fn push_rvalue(
@@ -422,30 +431,23 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         ty: Ty<'hir>,
         rvalue: Rvalue<'hir>,
         mutability: Mutability,
+        span: Span,
     ) -> (Ty<'hir>, Place<'hir>) {
-        // Simple one-level optimization of MIR
-        match rvalue {
-            // Rvalue::Use(Operand::Copy(place))
-            //     if self.body.local_decls[place.local].mutability == mutability =>
-            // {
-            //     // otherwise you'll have to create new place
-            //     (ty, place)
-            // }
-            _ => {
-                let place =
-                    Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
-                self.block.statements.push(Statement::Assign(place, rvalue));
-                (ty, place)
-            }
-        }
+        let place = Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
+        self.block.statements.push(Statement {
+            source_info: SourceInfo { span },
+            kind: StatementKind::Assign(place, rvalue),
+        });
+        (ty, place)
     }
 
     pub fn push_temp_rvalue(
         &mut self,
         ty: Ty<'hir>,
         rvalue: Rvalue<'hir>,
+        span: Span,
     ) -> (Ty<'hir>, Operand<'hir>) {
-        let (ty, place) = self.push_rvalue(ty, rvalue, Mutability::Not);
+        let (ty, place) = self.push_rvalue(ty, rvalue, Mutability::Not, span);
         (ty, Operand::Copy(place))
     }
 
@@ -535,8 +537,8 @@ fn quoted(f: impl fmt::Display, color: Color) -> String {
     format!("`{f}`").fg(color).to_string()
 }
 
-fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> Terminator<'static> {
-    Terminator::Goto { target: acx.next_block() }
+fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> TerminatorKind<'static> {
+    TerminatorKind::Goto { target: acx.next_block() }
 }
 
 /// Lazy mir operand
@@ -566,7 +568,7 @@ fn analyze_branch_expr<'hir>(
         let then_entry = acx.current_block();
         let (then_ty, then) = then_expr(acx)?;
         if !then_ty.is_never() {
-            acx.assign_rvalue(ret_place, Rvalue::Use(then));
+            acx.assign_rvalue(ret_place, Rvalue::Use(then), then_ty.span);
         }
         let then_block = acx.end_of_block_dummy();
 
@@ -574,7 +576,7 @@ fn analyze_branch_expr<'hir>(
         let else_ty = if let Some(else_) = else_expr {
             let (ty, else_) = else_(acx)?;
             if !ty.is_never() {
-                acx.assign_rvalue(ret_place, Rvalue::Use(else_));
+                acx.assign_rvalue(ret_place, Rvalue::Use(else_), ty.span);
             }
             ty
         } else {
@@ -583,9 +585,11 @@ fn analyze_branch_expr<'hir>(
 
         // All the if blocks converge to this block
         let next_block = acx.next_block();
-        acx.end_of_block(Terminator::Goto { target: next_block });
+        acx.end_of_block(else_ty.span, TerminatorKind::Goto { target: next_block });
+
+        let source_info = SourceInfo { span: then_ty.span };
         acx.body.basic_blocks[then_block].terminator =
-            Some(Terminator::Goto { target: next_block });
+            Some(Terminator { source_info, kind: TerminatorKind::Goto { target: next_block } });
 
         // Safety: we do not create zst constants if the expression type is reduced to `never'
         let mut ret_ty = unsafe { acx.assert_same_types_allow_never(else_ty, then_ty)? };
@@ -599,9 +603,13 @@ fn analyze_branch_expr<'hir>(
         }
         ret_ty.span = merge_span(else_ty.span, then_ty.span);
 
-        acx.body.basic_blocks[cond_block].terminator = Some(Terminator::SwitchInt {
-            discr,
-            targets: SwitchTargets::static_if(0, else_entry, then_entry),
+        let source_info = SourceInfo { span: cond.span };
+        acx.body.basic_blocks[cond_block].terminator = Some(Terminator {
+            source_info,
+            kind: TerminatorKind::SwitchInt {
+                discr,
+                targets: SwitchTargets::static_if(0, else_entry, then_entry),
+            },
         });
 
         Ok((ret_ty, Operand::Copy(ret_place)))
@@ -723,7 +731,7 @@ fn analyze_expr<'hir>(
                 && decl.ty.ref_mutability().unwrap_or_else(|| decl.mutability).is_mut()
             {
                 let ty = acx.assert_same_types(lty, rty)?;
-                acx.block.statements.push(Statement::Assign(place, Rvalue::Use(rhs)));
+                acx.assign_rvalue(place, Rvalue::Use(rhs), ty.span);
                 (ty, Operand::Copy(place))
             } else {
                 return Err(acx.err.emit(errors::InvalidLvalue { span: lty.span }));
@@ -753,6 +761,7 @@ fn analyze_expr<'hir>(
                         },
                         operand,
                     ),
+                    expr.span,
                 )
             }
         },
@@ -762,7 +771,7 @@ fn analyze_expr<'hir>(
                 let (rhs, b) = analyze_expr(acx, rhs)?;
 
                 let ty = binop_ty(acx, op, lhs, rhs)?;
-                acx.push_temp_rvalue(ty, Rvalue::BinaryOp(op, a, b))
+                acx.push_temp_rvalue(ty, Rvalue::BinaryOp(op, a, b), expr.span)
             } else {
                 let bool = Ty::new(rhs.span, acx.tcx.types.bool);
 
@@ -828,6 +837,7 @@ fn analyze_expr<'hir>(
                     acx.push_temp_rvalue(
                         Ty::new(from.span, cast),
                         Rvalue::Cast(kind, operand, cast),
+                        expr.span,
                     )
                 } else {
                     return Err(acx.err.emit(errors::MismatchFnSig {
@@ -858,16 +868,19 @@ fn analyze_expr<'hir>(
                 }
 
                 let dest = acx.typed_place(sig.output());
-                acx.end_of_block(Terminator::Call {
-                    func: Operand::Const(
-                        ConstValue::Zst,
-                        acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
-                    ), // now functions are ZSTs
-                    args,
-                    dest,
-                    target: Some(acx.next_block()),
-                    fn_span: span,
-                });
+                acx.end_of_block(
+                    expr.span,
+                    TerminatorKind::Call {
+                        func: Operand::Const(
+                            ConstValue::Zst,
+                            acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
+                        ), // now functions are ZSTs
+                        args,
+                        dest,
+                        target: Some(acx.next_block()),
+                        fn_span: span,
+                    },
+                );
                 (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
             } else {
                 return Err(acx.err.emit(errors::NotFoundLocal::ident(call)));
@@ -895,7 +908,7 @@ fn analyze_expr<'hir>(
                     let ty = acx.assert_same_types(ret_ty, ty)?;
                     make_return(acx, ty, ret);
                 }
-                acx.end_of_block(Terminator::Return);
+                acx.end_of_block(ty.span, TerminatorKind::Return);
                 acx.scope().returned = true; // prevent next blocks from spawning in this scope
 
                 let never = Ty::new(ty.span, acx.tcx.types.never);
@@ -921,7 +934,7 @@ fn analyze_expr<'hir>(
             (never, Operand::Const(ConstValue::Zst, never.kind))
         }
         expr::Loop(stmts, span) => {
-            let entry = acx.end_of_block(Terminator::Goto { target: acx.next_block() });
+            let entry = acx.end_of_block(span, TerminatorKind::Goto { target: acx.next_block() });
 
             acx.scoped(|acx| {
                 acx.scope().looped = Some(LoopData { breaks: Default::default() });
@@ -931,7 +944,7 @@ fn analyze_expr<'hir>(
                     analyze_expr(acx, &Expr { kind: expr::Block(stmts, span), span })?;
                 acx.assert_same_types(unit, loop_ty)?;
 
-                let _looped = acx.end_of_block(Terminator::Goto { target: entry });
+                let _looped = acx.end_of_block(expr.span, TerminatorKind::Goto { target: entry });
                 let exit = acx.current_block();
 
                 let looped = acx.scope().looped.take().unwrap();
@@ -954,9 +967,11 @@ fn analyze_expr<'hir>(
                                 infer = Some(break_ty);
                             }
 
-                            acx.body.basic_blocks[bb]
-                                .statements
-                                .push(Statement::Assign(break_place, Rvalue::Use(operand)));
+                            let source_info = SourceInfo { span: break_ty.span };
+                            acx.body.basic_blocks[bb].statements.push(Statement {
+                                source_info,
+                                kind: StatementKind::Assign(break_place, Rvalue::Use(operand)),
+                            });
                         } else {
                             acx.assert_same_types(infer.unwrap_or(unit), unit)?;
                         }
@@ -964,8 +979,10 @@ fn analyze_expr<'hir>(
                         if let Some(infer) = infer {
                             acx.body.local_decls[break_place.local].ty = infer.kind;
                         }
-                        acx.body.basic_blocks[bb].terminator =
-                            Some(Terminator::Goto { target: exit })
+                        acx.body.basic_blocks[bb].terminator = Some(Terminator {
+                            source_info: SourceInfo { span: Span::splat(0) }, // TODO: provide span
+                            kind: TerminatorKind::Goto { target: exit },
+                        })
                     }
                     (infer.unwrap_or(unit), Operand::Copy(break_place))
                 })
@@ -992,10 +1009,11 @@ fn analyze_expr<'hir>(
                 return Err(acx.err.emit(errors::InferInt { span: ty.span }));
             }
 
-            let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
+            let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability, ty.span);
             acx.push_temp_rvalue(
                 ty.map(|ty| acx.tcx.intern_ty(TyKind::Ref(mutability, ty))),
                 Rvalue::Ref(mutability, place),
+                expr.span,
             )
         }
     };
@@ -1006,7 +1024,7 @@ fn analyze_expr<'hir>(
 fn analyze_stmt<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     stmt: &Stmt<'hir>,
-    terminator: fn(&mut AnalyzeCx) -> Terminator<'hir>,
+    terminator: fn(&mut AnalyzeCx) -> TerminatorKind<'hir>,
 ) -> Result<Option<(Ty<'hir>, Operand<'hir>)>> {
     Ok(match stmt.kind {
         ref stmt @ (stmt::Local(LocalStmt { init: expr, .. }) | stmt::Expr(expr, _)) => {
@@ -1015,17 +1033,18 @@ fn analyze_stmt<'hir>(
             // Skip block termination of it is empty
             if !acx.block.statements.is_empty() {
                 let terminator = terminator(acx);
-                acx.end_of_block(terminator);
+                acx.end_of_block(ty.span, terminator);
             }
 
             match *stmt {
                 StmtKind::Local(LocalStmt { mutability, pat, .. }) => {
                     if !ty.is_zst() {
-                        let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability);
+                        let (ty, place) =
+                            acx.push_rvalue(ty, Rvalue::Use(operand), mutability, ty.span);
                         acx.scope().declare_var(pat.name, (ty, Some(place)));
                         // close block to avoid multiple initialization before loops
                         // but now it is guaranteed by loops start block
-                        // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
+                        // acx.end_of_block(TerminatorKind::Goto { target: acx.next_block() });
                     } else {
                         acx.scope().declare_var(pat.name, (ty, None));
                     }
@@ -1048,10 +1067,8 @@ fn analyze_local_block_unclosed<'hir>(
     Ok(())
 }
 
-fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, _ty: Ty<'hir>, operand: Operand<'hir>) {
-    acx.block
-        .statements
-        .push(Statement::Assign(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand)))
+fn make_return<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, ty: Ty<'hir>, operand: Operand<'hir>) {
+    acx.assign_rvalue(Place::pure(Local::RETURN_PLACE), Rvalue::Use(operand), ty.span);
 }
 
 fn analyze_body<'hir>(
@@ -1068,12 +1085,13 @@ fn analyze_body<'hir>(
 
         return Ok(if let stmt::Expr(expr, true) = &last.kind {
             let (ty, operand) = analyze_expr(acx, expr)?;
-            let ret = unsafe { acx.assert_same_types_allow_never(ret, ty)? };
+            let mut ret = unsafe { acx.assert_same_types_allow_never(ret, ty)? };
+            ret.span = ty.span;
 
             if !ret.is_zst() {
                 make_return(acx, ret, operand);
             }
-            acx.end_of_block(Terminator::Return);
+            acx.end_of_block(ty.span, TerminatorKind::Return);
         } else {
             let stmt = analyze_stmt(acx, last, goto_next)?;
             assert!(stmt.is_none());
@@ -1081,7 +1099,7 @@ fn analyze_body<'hir>(
             if !acx.scope().returned {
                 acx.assert_same_types(ret, Ty::new(last.span, acx.tcx.types.unit))?;
             }
-            acx.end_of_block(Terminator::Return);
+            acx.end_of_block(last.span, TerminatorKind::Return);
         });
     } else {
         let span = acx.scope().sig.map(|sig| sig.span).unwrap_or(ret.span);
@@ -1096,7 +1114,7 @@ fn analyze_fn_prelude<'hir>(acx: &mut AnalyzeCx<'_, 'hir>, sig: FnDecl<'hir>) ->
         let local = acx.body.local_decls.push(LocalDecl { mutability, ty: ty.kind });
         acx.scope().declare_var(pat, (ty, Some(Place::pure(local))));
     }
-    // acx.end_of_block(Terminator::Goto { target: acx.next_block() });
+    // acx.end_of_block(TerminatorKind::Goto { target: acx.next_block() });
 
     Ok(())
 }
@@ -1133,7 +1151,8 @@ pub fn analyze_fn_definition<'hir>(
     assert!(acx.block.statements.is_empty());
 
     if acx.body.basic_blocks.is_empty() {
-        acx.end_of_block(Terminator::Return);
+        // allow dummy because it generated without sources
+        acx.end_of_block(Span::splat(0), TerminatorKind::Return);
     }
 
     InferOverwrite { tcx, vars: acx.vars, err: acx.err }.visit_body(acx.body);

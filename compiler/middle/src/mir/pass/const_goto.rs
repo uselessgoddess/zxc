@@ -1,7 +1,7 @@
 use {
     super::simplify,
     crate::{
-        mir::{visit::Visitor, BasicBlock, Body, MirPass, Statement, *},
+        mir::{visit::Visitor, BasicBlock, Body, MirPass, StatementKind, *},
         Session, Tx,
     },
 };
@@ -22,7 +22,8 @@ impl<'tcx> MirPass<'tcx> for ConstGoto {
         for opt in finder.optimizations {
             let block = &mut body.basic_blocks[opt.bb_with_goto];
             block.statements.extend(opt.stmts_move_up);
-            *block.terminator_mut() = Terminator::Goto { target: opt.target_to_use_in_goto };
+            block.terminator_mut().kind =
+                TerminatorKind::Goto { target: opt.target_to_use_in_goto };
         }
 
         if should_simplify {
@@ -35,12 +36,14 @@ impl<'tcx> MirPass<'tcx> for ConstGoto {
 impl<'tcx> Visitor<'tcx> for ConstGotoOptimizationFinder<'_, 'tcx> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         let _: Option<_> = try {
-            let target = terminator.as_goto()?;
+            let target = terminator.kind.as_goto()?;
 
             // We only apply this optimization if the last statement is a const assignment
             let last_statement = self.body.basic_blocks[location.block].statements.last()?;
 
-            if let (place, Rvalue::Use(Operand::Const(const_, ty))) = last_statement.as_assign()? {
+            if let (place, Rvalue::Use(Operand::Const(const_, ty))) =
+                last_statement.kind.as_assign()?
+            {
                 // We found a constant being assigned to `place`.
                 // Now check that the target of this Goto switches on this place.
                 let target_bb = &self.body.basic_blocks[target];
@@ -50,7 +53,7 @@ impl<'tcx> Visitor<'tcx> for ConstGotoOptimizationFinder<'_, 'tcx> {
                 let stmts_move_up = Vec::new();
 
                 let target_bb_terminator = target_bb.terminator();
-                let (discr, targets) = target_bb_terminator.as_switch()?;
+                let (discr, targets) = target_bb_terminator.kind.as_switch()?;
                 if discr.place() == Some(*place) {
                     let switch_ty = place.ty(self.tcx, &self.body.local_decls);
                     debug_assert_eq!(switch_ty, *ty);

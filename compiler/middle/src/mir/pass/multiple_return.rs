@@ -1,6 +1,6 @@
 use crate::{
     idx::BitSet,
-    mir::{pass::simplify, Body, MirPass, Terminator},
+    mir::{pass::simplify, Body, MirPass, TerminatorKind},
     Session, Tx,
 };
 
@@ -17,16 +17,16 @@ impl<'tcx> MirPass<'tcx> for MultipleReturnTerminators {
         let bbs = &mut body.basic_blocks;
         for idx in bbs.indices() {
             if bbs[idx].statements.is_empty()
-                && let Terminator::Return = bbs[idx].terminator()
+                && let TerminatorKind::Return = bbs[idx].terminator().kind
             {
                 bbs_simple_returns.insert(idx);
             }
         }
 
         for bb in bbs {
-            if let Terminator::Goto { target } = *bb.terminator() {
+            if let TerminatorKind::Goto { target } = bb.terminator().kind {
                 if bbs_simple_returns.contains(target) {
-                    *bb.terminator_mut() = Terminator::Return;
+                    bb.terminator_mut().kind = TerminatorKind::Return;
                 }
             }
         }

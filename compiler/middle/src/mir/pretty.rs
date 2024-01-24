@@ -5,7 +5,8 @@ use {
             self,
             consts::ConstInt,
             ty::{self, Abi, Infer},
-            BinOp, ConstValue, Mutability, Operand, PlaceElem, Rvalue, Statement, Terminator,
+            BinOp, ConstValue, Mutability, Operand, PlaceElem, Rvalue, Statement, StatementKind,
+            Terminator, TerminatorKind,
             TyKind::{self},
             UnOp,
         },
@@ -246,12 +247,12 @@ impl<'tcx> Terminator<'tcx> {
     fn print_head(&self, cx: &mut impl Printer<'tcx>) -> fmt::Result {
         define_scoped_cx!(cx);
 
-        match self {
-            Terminator::Goto { .. } => p!("goto"),
-            Terminator::SwitchInt { discr, .. } => p!("switchInt(", print(discr), ")"),
-            Terminator::Return => p!("return"),
-            Terminator::Unreachable => p!("unreachable"),
-            Terminator::Call { func, args, dest, .. } => {
+        match self.kind {
+            TerminatorKind::Goto { .. } => p!("goto"),
+            TerminatorKind::SwitchInt { discr, .. } => p!("switchInt(", print(discr), ")"),
+            TerminatorKind::Return => p!("return"),
+            TerminatorKind::Unreachable => p!("unreachable"),
+            TerminatorKind::Call { func, ref args, dest, .. } => {
                 p!(print(dest), " = ");
                 p!(print(func), "(");
                 for (index, arg) in args.iter().enumerate() {
@@ -320,12 +321,12 @@ define_print_and_forward_display! {
         self.print_head(cx)?;
 
         let successor_count = self.successors().count();
-        let labels = self.fmt_successor_labels();
+        let labels = self.kind.fmt_successor_labels();
         assert_eq!(successor_count, labels.len());
 
         match successor_count {
             0 => (),
-            1 if !matches!(self, Terminator::Call { .. }) => {
+            1 if !matches!(self.kind, TerminatorKind::Call { .. }) => {
                 p!(write(" -> {:?}", self.successors().next().unwrap()))
             }
             _ => {
@@ -378,9 +379,9 @@ define_print_and_forward_display! {
     }
 
     Statement<'tcx> {
-        match self {
-            Statement::Assign(place, rvalue) => p!(print(place), " = ", print(rvalue)),
-            Statement::Nop => p!("Nop"),
+        match self.kind {
+            StatementKind::Assign(place, rvalue) => p!(print(place), " = ", print(rvalue)),
+            StatementKind::Nop => p!("Nop"),
         }
     }
 }

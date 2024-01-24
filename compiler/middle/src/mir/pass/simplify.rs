@@ -5,7 +5,7 @@ use {
             traversal,
             visit::{MutVisitor, MutatingUseContext, PlaceContext, Visitor},
             BasicBlock, BasicBlockData, Body, Local, Location, MirPass, Place, Statement,
-            SwitchTargets, Terminator, START_BLOCK,
+            StatementKind, SwitchTargets, Terminator, TerminatorKind, START_BLOCK,
         },
         Idx, IndexSlice, IndexVec, Session, Tx,
     },
@@ -36,7 +36,7 @@ pub fn simplify_cfg<'tcx>(_tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
 }
 
 pub fn simplify_duplicate_switch_targets(terminator: &mut Terminator<'_>) {
-    if let Terminator::SwitchInt { targets, .. } = terminator {
+    if let TerminatorKind::SwitchInt { targets, .. } = &mut terminator.kind {
         let otherwise = targets.otherwise();
         if targets.iter().any(|t| t.1 == otherwise) {
             *targets = SwitchTargets::new(
@@ -146,7 +146,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
 
     fn strip_nops(&mut self) {
         for blk in self.basic_blocks.iter_mut() {
-            blk.statements.retain(|stmt| !matches!(stmt, Statement::Nop))
+            blk.statements.retain(|stmt| !matches!(stmt.kind, StatementKind::Nop))
         }
     }
 
@@ -203,7 +203,8 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
         match self.basic_blocks[bb] {
             BasicBlockData {
                 ref statements,
-                terminator: ref mut terminator @ Some(Terminator::Goto { .. }),
+                terminator:
+                    ref mut terminator @ Some(Terminator { kind: TerminatorKind::Goto { .. }, .. }),
                 ..
             } if statements.is_empty() => terminator.take(),
             // if `terminator` is None, this means we are in a loop. In that
@@ -216,7 +217,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
         let mut terminators: SmallVec<_, 1> = Default::default();
         let mut current = *start;
         while let Some(terminator) = self.take_terminator_if_simple_goto(current) {
-            let Terminator::Goto { target } = terminator else {
+            let TerminatorKind::Goto { target } = terminator.kind else {
                 unreachable!();
             };
             terminators.push((current, terminator));
@@ -225,7 +226,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
         let last = current;
         *start = last;
         while let Some((current, mut terminator)) = terminators.pop() {
-            let Terminator::Goto { ref mut target } = terminator else {
+            let TerminatorKind::Goto { ref mut target } = terminator.kind else {
                 unreachable!();
             };
             *changed |= *target != last;
@@ -245,8 +246,8 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
 
     // turn a branch with all successors identical to a goto
     fn simplify_branch(&mut self, terminator: &mut Terminator<'tcx>) -> bool {
-        match terminator {
-            Terminator::SwitchInt { .. } => {}
+        match terminator.kind {
+            TerminatorKind::SwitchInt { .. } => {}
             _ => return false,
         };
 
@@ -264,7 +265,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
             }
         };
 
-        *terminator = Terminator::Goto { target: first_succ };
+        terminator.kind = TerminatorKind::Goto { target: first_succ };
         true
     }
 
@@ -274,8 +275,8 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
         merged_blocks: &mut Vec<BasicBlock>,
         terminator: &mut Terminator<'tcx>,
     ) -> bool {
-        let target = match *terminator {
-            Terminator::Goto { target } if self.pred_count[target] == 1 => target,
+        let target = match terminator.kind {
+            TerminatorKind::Goto { target } if self.pred_count[target] == 1 => target,
             _ => return false,
         };
 
@@ -349,9 +350,9 @@ impl UsedLocals {
 
 impl<'tcx> Visitor<'tcx> for UsedLocals {
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
-        match statement {
-            Statement::Nop => {}
-            Statement::Assign(place, rvalue) => {
+        match &statement.kind {
+            StatementKind::Nop => {}
+            StatementKind::Assign(place, rvalue) => {
                 if rvalue.is_safe_to_remove() {
                     self.visit_lhs(place, location);
                     self.visit_rvalue(rvalue, location);
@@ -402,9 +403,9 @@ fn remove_unused_definitions_helper(used_locals: &mut UsedLocals, body: &mut Bod
 
         for data in &mut body.basic_blocks {
             data.statements.retain(|statement| {
-                let keep = match statement {
-                    Statement::Assign(place, _) => used_locals.is_used(place.local),
-                    Statement::Nop => false,
+                let keep = match statement.kind {
+                    StatementKind::Assign(place, _) => used_locals.is_used(place.local),
+                    StatementKind::Nop => false,
                 };
 
                 if !keep {

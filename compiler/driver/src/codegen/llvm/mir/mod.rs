@@ -9,7 +9,7 @@ use {
         abi::{PassMode, TyAbi},
         mir::{
             self, ty, BasicBlockData, CastKind, Instance, InstanceDef, Operand, PlaceElem, Rvalue,
-            Statement, Terminator, Ty, UnOp,
+            Statement, StatementKind, TerminatorKind, Ty, UnOp,
         },
         BitSet,
     },
@@ -187,8 +187,8 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
 }
 
 fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, stmt: &Statement<'tcx>) {
-    match *stmt {
-        Statement::Assign(dest, rvalue) => {
+    match stmt.kind {
+        StatementKind::Assign(dest, rvalue) => {
             if let Some(local) = dest.as_local() {
                 match fx.locals[local] {
                     LLocal::Place(place) => codegen_rvalue(fx, place, rvalue),
@@ -208,7 +208,7 @@ fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, stmt: &Statement<'tcx>)
                 codegen_rvalue(fx, place, rvalue);
             }
         }
-        Statement::Nop => {}
+        StatementKind::Nop => {}
     }
 }
 
@@ -238,17 +238,17 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, bb: mir::BasicBlock) {
         codegen_stmt(fx, stmt);
     }
 
-    match *bb_data.terminator() {
-        Terminator::Unreachable => fx.bcx.unreachable(),
-        Terminator::Goto { target } => {
+    match bb_data.terminator().kind {
+        TerminatorKind::Unreachable => fx.bcx.unreachable(),
+        TerminatorKind::Goto { target } => {
             let block = fx.block(target);
             fx.bcx.br(block);
         }
-        Terminator::Return => codegen_return_terminator(fx),
-        Terminator::SwitchInt { discr, ref targets } => {
+        TerminatorKind::Return => codegen_return_terminator(fx),
+        TerminatorKind::SwitchInt { discr, ref targets } => {
             block::codegen_switch_terminator(fx, discr, targets)
         }
-        Terminator::Call { func, ref args, dest, target, fn_span } => {
+        TerminatorKind::Call { func, ref args, dest, target, fn_span } => {
             block::codegen_call_terminator(fx, func, args, dest, target)
         }
         _ => todo!(),

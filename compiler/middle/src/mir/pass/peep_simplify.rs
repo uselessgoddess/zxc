@@ -1,7 +1,7 @@
 use {
     super::simplify,
     crate::{
-        mir::{BinOp, Body, LocalDecls, MirPass, Operand, Rvalue, Statement, UnOp},
+        mir::{BinOp, Body, LocalDecls, MirPass, Operand, Rvalue, StatementKind, UnOp},
         Session, Tx,
     },
 };
@@ -18,7 +18,7 @@ impl<'tcx> MirPass<'tcx> for PeepSimplify {
 
         for block in &mut body.basic_blocks {
             for statement in block.statements.iter_mut() {
-                if let Statement::Assign(_, rvalue) = statement {
+                if let StatementKind::Assign(_, rvalue) = &mut statement.kind {
                     ctx.simplify_bool_cmp(rvalue);
                     ctx.simplify_cast(rvalue);
                 }

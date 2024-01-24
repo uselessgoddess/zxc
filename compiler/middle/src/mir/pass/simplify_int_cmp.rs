@@ -1,7 +1,7 @@
 use crate::{
     mir::{
-        BasicBlock, BinOp, Body, MirPass, Operand, Place, Rvalue, ScalarRepr, Statement,
-        SwitchTargets, Terminator, Ty,
+        BasicBlock, BinOp, Body, MirPass, Operand, Place, Rvalue, ScalarRepr, StatementKind,
+        SwitchTargets, TerminatorKind, Ty,
     },
     Session, Tx,
 };
@@ -25,7 +25,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyIntegralCond {
                 targets.targets.swap(0, 1)
             }
 
-            bb.statements[cond] = Statement::Nop;
+            bb.statements[cond].make_nop();
 
             let [cond, otherwise] = match targets.targets[..] {
                 [a, b] => [a, b],
@@ -33,8 +33,8 @@ impl<'tcx> MirPass<'tcx> for SimplifyIntegralCond {
             };
 
             let targets = SwitchTargets::static_if(new_branch, cond, otherwise);
-            *bb.terminator_mut() =
-                Terminator::SwitchInt { discr: Operand::Copy(switch_on), targets };
+            bb.terminator_mut().kind =
+                TerminatorKind::SwitchInt { discr: Operand::Copy(switch_on), targets };
         }
     }
 }
@@ -64,15 +64,15 @@ impl<'tcx> OptimizationFinder<'_, 'tcx> {
             .basic_blocks
             .iter_enumerated()
             .filter_map(|(bb, block)| {
-                let Terminator::SwitchInt { discr: Operand::Copy(switch_on), targets } =
-                    block.terminator()
+                let TerminatorKind::SwitchInt { discr: Operand::Copy(switch_on), ref targets } =
+                    block.terminator().kind
                 else {
                     return None;
                 };
                 block.statements.iter().enumerate().rev().find_map(|(stmt_idx, stmt)| {
-                    if let Statement::Assign(lhs, rhs) = stmt
+                    if let StatementKind::Assign(lhs, rhs) = stmt.kind
                         && lhs == switch_on
-                        && let Rvalue::BinaryOp(op @ (BinOp::Eq | BinOp::Ne), lhs, rhs) = *rhs
+                        && let Rvalue::BinaryOp(op @ (BinOp::Eq | BinOp::Ne), lhs, rhs) = rhs
                     {
                         let (scalar, ty, switch_on) = branch_info(lhs, rhs)?;
                         Some(OptInfo {

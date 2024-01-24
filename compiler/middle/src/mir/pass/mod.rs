@@ -10,7 +10,7 @@ pub use dump::emit_mir;
 
 use crate::{
     hir::HirCtx,
-    mir::{self, Body, Terminator, START_BLOCK},
+    mir::{self, Body, TerminatorKind, START_BLOCK},
     Session, Tx,
 };
 
@@ -40,7 +40,7 @@ impl<'tcx> HirCtx<'tcx> {
     fn inner_optimized_mir(&self, def: mir::DefId) -> Body<'tcx> {
         let mut body = self.defs[def].clone();
 
-        if let Terminator::Unreachable = body.basic_blocks[START_BLOCK].terminator()
+        if let TerminatorKind::Unreachable = body.basic_blocks[START_BLOCK].terminator().kind
             && body.basic_blocks[START_BLOCK].statements.is_empty()
         {
             return body;

@@ -21,8 +21,8 @@ pub use {
     pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
         BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local, LocalDecl,
-        LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr, Statement,
-        SwitchTargets, Terminator, UnOp,
+        LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr,
+        SourceInfo, Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp,
     },
     ty::{cast, FnSig, Infer, InferId, IntTy, Ty, TyKind, UintTy},
 };

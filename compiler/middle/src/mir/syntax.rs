@@ -2,7 +2,7 @@ use {
     crate::{
         abi::Size,
         idx::{self, IndexVec},
-        mir::{ty::List, Ty, RETURN_PLACE},
+        mir::{ty::List, Location, Ty, RETURN_PLACE},
         Tx,
     },
     lexer::Span,
@@ -81,7 +81,23 @@ impl SwitchTargets {
 }
 
 #[derive(Debug, Clone)]
-pub enum Terminator<'tcx> {
+pub struct Terminator<'tcx> {
+    pub source_info: SourceInfo,
+    pub kind: TerminatorKind<'tcx>,
+}
+
+impl<'tcx> Terminator<'tcx> {
+    pub fn successors(&self) -> Successors<'_> {
+        self.kind.successors()
+    }
+
+    pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
+        self.kind.successors_mut()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TerminatorKind<'tcx> {
     Goto {
         target: BasicBlock,
     },
@@ -104,9 +120,9 @@ pub type Successors<'a> = impl DoubleEndedIterator<Item = BasicBlock> + 'a;
 pub type SuccessorsMut<'a> =
     iter::Chain<std::option::IntoIter<&'a mut BasicBlock>, slice::IterMut<'a, BasicBlock>>;
 
-impl<'tcx> Terminator<'tcx> {
+impl<'tcx> TerminatorKind<'tcx> {
     pub fn successors(&self) -> Successors<'_> {
-        use Terminator::*;
+        use TerminatorKind::*;
 
         let tail_slice = [].iter().copied();
         match *self {
@@ -120,7 +136,7 @@ impl<'tcx> Terminator<'tcx> {
     }
 
     pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
-        use Terminator::*;
+        use TerminatorKind::*;
 
         let tail_slice = [].iter_mut();
         match self {
@@ -133,20 +149,20 @@ impl<'tcx> Terminator<'tcx> {
 
     pub fn as_goto(&self) -> Option<BasicBlock> {
         match self {
-            Terminator::Goto { target } => Some(*target),
+            TerminatorKind::Goto { target } => Some(*target),
             _ => None,
         }
     }
 
     pub fn as_switch(&self) -> Option<(&Operand<'tcx>, &SwitchTargets)> {
         match self {
-            Terminator::SwitchInt { discr, targets } => Some((discr, targets)),
+            TerminatorKind::SwitchInt { discr, targets } => Some((discr, targets)),
             _ => None,
         }
     }
 
     pub fn fmt_successor_labels(&self) -> Vec<Cow<'static, str>> {
-        use Terminator::*;
+        use TerminatorKind::*;
 
         match *self {
             Return | Unreachable => vec![],
@@ -510,16 +526,34 @@ impl<'tcx> Rvalue<'tcx> {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct SourceInfo {
+    /// The source span for the AST pertaining to this MIR.
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
-pub enum Statement<'tcx> {
+pub struct Statement<'tcx> {
+    pub source_info: SourceInfo,
+    pub kind: StatementKind<'tcx>,
+}
+
+impl<'tcx> Statement<'tcx> {
+    pub fn make_nop(&mut self) {
+        self.kind = StatementKind::Nop;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum StatementKind<'tcx> {
     Assign(Place<'tcx>, Rvalue<'tcx>),
     Nop,
 }
 
-impl<'tcx> Statement<'tcx> {
+impl<'tcx> StatementKind<'tcx> {
     pub fn as_assign(&self) -> Option<(&Place<'tcx>, &Rvalue<'tcx>)> {
         match self {
-            Statement::Assign(place, rvalue) => Some((place, rvalue)),
+            StatementKind::Assign(place, rvalue) => Some((place, rvalue)),
             _ => None,
         }
     }
@@ -543,7 +577,7 @@ impl<'tcx> BasicBlockData<'tcx> {
     }
 
     pub fn is_empty_unreachable(&self) -> bool {
-        self.statements.is_empty() && matches!(self.terminator(), Terminator::Unreachable)
+        self.statements.is_empty() && matches!(self.terminator().kind, TerminatorKind::Unreachable)
     }
 }
 
@@ -580,13 +614,24 @@ pub type LocalDecls<'tcx> = IndexVec<Local, LocalDecl<'tcx>>;
 
 #[derive(Debug, Clone, Default)]
 pub struct Body<'tcx> {
-    pub pass_count: usize,
-    pub argc: usize,
-    pub local_decls: LocalDecls<'tcx>,
     pub basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
+    pub local_decls: LocalDecls<'tcx>,
+    pub argc: usize,
+    pub pass_count: usize,
 }
 
 impl<'tcx> Body<'tcx> {
+    pub fn source_info(&self, Location { block, statement_index: idx }: Location) -> &SourceInfo {
+        let block = &self.basic_blocks[block];
+        let stmts = &block.statements;
+        if idx < stmts.len() {
+            &stmts[idx].source_info
+        } else {
+            assert_eq!(idx, stmts.len());
+            &block.terminator().source_info
+        }
+    }
+
     #[inline]
     pub fn args_iter(&self) -> impl ExactSizeIterator<Item = Local> {
         (1..self.argc + 1).map(Local::new)

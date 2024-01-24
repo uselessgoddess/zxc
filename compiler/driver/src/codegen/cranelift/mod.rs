@@ -19,7 +19,7 @@ use {
         abi::{Abi, ArgAbi, Conv, FnAbi, Integer, PassMode, Scalar, TyAbi},
         mir::{
             ty, BasicBlock, BasicBlockData, BinOp, Body, CodegenUnit, ConstValue, DefId, IntTy,
-            Local, Operand, Place, Rvalue, Statement, Terminator, Ty, UnOp,
+            Local, Operand, Place, Rvalue, StatementKind, TerminatorKind, Ty, UnOp,
         },
         sess::{OptLevel, OutputFilenames},
         IndexVec, Session, Tx,
@@ -252,11 +252,11 @@ fn codegen_stmt<'tcx>(
     #[allow(unused_variables)] cur_block: Block,
     stmt: &Statement<'tcx>,
 ) {
-    match stmt {
-        Statement::Assign(place, rvalue) => {
-            let lvalue = codegen_place(fx, *place);
+    match stmt.kind {
+        StatementKind::Assign(place, rvalue) => {
+            let lvalue = codegen_place(fx, place);
             let dst_ty = lvalue.layout();
-            match *rvalue {
+            match rvalue {
                 Rvalue::Use(operand) => {
                     let val = codegen_operand(fx, operand);
                     lvalue.write_cvalue(fx, val);
@@ -306,7 +306,7 @@ fn codegen_stmt<'tcx>(
                 }
             }
         }
-        Statement::Nop => {}
+        StatementKind::Nop => {}
     }
 }
 
@@ -319,19 +319,19 @@ fn codegen_block<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, abi: FnAbi<'tcx>) {
             codegen_stmt(fx, block, stmt);
         }
 
-        match *bb_data.terminator() {
-            Terminator::Goto { target } => {
+        match bb_data.terminator().kind {
+            TerminatorKind::Goto { target } => {
                 let block = fx.block(target);
                 fx.bcx.ins().jump(block, &[]);
             }
-            Terminator::Return => codegen_fn_return(fx, abi.ret),
-            Terminator::Unreachable => {
+            TerminatorKind::Return => codegen_fn_return(fx, abi.ret),
+            TerminatorKind::Unreachable => {
                 fx.bcx.ins().trap(TrapCode::UnreachableCodeReached);
             }
-            Terminator::Call { func, ref args, dest, target, .. } => {
+            TerminatorKind::Call { func, ref args, dest, target, .. } => {
                 abi::codegen_terminator_call(fx, func, args, dest, target)
             }
-            Terminator::SwitchInt { discr, ref targets } => {
+            TerminatorKind::SwitchInt { discr, ref targets } => {
                 let discr = codegen_operand(fx, discr);
                 let (discr, switch_ty) = (discr.load_scalar(fx), discr.layout().ty);
 
@@ -639,7 +639,7 @@ use {
     middle::{
         abi::Primitive,
         hir::Hx,
-        mir::{InstanceDef, MonoItem, MonoItemData, PlaceElem},
+        mir::{InstanceDef, MonoItem, MonoItemData, PlaceElem, Statement},
         sess::OutputType,
         symbol::Symbol,
     },

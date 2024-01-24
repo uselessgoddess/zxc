@@ -1,7 +1,7 @@
 use {
     super::FunctionCx,
     middle::{
-        mir::{Local, Rvalue, Statement, Ty},
+        mir::{Local, Rvalue, StatementKind, Ty},
         IndexVec,
     },
 };
@@ -26,7 +26,7 @@ pub(crate) fn analyze(fx: &FunctionCx<'_, '_, '_>) -> IndexVec<Local, SsaKind> {
 
     for bb in fx.mir.basic_blocks.iter() {
         for stmt in bb.statements.iter() {
-            if let Statement::Assign(_, rvalue) = stmt
+            if let StatementKind::Assign(_, rvalue) = stmt.kind
                 && let Rvalue::Ref(_, place) = rvalue
             {
                 flag_map[place.local] = SsaKind::NotSsa;

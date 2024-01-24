@@ -12,7 +12,7 @@ use {
             self,
             mono::{Linkage, Visibility},
             BasicBlockData, CodegenUnit, ConstValue, Instance, InstanceDef, Operand, PlaceElem,
-            Rvalue, Statement, Terminator, Ty,
+            Rvalue, StatementKind, TerminatorKind, Ty,
         },
         BitSet, IndexVec,
     },

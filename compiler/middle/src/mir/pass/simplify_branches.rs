@@ -1,5 +1,5 @@
 use crate::{
-    mir::{Body, ConstValue, MirPass, Operand, Terminator},
+    mir::{Body, ConstValue, MirPass, Operand, TerminatorKind},
     Tx,
 };
 
@@ -19,9 +19,11 @@ impl<'tcx> MirPass<'tcx> for SimplifyConstCondition {
         for block in &mut body.basic_blocks {
             let terminator = block.terminator_mut();
 
-            *terminator = match terminator {
-                Terminator::SwitchInt {
-                    discr: Operand::Const(const_, _ty), ref targets, ..
+            terminator.kind = match terminator.kind {
+                TerminatorKind::SwitchInt {
+                    discr: Operand::Const(const_, _ty),
+                    ref targets,
+                    ..
                 } => {
                     let constant = match const_ {
                         ConstValue::Scalar(scalar) => Some(scalar.data),
@@ -29,7 +31,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyConstCondition {
                     };
                     if let Some(constant) = constant {
                         let target = targets.target_for_value(constant);
-                        Terminator::Goto { target }
+                        TerminatorKind::Goto { target }
                     } else {
                         continue;
                     }
