@@ -46,6 +46,18 @@ pub struct Args {
     /// compiler flags to zxc
     #[arg(short = 'Z', value_name = "FLAG", value_parser = parse_kv)]
     pub z_flags: Vec<(String, Option<String>)>,
+
+    /// Set lint allowed
+    #[arg(short = 'A', long, value_name = "LINT")]
+    pub allow: Vec<String>,
+
+    /// Set lint allowed
+    #[arg(short = 'W', long, value_name = "LINT")]
+    pub warn: Vec<String>,
+
+    /// Set lint allowed
+    #[arg(short = 'D', long, value_name = "LINT")]
+    pub deny: Vec<String>,
 }
 
 fn parse_emit(s: &str) -> Result<(Emit, Option<String>), String> {

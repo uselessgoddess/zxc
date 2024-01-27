@@ -162,6 +162,20 @@ impl Size {
         (value << shift) >> shift
     }
 
+    #[inline]
+    pub fn sign_extend(self, value: u128) -> u128 {
+        let size = self.bits();
+        if size == 0 {
+            // Truncated until nothing is left.
+            return 0;
+        }
+        // Sign-extend it.
+        let shift = 128 - size;
+        // Shift the unsigned value to the left, then shift back to the right as signed
+        // (essentially fills with sign bit on the left).
+        (((value << shift) as i128) >> shift) as u128
+    }
+
     pub fn bits(self) -> u64 {
         #[cold]
         fn overflow(bytes: u64) -> ! {
@@ -169,6 +183,11 @@ impl Size {
         }
 
         self.bytes().checked_mul(8).unwrap_or_else(|| overflow(self.bytes()))
+    }
+
+    #[inline]
+    pub fn signed_int_max(&self) -> i128 {
+        i128::MAX >> (128 - self.bits())
     }
 
     #[inline]
@@ -351,6 +370,19 @@ pub enum Abi {
     Uninhabited,
 }
 
+impl Abi {
+    #[inline]
+    pub fn is_signed(&self) -> bool {
+        match self {
+            Abi::Scalar(scal) => match scal.primitive() {
+                Primitive::Int(_, signed) => signed,
+                _ => false,
+            },
+            _ => panic!("`is_signed` on non-scalar ABI {self:?}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct LayoutKind {
     pub abi: Abi,
@@ -365,6 +397,11 @@ impl LayoutKind {
             Abi::Scalar(_) => false,
             Abi::Uninhabited | Abi::Aggregate => self.size.bytes() == 0,
         }
+    }
+
+    #[inline]
+    pub fn is_scalar(&self) -> bool {
+        matches!(self.abi, Abi::Scalar(_))
     }
 
     #[inline]

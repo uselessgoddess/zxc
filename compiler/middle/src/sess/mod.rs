@@ -207,6 +207,7 @@ pub struct Options {
     pub triple: String,
     pub module_types: Vec<ModuleType>,
     pub output_types: BTreeMap<OutputType, Option<OutFileName>>,
+    pub lints: Vec<(String, lint::Level)>,
 }
 
 pub fn host_triple() -> String {
@@ -221,6 +222,7 @@ impl Default for Options {
             triple: host_triple(),
             module_types: Vec::new(),
             output_types: Default::default(),
+            lints: Vec::new(),
         }
     }
 }
@@ -242,6 +244,14 @@ impl Session {
 
     pub fn abort_if_errors(&self) {
         self.diagnostic().abort_if_errors()
+    }
+
+    pub fn compile_status(&self) -> Result<(), ErrorGuaranteed> {
+        if let Some(reported) = self.diagnostic().has_errors_or_lint_errors() {
+            Err(reported)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn emit_err<'a>(&'a self, err: impl IntoDiagnostic<'a>) -> ErrorGuaranteed {

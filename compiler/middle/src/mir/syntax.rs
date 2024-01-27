@@ -396,6 +396,15 @@ impl ScalarRepr {
     pub fn is_null(self) -> bool {
         self.data == 0
     }
+
+    #[inline]
+    pub fn try_from_uint(data: u128, size: Size) -> Option<Self> {
+        if size.truncate(data) == data {
+            Some(Self { data, size: NonZeroU8::new(size.bytes() as u8).unwrap() })
+        } else {
+            None
+        }
+    }
 }
 
 macro_rules! from {
@@ -412,7 +421,7 @@ macro_rules! from {
     )*}
 }
 
-from!(u8 u16 u32 u64);
+from!(bool u8 u16 u32 u64);
 
 impl TryFrom<ScalarRepr> for bool {
     type Error = Size;
@@ -499,6 +508,23 @@ impl BinOp {
                 lhs
             }
             BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => tcx.types.bool,
+        }
+    }
+
+    #[deprecated(note = "move into hir::BinOp")]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Eq => "==",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Ne => "!=",
+            Self::Ge => ">=",
+            Self::Gt => ">",
+            _ => unreachable!(),
         }
     }
 }
@@ -646,4 +672,9 @@ impl<'tcx> Body<'tcx> {
     pub fn return_ty(&self) -> Ty<'tcx> {
         self.local_decls[RETURN_PLACE].ty
     }
+}
+
+#[derive(Clone, Hash, PartialEq, Debug)]
+pub enum AssertKind<O> {
+    Overflow(BinOp, O, O),
 }

@@ -1,0 +1,24 @@
+error: this arithmetic operation will overflow
+   ╭─[arithmetic_overflow.src:4:13]
+   │
+ 4 │     let x = x + y;
+   │             ^^^^╮  
+   │                 ╰── attempt to compute `2147483646_i32 + 2_i32`, which would overflow
+───╯
+   = note: `#[deny(arithmetic_overflow)]` on by default
+error: this arithmetic operation will overflow
+   ╭─[arithmetic_overflow.src:5:13]
+   │
+ 5 │     let x = 1000 * 1000 * 1000 * 1000 * 1000;
+   │             ^^^^^^^^^^^^^^^^^^^^^^^^╮  
+   │                                     ╰── attempt to compute `1000000000_i32 * 1000_i32`, which would overflow
+───╯
+   = note: `#[deny(arithmetic_overflow)]` on by default
+error: this arithmetic operation will overflow
+   ╭─[arithmetic_overflow.src:6:13]
+   │
+ 6 │     let x = 2147483647 + 1 + 1 + 1 + 1;
+   │             ^^^^^^^^^^^^^╮  
+   │                          ╰── attempt to compute `i32::MAX + 1_i32`, which would overflow
+───╯
+   = note: `#[deny(arithmetic_overflow)]` on by default

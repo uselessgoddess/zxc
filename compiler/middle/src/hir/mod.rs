@@ -1200,7 +1200,6 @@ impl<'tcx> MutVisitor<'tcx> for InferOverwrite<'_, 'tcx> {
         {
             self.visit_ty(ty, TyContext::Location(location));
 
-            // TODO: possible to use fallible `layout_of`
             if !ty.needs_infer() {
                 repr.size = NonZeroU8::new(self.tcx().layout_of(*ty).size.bytes() as u8)
                     .expect("integral type sizes in bytes should be non zero and less than 255");

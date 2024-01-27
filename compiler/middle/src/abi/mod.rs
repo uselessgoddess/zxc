@@ -23,7 +23,7 @@ pub struct FnAbi<'tcx> {
     pub conv: Conv,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct TyAbi<'tcx> {
     pub ty: mir::Ty<'tcx>,
     pub layout: Layout<'tcx>,

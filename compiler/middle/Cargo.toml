@@ -16,6 +16,7 @@ rayon = { package = "rustc-rayon", version = "0.5.0" }
 rayon-core = { package = "rustc-rayon-core", version = "0.5.0" }
 
 abi = { path = "../abi" }
+lint = { path = "../lint" }
 lexer = { path = "../lexer" }
 macros = { path = "../macros" }
 errors = { path = "../errors" }

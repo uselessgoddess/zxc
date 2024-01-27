@@ -24,10 +24,11 @@ impl Style {
 pub enum Level {
     Bug,
     Fatal,
-    Error,
+    Error { lint: bool },
     Warn,
     Note,
     Help,
+    Allow,
 }
 
 #[allow(non_upper_case_globals)]
@@ -38,16 +39,18 @@ pub mod color {
     pub const Cyan: Color = Color::Rgb(86, 182, 194);
     pub const Crab: Color = Color::Rgb(208, 154, 102);
     pub const Sand: Color = Color::Rgb(229, 192, 123);
+    pub const Green: Color = Color::Rgb(137, 202, 120);
     pub const Magenta: Color = Color::Rgb(198, 120, 221);
 }
 
 impl Level {
     fn as_color(&self) -> Color {
         match self {
-            Level::Bug | Level::Fatal | Level::Error => color::Red,
+            Level::Bug | Level::Fatal | Level::Error { .. } => color::Red,
             Level::Warn => color::Sand,
-            Level::Note => color::Magenta,
-            Level::Help => color::Cyan,
+            Level::Note => color::Cyan,
+            Level::Help => color::Green,
+            Level::Allow => unreachable!(),
         }
     }
 }
@@ -60,15 +63,17 @@ impl Level {
             Level::Warn => "warning",
             Level::Note => "note",
             Level::Help => "help",
+            Level::Allow => unreachable!(),
         }
     }
 
     pub fn underline(&self) -> char {
         match self {
-            Level::Bug | Level::Fatal | Level::Error => '^',
+            Level::Bug | Level::Fatal | Level::Error { .. } => '^',
             Level::Warn => '^',
             Level::Note => '~',
             Level::Help => '-',
+            Level::Allow => unreachable!(),
         }
     }
 }
@@ -88,7 +93,9 @@ pub struct SubDiagnostic {
 pub struct Diagnostic {
     pub code: Option<Code>,
     pub(crate) level: Level,
+    pub span: Option<Span>,
     pub message: (DiagnosticMessage, Style),
+    pub labels: Vec<(DiagnosticMessage, Span)>,
     pub primary: Vec<(Option<DiagnosticMessage>, Level, Span)>,
     pub children: Vec<SubDiagnostic>,
 }
@@ -96,8 +103,8 @@ pub struct Diagnostic {
 impl Diagnostic {
     pub fn is_error(&self) -> bool {
         match self.level {
-            Level::Bug | Level::Fatal | Level::Error => true,
-            Level::Note | Level::Help | Level::Warn => false,
+            Level::Bug | Level::Fatal | Level::Error { .. } => true,
+            Level::Note | Level::Help | Level::Warn | Level::Allow => false,
         }
     }
 
@@ -126,6 +133,11 @@ impl Diagnostic {
         self
     }
 
+    pub fn span_label(&mut self, span: Span, msg: impl Into<DiagnosticMessage>) -> &mut Self {
+        self.labels.push((msg.into(), span));
+        self
+    }
+
     pub fn code(&mut self, code: Code) -> &mut Self {
         self.code = Some(code);
         self
@@ -138,7 +150,9 @@ impl Diagnostic {
         Diagnostic {
             code: None,
             level,
+            span: None,
             message: (message, Style::NoStyle),
+            labels: vec![],
             primary: vec![],
             children: vec![],
         }
@@ -155,6 +169,7 @@ pub struct HandlerInner {
     emitted_diagnostics: HashSet<Hash128>, // TODO: reorganize project to use `FxHashMap`
     emitter: Box<DynEmitter>,
     errors: usize,
+    lints: usize,
 }
 
 pub struct Handler {
@@ -171,8 +186,16 @@ impl HandlerInner {
     pub fn emit_diagnostic(&mut self, diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
         let mut guaranteed = None;
 
+        if let Level::Allow = diagnostic.level {
+            return None;
+        }
+
         if diagnostic.is_error() {
-            self.errors += 1;
+            if let Level::Error { lint: true } = diagnostic.level {
+                self.lints += 1;
+            } else {
+                self.errors += 1;
+            }
 
             #[allow(deprecated)]
             {
@@ -191,6 +214,14 @@ impl HandlerInner {
 
     fn err_count(&self) -> usize {
         self.errors
+    }
+
+    fn lint_count(&self) -> usize {
+        self.lints
+    }
+
+    fn has_errors_or_lint_errors(&self) -> bool {
+        self.has_errors() || self.lints > 0
     }
 
     fn abort_if_errors(&mut self) {
@@ -217,8 +248,16 @@ impl Handler {
                 emitted_diagnostics: Default::default(),
                 emitter,
                 errors: 0,
+                lints: 0,
             }),
         }
+    }
+
+    pub fn has_errors_or_lint_errors(&self) -> Option<ErrorGuaranteed> {
+        self.inner.lock().has_errors_or_lint_errors().then(|| {
+            #[allow(deprecated)]
+            ErrorGuaranteed::unchecked()
+        })
     }
 
     pub fn emit_diagnostic(&self, diagnostic: Diagnostic) -> Option<ErrorGuaranteed> {
@@ -248,6 +287,10 @@ impl Handler {
         DiagnosticBuilder::new_guaranteeing_error(self, msg.into())
     }
 
+    pub fn struct_err_lint(&self, msg: impl Into<DiagnosticMessage>) -> DiagnosticBuilder<'_, ()> {
+        DiagnosticBuilder::new(self, Level::Error { lint: true }, msg.into())
+    }
+
     pub fn struct_warn(&self, msg: impl Into<DiagnosticMessage>) -> DiagnosticBuilder<'_, ()> {
         DiagnosticBuilder::new(self, Level::Warn, msg.into())
     }
@@ -264,6 +307,12 @@ impl Handler {
     }
 
     pub fn abort_if_errors(&self) {
+        let report = match self.err_count() {
+            0 => return,
+            1 => "aborting due to previous error".into(),
+            n => format!("aborting due to {n} previous errors"),
+        };
+        self.struct_err(report).emit();
         self.inner.lock().abort_if_errors()
     }
 
@@ -276,6 +325,10 @@ impl Handler {
 
     pub fn err_count(&self) -> usize {
         self.inner.lock().err_count()
+    }
+
+    pub fn lint_count(&self) -> usize {
+        self.inner.lock().lint_count()
     }
 }
 
@@ -327,7 +380,7 @@ use std::{
     sync::Arc,
 };
 
-pub struct DiagnosticBuilder<'h, E> {
+pub struct DiagnosticBuilder<'h, E = ()> {
     pub handler: &'h Handler,
     pub diagnostic: Diagnostic,
     pub(crate) _marker: PhantomData<E>,
@@ -513,8 +566,10 @@ impl EmitterWriter {
     fn emit_default(
         &mut self,
         code: Option<Code>,
+        span: Option<Span>,
         level: Level,
         (message, style): &(DiagnosticMessage, Style),
+        labels: &[(DiagnosticMessage, Span)],
         primary: &[(Option<DiagnosticMessage>, Level, Span)],
         children: &[SubDiagnostic],
         is_primary: bool,
@@ -534,7 +589,10 @@ impl EmitterWriter {
         } else {
             level.to_str().to_string()
         };
-        let primary_span = primary.first().map(|(_, _, s)| *s).unwrap_or(Span::splat(0));
+        let primary_span = span
+            .or_else(|| primary.first().map(|(_, _, s)| *s))
+            .or_else(|| labels.first().map(|(_, s)| *s))
+            .unwrap_or(Span::splat(0));
         let mut report =
             Report::build(ReportKind::Custom(&label, color), &src_id, primary_span.start)
                 .with_config(Config::default().with_label_attach(LabelAttach::End));
@@ -546,13 +604,23 @@ impl EmitterWriter {
             report = report.with_bold(true);
         }
 
+        for (message, span) in labels {
+            let color = level.as_color();
+            report.add_label(
+                Label::new((&src_id, span.into_range()))
+                    .with_underline(level.underline())
+                    .with_color(color)
+                    .with_message(message.fg(color)),
+            );
+        }
         for (message, level, span) in primary {
+            let color = level.as_color();
             report.add_label({
                 let mut label = Label::new((&src_id, span.into_range()))
                     .with_underline(level.underline())
                     .with_color(level.as_color());
                 if let Some(message) = message {
-                    label = label.with_message(message);
+                    label = label.with_message(message.fg(color));
                 }
                 label
             });
@@ -561,7 +629,7 @@ impl EmitterWriter {
         report.with_message(msg).finish().write((&src_id, src), &mut self.dest).unwrap();
 
         for children in children {
-            self.emit_default(None, children.level, &children.message, &[], &[], false)?;
+            self.emit_default(None, None, children.level, &children.message, &[], &[], &[], false)?;
         }
 
         Ok(())
@@ -571,9 +639,9 @@ impl EmitterWriter {
 impl Emitter for EmitterWriter {
     fn emit_diagnostic(
         &mut self,
-        Diagnostic { code, level, ref message, ref primary, ref children }: Diagnostic,
+        Diagnostic { span, code, level, ref message, ref labels, ref primary, ref children }: Diagnostic,
     ) {
-        self.emit_default(code, level, message, primary, children, true).unwrap();
+        self.emit_default(code, span, level, message, labels, primary, children, true).unwrap();
     }
 
     fn source_map(&self) -> Option<&Arc<SourceMap>> {
@@ -621,7 +689,7 @@ impl<'a> DiagnosticBuilder<'a, ErrorGuaranteed> {
     ) -> Self {
         Self {
             handler,
-            diagnostic: Diagnostic::new_with_code(Level::Error, message.into()),
+            diagnostic: Diagnostic::new_with_code(Level::Error { lint: false }, message.into()),
             _marker: PhantomData,
         }
     }

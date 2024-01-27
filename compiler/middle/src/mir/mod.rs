@@ -1,4 +1,6 @@
 pub mod consts;
+pub mod errors;
+pub mod interpret;
 pub mod mono;
 pub mod pass;
 pub mod pretty;
@@ -20,8 +22,8 @@ pub use {
     pass::MirPass,
     pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
-        BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local, LocalDecl,
-        LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr,
+        AssertKind, BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local,
+        LocalDecl, LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr,
         SourceInfo, Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp,
     },
     ty::{cast, FnSig, Infer, InferId, IntTy, Ty, TyKind, UintTy},

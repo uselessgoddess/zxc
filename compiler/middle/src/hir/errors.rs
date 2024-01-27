@@ -45,7 +45,11 @@ impl<'a> IntoDiagnostic<'a> for TypeMismatch {
         let mut db = handler.struct_err("type mismatch");
 
         db.code(Code::E0002)
-            .primary(Error, found_span, Some(format!("expected {}, found {}", exp_msg, found_msg)))
+            .primary(
+                Error { lint: false },
+                found_span,
+                Some(format!("expected {}, found {}", exp_msg, found_msg)),
+            )
             .primary(Note, expect_span, Some("expected due to this"));
 
         db
@@ -98,8 +102,8 @@ impl<'a> IntoDiagnostic<'a> for MismatchFnSig {
 
         let location = target.unwrap_or(caller);
         db.code(Code::E0005);
-        db.primary(Error, location, Some(format!("expected {expect}")));
-        db.primary(Error, caller, Some(format!("found: {found}")));
+        db.primary(Error { lint: false }, location, Some(format!("expected {expect}")));
+        db.primary(Error { lint: false }, caller, Some(format!("found: {found}")));
 
         db
     }
@@ -136,7 +140,7 @@ pub struct InvalidLvalue {
 impl<'a> IntoDiagnostic<'a> for InvalidLvalue {
     fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
         let mut db = handler.struct_err("temporary or immutable lvalue");
-        db.code(Code::E0006).primary(Error, self.span, none());
+        db.code(Code::E0006).primary(Error { lint: false }, self.span, none());
         db
     }
 }
@@ -152,7 +156,7 @@ impl<'a> IntoDiagnostic<'a> for ConstArithmetic {
         let ConstArithmetic { case, note, span } = self;
         let mut db = handler.struct_err("const evaluation error");
 
-        db.code(Code::E0007).primary(Error, span, Some(case));
+        db.code(Code::E0007).primary(Error { lint: false }, span, Some(case));
         if let Some(note) = note {
             db.note(note);
         }
@@ -171,8 +175,8 @@ impl<'a> IntoDiagnostic<'a> for DefinedMultiple {
         let DefinedMultiple { name, def, redef } = self;
         let mut db = handler.struct_err(format!("the name: {name} is defined multiple times"));
 
-        db.code(Code::E0008).primary(Error, def, none());
-        db.primary(Error, redef, Some(format!("{name} redefined here")));
+        db.code(Code::E0008).primary(Error { lint: false }, def, none());
+        db.primary(Error { lint: false }, redef, Some(format!("{name} redefined here")));
         db
     }
 }
@@ -195,7 +199,7 @@ impl<'a> IntoDiagnostic<'a> for InvalidDeref {
     fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
         let (ty, span) = self.ty;
         let mut db = handler.struct_err(format!("type {ty} cannot be dereferenced"));
-        db.code(Code::E0010).primary(Error, span, none());
+        db.code(Code::E0010).primary(Error { lint: false }, span, none());
         db
     }
 }

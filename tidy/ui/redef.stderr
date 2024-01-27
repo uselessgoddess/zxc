@@ -16,3 +16,4 @@ error[E0008]: the name: `foo` is defined multiple times
    │        ╰── `foo` redefined here
 ───╯
 error:  `main` function not found in file
+error: aborting due to previous error

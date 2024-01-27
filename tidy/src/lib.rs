@@ -22,4 +22,8 @@ fn ui() {
 
         t.compile_fail("ui/infer/int_err.src");
     }
+
+    {
+        t.compile_fail("ui/lints/arithmetic_overflow.src");
+    }
 }

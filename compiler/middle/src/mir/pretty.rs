@@ -80,8 +80,7 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
             ty::Bool if int == mir::ScalarRepr::FALSE => p!("false"),
             ty::Bool if int == mir::ScalarRepr::TRUE => p!("true"),
             ty::Int(_) => {
-                let int =
-                    ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized_int());
+                let int = ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized());
                 p!(write("{:#?}", int))
             }
             _ => todo!(),

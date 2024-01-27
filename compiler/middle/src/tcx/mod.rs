@@ -1,15 +1,21 @@
 mod arenas;
 pub mod intern;
 
-use std::fmt;
 pub use {
     arenas::{DroplessArena, TypedArena},
     intern::Interned,
+};
+use {
+    errors::{Diagnostic, Style},
+    lexer::Span,
+    lint::{DecorateLint, Level, Lint, LintId, LintStore},
+    std::fmt,
 };
 
 use crate::{
     abi,
     hir::{self, attr},
+    lints::{self, LevelSource},
     mir::{
         self,
         ty::{self, List},
@@ -17,7 +23,7 @@ use crate::{
     },
     par::{ShardedHashMap, WorkerLocal},
     sess::{output, ModuleType, OutputFilenames},
-    Session,
+    FxHashMap, Session,
 };
 
 mod private {
@@ -138,6 +144,8 @@ pub struct TyCtx<'tcx> {
     pub sess: &'tcx Session,
     output: OutputFilenames,
     module_types: Vec<ModuleType>,
+    pub lints: LintStore,
+    levels: FxHashMap<LintId, (Level, LevelSource)>,
 }
 
 impl fmt::Debug for TyCtx<'_> {
@@ -156,7 +164,12 @@ impl<'tcx> TyCtx<'tcx> {
         let types = CommonTypes::new(&intern, arena, sess);
         let sigs = CommonSigs::new(&intern, arena, &types);
 
-        Self { arena, intern, types, sigs, sess, output, module_types: collect_module_types(sess) }
+        let mut lints = LintStore::new();
+        lint::register_lints(&mut lints);
+        let levels = lints::lint_levels_on_raw(&lints, &sess.opts.lints);
+
+        let module_types = collect_module_types(sess);
+        Self { arena, intern, types, sigs, sess, output, lints, levels, module_types }
     }
 
     pub fn mk_type_list(&self, slice: &[Ty<'tcx>]) -> &'tcx List<Ty<'tcx>> {
@@ -197,6 +210,53 @@ impl<'tcx> TyCtx<'tcx> {
 
     pub fn module_types(&self) -> &[ModuleType] {
         &self.module_types
+    }
+
+    pub fn lint_level_at(&self, lint: LintId) -> (Level, LevelSource) {
+        self.levels.get(&lint).copied().unwrap_or_else(|| todo!())
+    }
+
+    pub fn emit_spanned_lint(
+        &self,
+        span: Span,
+        lint: &'static Lint,
+        decorate: impl for<'a> DecorateLint<'a>,
+    ) {
+        let sess = self.sess;
+        let (level, src) = self.lint_level_at(LintId::of(lint));
+
+        let mut diag = match level {
+            Level::Allow => return,
+            Level::Warn => sess.diagnostic().struct_warn(""),
+            Level::Deny => sess.diagnostic().struct_err_lint(""),
+        };
+
+        diag.span = Some(span);
+        diag.message = (decorate.message(), Style::NoStyle);
+
+        decorate.decorate_lint(&mut diag);
+        explain_source(lint, level, src, &mut *diag);
+        diag.emit();
+    }
+}
+
+fn explain_source(lint: &'static Lint, level: Level, src: LevelSource, err: &mut Diagnostic) {
+    let name = lint.name_lower();
+    match src {
+        LevelSource::Default => {
+            err.note(format!("`#[{}({})]` on by default", level.as_str(), name));
+        }
+        LevelSource::CommandLine(lint_flag, default) => {
+            let hyphen_name = name.replace('_', "-");
+            let flag = default.as_cmd_flag();
+            if lint_flag.as_str() == name {
+                err.note(format!("requested on the command line with `{flag} {hyphen_name}`"));
+            } else {
+                let hyphen_flag = lint_flag.as_str().replace('_', "-");
+                err.note(format!("`{flag} {hyphen_name}` implied by `{flag} {hyphen_flag}`"));
+                err.help(format!("to override `{flag} {hyphen_flag}` add `#[allow({name})]`"));
+            }
+        }
     }
 }
 

@@ -33,6 +33,7 @@ mod fx;
 mod idx; // inspired from rustc_index
 
 pub(crate) mod index;
+pub mod lints;
 mod man;
 pub mod par;
 pub mod sess;
@@ -81,6 +82,16 @@ macro_rules! index_vec {
 pub(crate) use index_vec;
 
 #[macro_export]
+macro_rules! prepare_level {
+    (Error) => {
+        Error { lint: false }
+    };
+    ($other:ident) => {
+        $other
+    };
+}
+
+#[macro_export]
 macro_rules! diagnostic {
     {
         $([$($head:tt)*])*
@@ -107,7 +118,7 @@ macro_rules! diagnostic {
     (@impl
         [$fmt:literal $(, $arg:ident)*]
         $([code: $code:ident])?
-        $([primary($plevel:expr, $pspan:ident): $fmt_p:literal $(, $arg_p:ident)*])*
+        $([primary($plevel:ident, $pspan:ident): $fmt_p:literal $(, $arg_p:ident)*])*
         $([note: $fmt_notes:literal $(, $arg_notes:ident)*])*
     ) => {
         fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, E> {
@@ -116,7 +127,11 @@ macro_rules! diagnostic {
 
             $( diag.code($crate::errors::Code::$code); )?
             $(
-                diag.primary($plevel, self.$pspan, Some(format!($fmt_p $(, self.$arg_p )*)));
+                diag.primary(
+                    $crate::prepare_level!($plevel),
+                    self.$pspan,
+                    Some(format!($fmt_p $(, self.$arg_p )*))
+                );
             )*
             $(
                 diag.note(format!($fmt_notes $(, self.$arg_notes )*));

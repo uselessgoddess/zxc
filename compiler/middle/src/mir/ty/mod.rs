@@ -184,7 +184,7 @@ impl<'cx> Ty<'cx> {
         matches!(self.kind(), Int(_))
     }
 
-    pub fn is_ptr_sized_int(&self) -> bool {
+    pub fn is_ptr_sized(&self) -> bool {
         matches!(self.kind(), Int(IntTy::Isize) /* | Uint(ty::UintTy::Usize)*/)
     }
 

@@ -27,7 +27,10 @@ use middle::{
 use {
     chumsky::Parser,
     lexer::ParseBuffer,
-    middle::sess::{OutFileName, OutputType},
+    middle::{
+        mir::interpret::InterpCx,
+        sess::{OutFileName, OutputType},
+    },
     std::{
         collections::BTreeMap,
         fmt, fs, io,
@@ -122,6 +125,7 @@ fn driver_impl<'tcx>(
     for (def, body) in mir {
         hix.defs[def] = body;
     }
+    tcx.sess.compile_status().inspect_err(|_| tcx.sess.abort_if_errors())?;
 
     if tcx.sess.opts.output_types.contains_key(&OutputType::Mir) {
         mir::pass::emit_mir(hix)?;
@@ -239,7 +243,19 @@ fn main() {
 
     let early = EarlyErrorHandler::new();
 
-    let Args { input, output, output_dir, color, c_flags, z_flags, emit, target } = Args::parse();
+    let Args {
+        input,
+        output,
+        output_dir,
+        color,
+        c_flags,
+        z_flags,
+        emit,
+        target,
+        allow,
+        warn,
+        deny,
+    } = Args::parse();
     concolor::set(match color.unwrap_or(cli::Color::Auto) {
         cli::Color::Auto => ColorChoice::Auto,
         cli::Color::Always => ColorChoice::Always,
@@ -265,10 +281,21 @@ fn main() {
     if output_types.is_empty() {
         output_types.insert(OutputType::Exe, None);
     }
+    use middle::lints::Level::{Allow, Deny, Warn};
+
+    let lint = |lints: Vec<String>, level| {
+        lints.into_iter().map(move |lint| (lint.replace('-', "_"), level))
+    };
 
     let source_map = Arc::new(SourceMap { sources: vec![].into() });
     let mut config = Config {
-        opts: Options { Z: z_opts, C: c_opts, output_types, ..Default::default() },
+        opts: Options {
+            Z: z_opts,
+            C: c_opts,
+            output_types,
+            lints: lint(allow, Allow).chain(lint(warn, Warn)).chain(lint(deny, Deny)).collect(),
+            ..Default::default()
+        },
         input,
         output_dir,
         output_file: output,

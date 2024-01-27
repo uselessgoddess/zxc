@@ -1,5 +1,7 @@
 mod const_goto;
+mod const_prop_lint;
 mod dump;
+mod errors;
 mod multiple_return;
 mod peep_simplify;
 mod simplify;
@@ -26,6 +28,40 @@ pub trait MirPass<'tcx> {
     }
 
     fn run_pass(&self, tcx: Tx<'tcx>, body: &mut Body<'tcx>);
+}
+
+pub trait MirLint<'tcx> {
+    fn name(&self) -> &'static str {
+        let name = std::any::type_name::<Self>();
+        if let Some((_, tail)) = name.rsplit_once(':') { tail } else { name }
+    }
+
+    /// Returns `true` if this lint is enabled with the current combination of compiler flags.
+    fn is_enabled(&self, _sess: &Session) -> bool {
+        true
+    }
+
+    fn run_lint(&self, tcx: Tx<'tcx>, body: &Body<'tcx>);
+}
+
+#[derive(Debug, Clone)]
+pub struct Lint<T>(pub T);
+
+impl<'tcx, T> MirPass<'tcx> for Lint<T>
+where
+    T: MirLint<'tcx>,
+{
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+
+    fn is_enabled(&self, sess: &Session) -> bool {
+        self.0.is_enabled(sess)
+    }
+
+    fn run_pass(&self, tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
+        self.0.run_lint(tcx, body)
+    }
 }
 
 impl<'tcx> HirCtx<'tcx> {
@@ -80,6 +116,8 @@ fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
         tcx,
         body,
         &[
+            &Lint(const_prop_lint::ConstPropLint),
+            //
             &o1(simplify::SimplifyCfg::EarlyOpt),
             &multiple_return::MultipleReturnTerminators,
             &peep_simplify::PeepSimplify,
