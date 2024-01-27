@@ -51,11 +51,11 @@ pub struct Args {
     #[arg(short = 'A', long, value_name = "LINT")]
     pub allow: Vec<String>,
 
-    /// Set lint allowed
+    /// Set lint warnings
     #[arg(short = 'W', long, value_name = "LINT")]
     pub warn: Vec<String>,
 
-    /// Set lint allowed
+    /// Set lint denied
     #[arg(short = 'D', long, value_name = "LINT")]
     pub deny: Vec<String>,
 }
