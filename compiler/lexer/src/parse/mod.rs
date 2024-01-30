@@ -8,7 +8,7 @@ pub mod ty;
 
 pub use {
     attr::{Attribute, Meta},
-    expr::{Assign, BinOp, Block, Break, Expr, If, Local, Loop, Stmt, UnOp},
+    expr::{Assign, BinOp, Block, Break, Cast, Expr, If, Local, Loop, Stmt, UnOp},
     item::{Abi, FnArg, ForeignItem, ForeignMod, Item, ItemFn, ReturnType, Signature},
     punct::Punctuated,
     ty::Type,

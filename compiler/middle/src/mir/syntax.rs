@@ -458,6 +458,9 @@ impl ConstValue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CastKind {
     IntToInt,
+    PtrToPtr,
+    PtrToAddr,
+    AddrToPtr,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -475,6 +478,7 @@ pub enum BinOp {
     Ne,
     Ge,
     Gt,
+    Offset,
 }
 
 impl BinOp {
@@ -508,6 +512,7 @@ impl BinOp {
                 lhs
             }
             BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => tcx.types.bool,
+            BinOp::Offset => lhs,
         }
     }
 
@@ -543,6 +548,7 @@ pub enum Rvalue<'tcx> {
     UnaryOp(UnOp, Operand<'tcx>),
     BinaryOp(BinOp, Operand<'tcx>, Operand<'tcx>),
     Cast(CastKind, Operand<'tcx>, Ty<'tcx>),
+    AddrOf(Mutability, Place<'tcx>),
 }
 
 impl<'tcx> Rvalue<'tcx> {

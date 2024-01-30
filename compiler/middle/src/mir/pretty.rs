@@ -233,6 +233,16 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
             ty::Ref(mutbl, ty) => {
                 p!("&", write("{}", mutbl.prefix_str()), print(ty));
             }
+            ty::Ptr(mutbl, ty) => {
+                p!(write(
+                    "*{} ",
+                    match mutbl {
+                        Mutability::Mut => "mut",
+                        Mutability::Not => "const",
+                    }
+                ));
+                p!(print(ty))
+            }
             ty::Infer(infer) => match infer {
                 Infer::Int(_) => p!("{{integer}}"),
             },
@@ -354,25 +364,13 @@ define_print_and_forward_display! {
                 p!(write("{op}"), "(", print(operand), ")")
             }
             Rvalue::BinaryOp(op, lhs, rhs) => {
-                let op = match op {
-                    BinOp::Add => "Add",
-                    BinOp::Sub => "Sub",
-                    BinOp::Mul => "Mul",
-                    BinOp::Div => "Div",
-                    BinOp::Eq => "Eq",
-                    BinOp::Ne => "Ne",
-                    BinOp::Le => "Le",
-                    BinOp::Lt => "Lt",
-                    BinOp::Ge => "Ge",
-                    BinOp::Gt => "Gt",
-                    BinOp::AddUnchecked => "UncheckedAdd",
-                    BinOp::SubUnchecked => "UncheckedSub",
-                    BinOp::MulUnchecked => "UncheckedMul",
-                };
-                p!(write("{op}"), "(", print(lhs), ", ", print(rhs), ")")
+                p!(write("{op:?}"), "(", print(lhs), ", ", print(rhs), ")")
             }
             Rvalue::Cast(kind, from, cast) => {
                 p!(print(from), " as ", print(cast), write(" ({kind:?})"))
+            }
+            Rvalue::AddrOf(mutbl, place) => {
+                p!(write("&{}raw ", mutbl.prefix_str()), print(place))
             }
         }
     }

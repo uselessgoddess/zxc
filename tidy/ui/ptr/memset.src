@@ -1,0 +1,22 @@
+fn memset(ptr: *mut i8, len: isize, val: i8) {
+    let mut i = 0;
+    loop {
+        if i == len {
+            break;
+        };
+
+        *ptr.offset(i) = val;
+
+        i = i + 1;
+    }
+}
+
+#[start]
+fn main(_: isize, _: *const *const i8) -> isize {
+    let mut filled = 9223372036854775807 as i64; // 0b11...111;
+
+    // llvm can match it at const-eval
+    memset(&mut filled as *mut i64 as *mut i8, 64 / 8, 0);
+
+    filled as isize
+}

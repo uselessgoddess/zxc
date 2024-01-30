@@ -145,6 +145,36 @@ impl<'a, 'll, 'tcx> Bx<'a, 'll, 'tcx> {
         }
     }
 
+    pub fn inbounds_gep(
+        &mut self,
+        ty: &'ll Type,
+        ptr: &'ll Value,
+        indices: &[&'ll Value],
+    ) -> &'ll Value {
+        unsafe {
+            llvm::LLVMBuildInBoundsGEP2(
+                self.ll,
+                ty,
+                ptr,
+                indices.as_ptr(),
+                indices.len() as _,
+                UNNAMED,
+            )
+        }
+    }
+
+    pub fn ptrtoint(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+        unsafe { llvm::LLVMBuildPtrToInt(self.ll, val, dest_ty, UNNAMED) }
+    }
+
+    pub fn inttoptr(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+        unsafe { llvm::LLVMBuildIntToPtr(self.ll, val, dest_ty, UNNAMED) }
+    }
+
+    pub fn ptrcast(&mut self, val: &'ll Value, dest_ty: &'ll Type) -> &'ll Value {
+        unsafe { llvm::LLVMBuildPointerCast(self.ll, val, dest_ty, UNNAMED) }
+    }
+
     pub fn bitcast(&mut self, val: &'ll Value, dest: &'ll Type) -> &'ll Value {
         unsafe { llvm::LLVMBuildBitCast(self.ll, val, dest, UNNAMED) }
     }

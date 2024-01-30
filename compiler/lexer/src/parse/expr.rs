@@ -4,14 +4,13 @@ use crate::{
     parenthesized,
     parse::{self, Parse, ParseBuffer, Punctuated},
     token::{self},
-    Error, Token,
+    Error, Token, Type,
 };
 
 #[derive(PartialOrd, PartialEq)]
 enum Precedence {
     Any,
     Assign,
-    // Range,
     Or,
     And,
     Compare,
@@ -21,7 +20,7 @@ enum Precedence {
     // Shift,
     Arithmetic,
     Term,
-    // Cast,
+    Cast,
 }
 
 impl Precedence {
@@ -127,6 +126,7 @@ ast_enum_of_structs! {
         Unary(Unary<'a>),
         Binary(Binary<'a>),
         Return(Return<'a>),
+        Cast(Cast<'a>),
         Call(Call<'a>),
         TailCall(TailCall<'a>),
         If(If<'a>),
@@ -168,6 +168,13 @@ pub struct Unary<'a> {
 pub struct Return<'a> {
     pub return_token: Token![return],
     pub expr: Option<Box<Expr<'a>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cast<'a> {
+    pub expr: Box<Expr<'a>>,
+    pub as_token: Token![as],
+    pub ty: Box<Type<'a>>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,7 +309,17 @@ fn expr_paren<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Paren<'lex>>
 }
 
 fn peek_precedence(input: &mut ParseBuffer) -> Precedence {
-    input.scan(|scan| if let Ok(op) = scan.parse() { Precedence::of(&op) } else { Precedence::Any })
+    input.scan(|scan| {
+        if let Ok(op) = scan.parse() {
+            Precedence::of(&op)
+        } else if input.peek(Token![=]) {
+            Precedence::Assign
+        } else if input.peek(Token![as]) {
+            Precedence::Cast
+        } else {
+            Precedence::Any
+        }
+    })
 }
 
 fn parse_expr<'lex>(
@@ -343,6 +360,12 @@ fn parse_expr<'lex>(
                 }
             }
             lhs = Expr::Assign(Assign { left: Box::new(lhs), eq_token, right: Box::new(rhs) });
+        } else if Precedence::Cast >= base && input.peek(Token![as]) {
+            lhs = Expr::Cast(Cast {
+                expr: Box::new(lhs),
+                as_token: input.parse()?,
+                ty: input.parse()?,
+            });
         } else {
             break;
         }
@@ -668,4 +691,19 @@ fn ref_expr() {
     } else {
         panic!()
     }
+}
+
+#[test]
+fn as_expr() {
+    let expr: Expr = lex_it!("&mut 12 as *mut i32").parse().unwrap();
+    assert_matches!(
+        expr,
+        Expr::Cast(Cast { expr: box Expr::Reference(..), ty: box Type::Pointer(..), .. })
+    );
+}
+
+#[test]
+fn as_precedence() {
+    let expr: Expr = lex_it!("x == x as i32").parse().unwrap();
+    assert_matches!(expr, Expr::Binary(..));
 }

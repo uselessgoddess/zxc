@@ -265,6 +265,18 @@ macro_rules! make_mir_visitor {
                         self.visit_ty($(& $mutability)? *ty, TyContext::Location(location));
                     }
 
+                    Rvalue::AddrOf(mutbl, place) => {
+                        let ctx = match mutbl {
+                            Mutability::Mut => PlaceContext::MutatingUse(
+                                MutatingUseContext::AddressOf
+                            ),
+                            Mutability::Not => PlaceContext::NonMutatingUse(
+                                NonMutatingUseContext::AddressOf
+                            ),
+                        };
+                        self.visit_place(place, ctx, location);
+                    }
+
                     Rvalue::BinaryOp(_bin_op, lhs, rhs) => {
                         self.visit_operand(lhs, location);
                         self.visit_operand(rhs, location);

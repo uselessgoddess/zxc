@@ -1,0 +1,5 @@
+fn foo(x: *const ()) {}
+
+fn main() {
+    foo(12);
+}

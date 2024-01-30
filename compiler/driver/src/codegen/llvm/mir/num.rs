@@ -60,7 +60,12 @@ pub fn codegen_int_binop<'ll, 'tcx>(
         (BinOp::SubUnchecked, false) => Bx::unchecked_usub,
         (BinOp::MulUnchecked, true) => Bx::unchecked_smul,
         (BinOp::MulUnchecked, false) => Bx::unchecked_umul,
-
+        (BinOp::Offset, _) => {
+            let pointee_type =
+                ty.builtin_deref(true).unwrap_or_else(|| panic!("deref of non-pointer {ty:?}")).ty;
+            let llty = bx.cx.type_of(bx.cx.tcx.layout_of(pointee_type).layout);
+            return bx.inbounds_gep(llty, lhs, &[rhs]);
+        }
         (BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, signed) => {
             return bx.icmp(binop_to_intcc(op, signed), lhs, rhs);
         }

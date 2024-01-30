@@ -8,7 +8,7 @@ mod ty;
 
 use {
     crate::{
-        hir::{attr::MetaItem, scope::LoopData},
+        hir::{attr::MetaItem, errors::TypeMismatch, scope::LoopData},
         idx::IndexVec,
         index_vec, man,
         mir::{
@@ -100,6 +100,7 @@ pub enum ExprKind<'hir> {
     Local(Ident),
     Unary(UnOp, &'hir Expr<'hir>),
     Binary(BinOp, &'hir Expr<'hir>, &'hir Expr<'hir>),
+    Cast(&'hir Expr<'hir>, Ty<'hir>),
     Call(Ident, &'hir [Expr<'hir>]),
     Block(&'hir [Stmt<'hir>], Span),
     If(&'hir Expr<'hir>, &'hir Expr<'hir>, Option<&'hir Expr<'hir>>),
@@ -129,7 +130,8 @@ fn analyze_block<'tcx>(tcx: Tx<'tcx>, block: &lexer::Block<'tcx>) -> Expr<'tcx> 
 impl<'tcx> Expr<'tcx> {
     pub fn analyze(tcx: Tx<'tcx>, expr: &lexer::Expr<'tcx>) -> Self {
         use lexer::expr::{
-            Assign, Binary, Block, Break, Call, If, Loop, Paren, Reference, Return, TailCall, Unary,
+            Assign, Binary, Block, Break, Call, Cast, If, Loop, Paren, Reference, Return, TailCall,
+            Unary,
         };
 
         let span = expr.span();
@@ -147,6 +149,10 @@ impl<'tcx> Expr<'tcx> {
             lexer::Expr::Ident(str) => {
                 expr::Local(Ident::new(Symbol::intern(str.ident()), str.span))
             }
+            lexer::Expr::Cast(Cast { expr, ty, .. }) => expr::Cast(
+                tcx.arena.expr.alloc(Self::analyze(tcx, expr)),
+                Ty::new(ty.span(), mir::Ty::analyze(tcx, ty)),
+            ),
             lexer::Expr::Call(Call { func, args, .. }) => {
                 let box lexer::Expr::Ident(func) = func else { todo!() };
                 expr::Call(
@@ -417,7 +423,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
                 && operand.ty(&self.body.local_decls, tcx) == tcx.types.never
             {
                 // try avoiding `never` assigns
-                panic!("I don't think it's a good idea to allow it to be assigned to something")
+                // panic!("I don't think it's a good idea to allow it to be assigned to something")
             }
         }
         self.block.statements.push(Statement {
@@ -429,10 +435,20 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     pub fn push_rvalue(
         &mut self,
         ty: Ty<'hir>,
-        rvalue: Rvalue<'hir>,
+        mut rvalue: Rvalue<'hir>,
         mutability: Mutability,
         span: Span,
     ) -> (Ty<'hir>, Place<'hir>) {
+        // force stop inferring type if place is typed
+        if let Rvalue::Use(Operand::Const(ConstValue::Scalar(repr), const_ty)) = &mut rvalue
+            && !ty.needs_infer()
+        {
+            *const_ty = ty.kind;
+            // TODO: automatic adjust repr for `ty` layout
+            repr.size = NonZeroU8::new(self.tcx.layout_of(ty.kind).size.bytes() as u8)
+                .expect("integral type sizes in bytes should be non zero and less than 255");
+        }
+
         let place = Place::pure(self.body.local_decls.push(LocalDecl { mutability, ty: ty.kind }));
         self.block.statements.push(Statement {
             source_info: SourceInfo { span },
@@ -495,7 +511,7 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         use mir::{Infer::Int, TyKind::Infer};
 
         let error_report =
-            |a, b| errors::TypeMismatch { expect: self.hix.ty_msg(a), found: self.hix.ty_msg(b) };
+            |a, b| TypeMismatch { expect: self.hix.ty_msg(a), found: self.hix.ty_msg(b) };
 
         let mut infer = |var, to: Ty<'hir>, from: Ty<'hir>| {
             if let Some(ty) = self.vars[var] {
@@ -505,6 +521,11 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
                 Ok(to)
             }
         };
+
+        // avoid one-level inferring loops
+        if a == b {
+            return Ok(a);
+        }
 
         match (a.kind(), b.kind()) {
             (Infer(Int(_)), Infer(Int(var))) => {
@@ -616,63 +637,6 @@ fn analyze_branch_expr<'hir>(
     })
 }
 
-fn const_eval_operand(
-    op: mir::BinOp,
-    ScalarRepr { data: a, size }: ScalarRepr,
-    ScalarRepr { data: b, .. }: ScalarRepr,
-    signed: bool,
-) -> ScalarRepr {
-    use mir::BinOp::*;
-
-    fn bool(s: bool) -> ScalarRepr {
-        if s { ScalarRepr::TRUE } else { ScalarRepr::FALSE }
-    }
-
-    let scalar = match op {
-        Add | AddUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
-        Sub | SubUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
-        Mul | MulUnchecked => ScalarRepr { data: a.wrapping_add(b), size },
-        Div => ScalarRepr { data: a.wrapping_div(b), size },
-        Eq => bool(a == b),
-        Lt => bool(a > b),
-        Le => bool(a >= b),
-        Ne => bool(a != b),
-        Gt => bool(a < b),
-        Ge => bool(a <= b),
-    };
-
-    let max = if signed {
-        match size.get() {
-            1 => i8::MAX as u128,
-            2 => i16::MAX as u128,
-            4 => i32::MAX as u128,
-            8 => i64::MAX as u128,
-            _ => unreachable!(),
-        }
-    } else {
-        match size.get() {
-            1 => u8::MAX as u128,
-            2 => u16::MAX as u128,
-            4 => u32::MAX as u128,
-            8 => u64::MAX as u128,
-            _ => unreachable!(),
-        }
-    };
-    scalar
-    // if scalar.data > max { None } else { Some(scalar) }
-}
-
-fn coerce_const_scalar<'tcx>(
-    tcx: Tx<'tcx>,
-    mut scalar: ScalarRepr,
-    ty: mir::Ty<'tcx>,
-) -> Operand<'tcx> {
-    let size = tcx.layout_of(ty).layout.size;
-
-    scalar.size = NonZeroU8::new(size.bytes() as u8).unwrap();
-    Operand::Const(ConstValue::Scalar(scalar), ty)
-}
-
 pub fn binop_ty<'tcx>(
     acx: &mut AnalyzeCx<'_, 'tcx>,
     op: mir::BinOp,
@@ -681,10 +645,15 @@ pub fn binop_ty<'tcx>(
 ) -> Result<Ty<'tcx>> {
     use mir::BinOp::*;
 
-    let ty = acx.assert_same_types(lhs, rhs)?;
     Ok(match op {
-        Add | Sub | Mul | Div | AddUnchecked | SubUnchecked | MulUnchecked => ty,
-        Eq | Lt | Le | Ne | Ge | Gt => lhs.map(|_| acx.tcx.types.bool),
+        Add | Sub | Mul | Div | AddUnchecked | SubUnchecked | MulUnchecked => {
+            acx.assert_same_types(lhs, rhs)?
+        }
+        Eq | Lt | Le | Ne | Ge | Gt => {
+            acx.assert_same_types(lhs, rhs)?;
+            lhs.map(|_| acx.tcx.types.bool)
+        }
+        Offset => lhs,
     })
 }
 
@@ -808,6 +777,47 @@ fn analyze_expr<'hir>(
                 acx.unit_place(span)
             }
         }
+        expr::Cast(expr, cast) => {
+            let (ty, operand) = analyze_expr(acx, expr)?;
+            if let TyKind::Infer(infer) = ty.kind() {
+                match infer {
+                    Infer::Int(_) if cast.is_integer() => {
+                        // stop type inference
+                        return Ok(acx.push_temp_rvalue(cast, Rvalue::Use(operand), ty.span));
+                    }
+                    _ => {
+                        // else `CastKind` should handle wrong type inferring
+                    }
+                };
+            }
+
+            if let TyKind::Ref(mutbl, rty) = ty.kind()
+                && let TyKind::Ptr(mut_ptr, ty_ptr) = cast.kind()
+            {
+                return if mutbl == mut_ptr && rty == ty_ptr {
+                    let place = operand.place().unwrap_or_else(|| unreachable!());
+                    // pointers requires valid references
+                    let deref =
+                        Rvalue::AddrOf(mutbl, place.project_deeper(acx.tcx, &[PlaceElem::Deref]));
+                    Ok(acx.push_temp_rvalue(cast, deref, ty.span))
+                } else {
+                    Err(acx.err.emit(errors::InvalidCast {
+                        span: ty.span,
+                        from: acx.hix.ty_fmt(ty.kind),
+                        cast: acx.hix.ty_fmt(cast.kind),
+                    }))
+                };
+            }
+
+            let kind = CastKind::from_cast(ty.kind, cast.kind).ok_or_else(|| {
+                acx.err.emit(errors::NonPrimitiveCast {
+                    span: ty.span,
+                    from: acx.hix.ty_fmt(ty.kind),
+                    cast: acx.hix.ty_fmt(cast.kind),
+                })
+            })?;
+            acx.push_temp_rvalue(cast, Rvalue::Cast(kind, operand, cast.kind), expr.span)
+        }
         expr::Call(call, args) => {
             let operands =
                 args.iter().map(|expr| analyze_expr(acx, expr)).collect::<Result<Vec<_>>>()?;
@@ -816,46 +826,17 @@ fn analyze_expr<'hir>(
             // TODO: avoid this allocation
             let types_mir: Vec<_> = types.iter().map(|&ty| ty.kind).collect();
 
-            if [sym::i8, sym::i16, sym::i32, sym::i64, sym::isize].contains(&call.name) {
-                let cast = match call.name {
-                    sym::i8 => acx.tcx.types.i8,
-                    sym::i16 => acx.tcx.types.i16,
-                    sym::i32 => acx.tcx.types.i32,
-                    sym::i64 => acx.tcx.types.i64,
-                    sym::isize => acx.tcx.types.isize,
-                    _ => unreachable!(),
-                };
-
-                if let [(from, operand)] = operands[..] {
-                    let kind = CastKind::from_cast(from.kind, cast).ok_or_else(|| {
-                        acx.err.emit(errors::NonPrimitiveCast {
-                            span: from.span,
-                            from: acx.hix.ty_fmt(from.kind),
-                            cast: acx.hix.ty_fmt(cast),
-                        })
-                    })?;
-                    acx.push_temp_rvalue(
-                        Ty::new(from.span, cast),
-                        Rvalue::Cast(kind, operand, cast),
-                        expr.span,
-                    )
-                } else {
-                    return Err(acx.err.emit(errors::MismatchFnSig {
-                        expect: acx.hix.args_fmt(&[cast]),
-                        found: acx.hix.args_fmt(&types_mir),
-                        caller: call.span,
-                        target: None,
-                    }));
-                }
-            } else if let Some(&def) = acx.hix.decls.get(&call.name) {
+            if let Some(&def) = acx.hix.decls.get(&call.name) {
                 let InstanceData { sig, span, symbol, hsig, .. } = acx.hix.instances[def];
                 assert_eq!(symbol, call.name); // todo: impossible?
 
-                for (&ty, &pass) in types.iter().zip(sig.inputs()) {
+                for (i, ((&ty, &pass), (_, _, decl))) in
+                    types.iter().zip(sig.inputs()).zip(hsig.decl.inputs).enumerate()
+                {
                     // Now we have to use a fake span,
                     // later we will have to calculate it from the arguments
                     // TODO: fix this check
-                    if acx.assert_same_types(ty, ty.map(|_| pass)).is_err()
+                    if acx.assert_same_types(decl.map(|_| pass), ty).is_err()
                         || types.len() != sig.inputs().len()
                     {
                         return Err(acx.err.emit(errors::MismatchFnSig {
@@ -882,6 +863,31 @@ fn analyze_expr<'hir>(
                     },
                 );
                 (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
+            } else if call.name == sym::offset {
+                use errors::{ExpectType, MismatchFnSig};
+
+                if let [(ptr_ty, ptr), (delta_ty, delta)] = operands[..] {
+                    if !ptr_ty.is_unsafe_ptr() {
+                        return Err(acx
+                            .err
+                            .emit(ExpectType { expect: ("{pointer}".into(), ptr_ty.span) }));
+                    }
+
+                    let delta_ty =
+                        acx.assert_same_types(delta_ty, delta_ty.map(|_| acx.tcx.types.isize))?;
+                    acx.push_temp_rvalue(
+                        ptr_ty,
+                        Rvalue::BinaryOp(mir::BinOp::Offset, ptr, delta),
+                        expr.span,
+                    )
+                } else {
+                    return Err(acx.err.emit(MismatchFnSig {
+                        expect: "`({pointer}, isize)`".into(),
+                        found: acx.hix.args_fmt(&types_mir),
+                        caller: call.span,
+                        target: None,
+                    }));
+                }
             } else {
                 return Err(acx.err.emit(errors::NotFoundLocal::ident(call)));
             }
@@ -1009,7 +1015,10 @@ fn analyze_expr<'hir>(
                 return Err(acx.err.emit(errors::InferInt { span: ty.span }));
             }
 
-            let (ty, place) = acx.push_rvalue(ty, Rvalue::Use(operand), mutability, ty.span);
+            // Copy constants to allow reference like this: `foo(&12)`
+            let place = operand.place().unwrap_or_else(|| {
+                acx.push_rvalue(ty, Rvalue::Use(operand), mutability, ty.span).1
+            });
             acx.push_temp_rvalue(
                 ty.map(|ty| acx.tcx.intern_ty(TyKind::Ref(mutability, ty))),
                 Rvalue::Ref(mutability, place),
@@ -1195,15 +1204,16 @@ impl<'tcx> MutVisitor<'tcx> for InferOverwrite<'_, 'tcx> {
         (const_, ty): (&mut ConstValue, &mut mir::Ty<'tcx>),
         location: Location,
     ) {
-        if let TyKind::Infer(Infer::Int(_)) = ty.kind()
-            && let ConstValue::Scalar(repr) = const_
-        {
+        if let TyKind::Infer(Infer::Int(_)) = ty.kind() {
             self.visit_ty(ty, TyContext::Location(location));
-
-            if !ty.needs_infer() {
-                repr.size = NonZeroU8::new(self.tcx().layout_of(*ty).size.bytes() as u8)
-                    .expect("integral type sizes in bytes should be non zero and less than 255");
-            }
+        }
+        // overwrite literals size always, to provide strong `as` type annotation
+        if let ConstValue::Scalar(repr) = const_
+            && !ty.needs_infer()
+        {
+            println!("fix literal size: {repr:?} {ty:?}");
+            repr.size = NonZeroU8::new(self.tcx().layout_of(*ty).size.bytes() as u8)
+                .expect("integral type sizes in bytes should be non zero and less than 255");
         }
     }
 }

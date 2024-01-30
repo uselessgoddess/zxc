@@ -9,10 +9,53 @@ ast_enum_of_structs! {
     #[derive(Debug, Clone)]
     pub enum Type<'lex> {
         Ident(Ident<'lex>),
+        Pointer(Pointer<'lex>),
+        Reference(Reference<'lex>),
         Paren(Paren<'lex>),
         Tuple(Tuple<'lex>),
-        Reference(Reference<'lex>),
         Never(Never),
+    }
+}
+
+pub mod ptr {
+    use crate::{parse, Parse, ParseBuffer, Token};
+
+    #[derive(Debug, Clone)]
+    pub enum Mutability {
+        Const(Token![const]),
+        Mut(Token![mut]),
+    }
+
+    impl Mutability {
+        pub fn is_mut(&self) -> bool {
+            matches!(self, Self::Mut(_))
+        }
+    }
+
+    impl<'lex> Parse<'lex> for Mutability {
+        fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+            let mut lookahead = input.lookahead();
+            if lookahead.peek(Token![const]) {
+                input.parse().map(Mutability::Const)
+            } else if lookahead.peek(Token![mut]) {
+                input.parse().map(Mutability::Mut)
+            } else {
+                Err(lookahead.error())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Pointer<'lex> {
+    pub star: Token![*],
+    pub qual: ptr::Mutability,
+    pub ty: Box<Type<'lex>>,
+}
+
+impl<'lex> Parse<'lex> for Pointer<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(Self { star: input.parse()?, qual: input.parse()?, ty: input.parse()? })
     }
 }
 
@@ -95,6 +138,8 @@ fn parse_type<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Type<'lex>> 
         input.parse().map(Type::Reference)
     } else if lookahead.peek(Token![!]) {
         input.parse().map(Type::Never)
+    } else if lookahead.peek(Token![*]) {
+        input.parse().map(Type::Pointer)
     } else {
         Err(lookahead.error())
     }

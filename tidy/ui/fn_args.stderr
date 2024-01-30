@@ -1,0 +1,23 @@
+error[E0002]: type mismatch
+   ╭─[fn_args.src:4:9]
+   │
+ 1 │ fn foo(x: *const ()) {}
+   │           ~~~~~~~~╮  
+   │                   ╰── expected due to this
+   │ 
+ 4 │     foo(12);
+   │         ^╮  
+   │          ╰── expected `*const @unit`, found `{integer}`
+───╯
+error[E0005]: called function has another signature
+   ╭─[fn_args.src:1:1]
+   │
+ 1 │ fn foo(x: *const ()) {}
+   │ ^^^^^^^^^^^^^^^^^^^╮  
+   │                    ╰── expected `(*const @unit)`
+   │ 
+ 4 │     foo(12);
+   │     ^^╮  
+   │       ╰── found: `({integer})`
+───╯
+error: aborting due to 2 previous errors

@@ -95,7 +95,9 @@ pub mod ast {
             "else" => Else
             "break" => Break
             "loop" => Loop
+            "const" => Const
             "mut" => Mut
+            "as" => As
         }
 
         Punct(&str) {

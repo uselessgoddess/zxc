@@ -41,40 +41,41 @@ impl<'tcx> TyCtx<'tcx> {
         let layout = self.intern.intern_layout(
             self.arena,
             match ty.kind() {
-                TyKind::Bool => LayoutKind::scalar(
+                ty::Bool => LayoutKind::scalar(
                     dl,
                     Scalar::Initialized {
                         value: Int(I8, false),
                         valid: WrappingRange { start: 0, end: 1 },
                     },
                 ),
-                TyKind::Int(int) => match int {
+                ty::Int(int) => match int {
                     IntTy::I8 => scalar(Int(I8, true)),
                     IntTy::I16 => scalar(Int(I16, true)),
                     IntTy::I32 => scalar(Int(I32, true)),
                     IntTy::I64 => scalar(Int(I64, true)),
                     IntTy::Isize => scalar(Int(ptr_sized(dl), true)),
                 },
-                TyKind::Tuple(list) => {
+                ty::Tuple(list) => {
                     if list.is_empty() {
                         zst_layout
                     } else {
                         todo!()
                     }
                 }
-                TyKind::Ref(_, _) => {
+                ty::Ref(_, _) | ty::Ptr(_, _) => {
                     let mut ptr = scalar(Pointer);
 
-                    // always if ref
-                    if let Abi::Scalar(Scalar::Initialized { valid, .. }) = &mut ptr.abi {
+                    if let Abi::Scalar(Scalar::Initialized { valid, .. }) = &mut ptr.abi
+                        && !ty.is_unsafe_ptr()
+                    {
                         valid.start = 1;
                     }
 
                     ptr
                 }
-                TyKind::FnDef(_) => zst_layout,
-                TyKind::Never => never_layout,
-                TyKind::Infer(_) => panic!("Tx::layout_of: unexpected type `{ty:?}`"),
+                ty::FnDef(_) => zst_layout,
+                ty::Never => never_layout,
+                ty::Infer(_) => panic!("Tx::layout_of: unexpected type `{ty:?}`"),
             },
         );
         TyAbi { ty, layout }
@@ -84,7 +85,10 @@ impl<'tcx> TyCtx<'tcx> {
         let probe_abi = |_tcx, ty| ArgAbi {
             ty: self.layout_of(ty),
             mode: match ty.kind() {
-                TyKind::Bool | TyKind::Int(_) => PassMode::Direct,
+                TyKind::Bool | TyKind::Int(_) | TyKind::Ref(..) | TyKind::Ptr(..) => {
+                    PassMode::Direct
+                }
+                TyKind::FnDef(_) | TyKind::Never => PassMode::Ignore,
                 TyKind::Tuple(types) => {
                     if types.is_empty() {
                         PassMode::Ignore
@@ -92,9 +96,6 @@ impl<'tcx> TyCtx<'tcx> {
                         PassMode::Direct
                     }
                 }
-                TyKind::Ref(_, _) => PassMode::Direct,
-                TyKind::FnDef(_) => PassMode::Ignore,
-                TyKind::Never => PassMode::Ignore,
                 TyKind::Infer(_) => unreachable!(),
             },
         };

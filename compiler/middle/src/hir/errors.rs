@@ -56,6 +56,25 @@ impl<'a> IntoDiagnostic<'a> for TypeMismatch {
     }
 }
 
+pub struct ExpectType {
+    pub expect: (DiagnosticMessage, Span),
+}
+
+impl<'a> IntoDiagnostic<'a> for ExpectType {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
+        let ExpectType { expect: (expect, span) } = self;
+        let mut db = handler.struct_err("type mismatch");
+
+        db.code(Code::E0002).primary(
+            Error { lint: false },
+            span,
+            Some(format!("expected {expect}")),
+        );
+
+        db
+    }
+}
+
 diagnostic! {
     ["can't find local"]
     [code: E0003]
@@ -82,6 +101,17 @@ diagnostic! {
     [code: E0004]
     [primary(Error, span): "{} as {}", from, cast]
     pub struct NonPrimitiveCast {
+        pub span: Span,
+        pub from: DiagnosticMessage,
+        pub cast: DiagnosticMessage,
+    }
+}
+
+diagnostic! {
+    ["invalid cast"]
+    [code: E0004]
+    [primary(Error, span): "casting {} as {} is invalid", from, cast]
+    pub struct InvalidCast {
         pub span: Span,
         pub from: DiagnosticMessage,
         pub cast: DiagnosticMessage,

@@ -1,0 +1,23 @@
+fn memchr(ptr: *const i8, c: i8) -> isize {
+    let mut i = 0;
+    loop {
+        if *ptr.offset(i) == 0 {
+            return 0;
+        }
+
+        if *ptr.offset(i) == c {
+            return i;
+        }
+
+        i = i + 1;
+    }
+}
+
+extern "C" {
+    fn puts(ptr: *const i8);
+}
+
+#[start]
+fn main(_: isize, argv: *const *const i8) -> isize {
+    memchr(*argv.offset(1), 65)
+}

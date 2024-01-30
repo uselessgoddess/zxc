@@ -95,6 +95,7 @@ pub enum TyKind<'cx> {
     Int(IntTy),
     Tuple(&'cx List<Ty<'cx>>),
     Ref(Mutability, Ty<'cx>),
+    Ptr(Mutability, Ty<'cx>),
     FnDef(mir::DefId), // has no generics now
     Infer(Infer),
     Never,
@@ -105,6 +106,11 @@ pub type Ty<'cx> = Interned<'cx, TyKind<'cx>>;
 impl<'cx> Ty<'cx> {
     pub fn new(tcx: Tx<'cx>, kind: TyKind<'cx>) -> Ty<'cx> {
         tcx.intern_ty(kind)
+    }
+
+    #[inline]
+    pub fn new_ptr(tcx: Tx<'cx>, mutbl: Mutability, ty: Ty<'cx>) -> Ty<'cx> {
+        Ty::new(tcx, Ptr(mutbl, ty))
     }
 
     pub fn kind(&self) -> TyKind<'cx> {
@@ -128,6 +134,9 @@ impl<'cx> Ty<'cx> {
                 Mutability::from_bool(mutability.is_some()),
                 Self::analyze(tcx, ty),
             )),
+            Type::Pointer(ty::Pointer { qual, ty, .. }) => {
+                tcx.intern_ty(Ptr(Mutability::from_bool(qual.is_mut()), Self::analyze(tcx, ty)))
+            }
             Type::Paren(Paren { item, .. }) => Self::analyze(tcx, item),
             Type::Tuple(Tuple { items, .. }) => tcx.intern.intern_ty(
                 tcx.arena,
@@ -180,6 +189,11 @@ impl<'cx> Ty<'cx> {
         matches!(self.kind(), Int(_) | Infer(Infer::Int(_)))
     }
 
+    #[inline]
+    pub fn is_unsafe_ptr(self) -> bool {
+        matches!(self.kind(), Ptr(..))
+    }
+
     pub fn is_signed(self) -> bool {
         matches!(self.kind(), Int(_))
     }
@@ -193,9 +207,10 @@ impl<'cx> Ty<'cx> {
         matches!(self.kind(), Infer(_))
     }
 
-    pub fn builtin_deref(self, _explicit: bool) -> Option<TypeAndMut<'cx>> {
+    pub fn builtin_deref(self, explicit: bool) -> Option<TypeAndMut<'cx>> {
         match self.kind() {
-            Ref(mutbl, ty) => Some(TypeAndMut { ty, mutbl }),
+            Ref(mutbl, ty) => Some(TypeAndMut { mutbl, ty }),
+            Ptr(mutbl, ty) if explicit => Some(TypeAndMut { mutbl, ty }),
             _ => None,
         }
     }
@@ -203,7 +218,7 @@ impl<'cx> Ty<'cx> {
     #[inline]
     pub fn ref_mutability(self) -> Option<Mutability> {
         match self.kind() {
-            Ref(mutability, _) => Some(mutability),
+            Ref(mutability, _) | Ptr(mutability, _) => Some(mutability),
             _ => None,
         }
     }
@@ -226,7 +241,7 @@ impl<'tcx> TypeWalker<'tcx> {
     fn push_impl(stack: &mut SmallVec<Ty<'tcx>, 8>, parent: Ty<'tcx>) {
         match parent.kind() {
             Bool | Int(_) | FnDef(_) | Infer(_) | Never => {}
-            Ref(_, ty) => stack.push(ty),
+            Ref(_, ty) | Ptr(_, ty) => stack.push(ty),
             Tuple(_) => todo!(),
         }
     }
@@ -266,6 +281,16 @@ impl fmt::Debug for Ty<'_> {
             }
             Ref(mutbl, ty) => {
                 write!(f, "&{}{ty:?}", mutbl.prefix_str())
+            }
+            Ptr(mutbl, ty) => {
+                write!(
+                    f,
+                    "*{} {ty:?}",
+                    match mutbl {
+                        Mutability::Not => "const",
+                        Mutability::Mut => "mut",
+                    }
+                )
             }
             FnDef(def) => {
                 write!(f, "fn({def:?})")

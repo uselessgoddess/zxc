@@ -8,8 +8,8 @@ use {
     middle::{
         abi::{PassMode, TyAbi},
         mir::{
-            self, ty, BasicBlockData, CastKind, Instance, InstanceDef, Operand, PlaceElem, Rvalue,
-            Statement, StatementKind, TerminatorKind, Ty, UnOp,
+            self, cast::CastTy, ty, BasicBlockData, CastKind, Instance, InstanceDef, Operand,
+            PlaceElem, Rvalue, Statement, StatementKind, TerminatorKind, Ty, UnOp,
         },
         BitSet,
     },
@@ -145,6 +145,14 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
                 layout: tcx.layout_of(Ty::new(tcx, ty::Ref(mutbl, ty))),
             }
         }
+        Rvalue::AddrOf(mutbl, place) => {
+            let place = codegen_place(fx, place);
+            let ty = place.layout.ty;
+            LValue {
+                repr: LValueRepr::ByVal(place.llval),
+                layout: tcx.layout_of(Ty::new(tcx, ty::Ptr(mutbl, ty))),
+            }
+        }
         Rvalue::UnaryOp(op, operand) => {
             let operand = codegen_operand(fx, operand);
             let llval = operand.load_scalar();
@@ -176,9 +184,26 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
             let dst = fx.cx.tcx.layout_of(dst);
 
             let val = match kind {
-                CastKind::IntToInt => {
+                CastKind::PtrToAddr => {
+                    let llptr = src.load_scalar();
                     let lldst = fx.cx.immediate_type_of(dst.layout);
-                    fx.bcx.intcast(src.load_scalar(), lldst, src.layout.ty.is_signed())
+                    fx.bcx.ptrtoint(llptr, lldst)
+                }
+                CastKind::IntToInt | CastKind::PtrToPtr | CastKind::AddrToPtr => {
+                    let llval = src.load_scalar();
+                    let llout = fx.cx.immediate_type_of(dst.layout);
+                    match (CastTy::from(src.layout.ty), CastTy::from(dst.ty)) {
+                        (CastTy::Int(int), CastTy::Int(_)) => {
+                            fx.bcx.intcast(llval, llout, int.is_signed())
+                        }
+                        (CastTy::Ptr(..), CastTy::Ptr(..)) => fx.bcx.ptrcast(llval, llout),
+                        (CastTy::Int(int), CastTy::Ptr(..)) => {
+                            let usize =
+                                fx.bcx.intcast(llval, fx.bcx.cx.type_isize(), int.is_signed());
+                            fx.bcx.inttoptr(usize, llout)
+                        }
+                        _ => panic!("unsupported cast: {:?} to {:?}", src.layout.ty, dst.ty),
+                    }
                 }
             };
             LValue::by_val(val, dst)

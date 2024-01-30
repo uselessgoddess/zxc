@@ -87,6 +87,12 @@ impl Spanned for expr::Return<'_> {
     }
 }
 
+impl Spanned for expr::Cast<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.expr.span(), self.ty.span())
+    }
+}
+
 impl Spanned for expr::Call<'_> {
     fn span(&self) -> Span {
         lookahead_span(self.func.span(), self.paren.span())
@@ -132,6 +138,12 @@ impl Spanned for ty::Tuple<'_> {
 impl Spanned for ty::Paren<'_> {
     fn span(&self) -> Span {
         self.paren.span()
+    }
+}
+
+impl Spanned for ty::Pointer<'_> {
+    fn span(&self) -> Span {
+        lookahead_span(self.star.span, self.ty.span())
     }
 }
 

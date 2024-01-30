@@ -19,7 +19,7 @@ use crate::{
     mir::{
         self,
         ty::{self, List},
-        IntTy, PlaceElem, Ty, TyKind,
+        IntTy, Mutability, PlaceElem, Ty, TyKind,
     },
     par::{ShardedHashMap, WorkerLocal},
     sess::{output, ModuleType, OutputFilenames},
@@ -77,13 +77,11 @@ impl<'tcx> CommonSigs<'tcx> {
             inputs_and_output: intern.intern_type_list(arena, &[types.unit]),
             abi: ty::Abi::Zxc,
         };
-        let start = mir::FnSig {
-            inputs_and_output: intern
-                .intern_type_list(arena, &[types.isize, types.isize, types.isize]),
-            abi: ty::Abi::Zxc,
-        };
-
-        Self { main, start }
+        use Mutability::Not as Const;
+        let argv = intern
+            .intern_ty(arena, ty::Ptr(Const, intern.intern_ty(arena, ty::Ptr(Const, types.i8))));
+        let inputs_and_output = intern.intern_type_list(arena, &[types.isize, argv, types.isize]);
+        Self { main, start: mir::FnSig { inputs_and_output, abi: ty::Abi::Zxc } }
     }
 }
 

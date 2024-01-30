@@ -1,5 +1,6 @@
 mod const_goto;
 mod const_prop_lint;
+mod copy_prop;
 mod dump;
 mod errors;
 mod multiple_return;
@@ -122,6 +123,7 @@ fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
             &multiple_return::MultipleReturnTerminators,
             &peep_simplify::PeepSimplify,
             &const_goto::ConstGoto,
+            &copy_prop::CopyProp,
             &simplify_branches::SimplifyConstCondition::AfterConstProp,
             &simplify::SimplifyLocals::AfterGVN,
             &simplify_int_cmp::SimplifyIntegralCond,

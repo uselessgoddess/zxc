@@ -114,7 +114,8 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
             | Rvalue::UseDeref(_)
             | Rvalue::Ref(_, _)
             | Rvalue::UnaryOp(_, _)
-            | Rvalue::Cast(_, _, _) => {}
+            | Rvalue::Cast(_, _, _)
+            | Rvalue::AddrOf(_, _) => {}
             Rvalue::BinaryOp(op, left, right) => {
                 self.check_binary_op(op, left, right, location)?;
             }

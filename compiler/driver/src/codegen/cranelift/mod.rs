@@ -103,6 +103,7 @@ pub(crate) fn clif_type_from_ty<'tcx>(tcx: Tx<'tcx>, ty: Ty<'tcx>) -> Option<typ
             IntTy::I64 => types::I64,
             IntTy::Isize => pointer_ty(tcx),
         },
+        ty::Ref(..) | ty::Ptr(..) => pointer_ty(tcx),
         _ => return None,
     })
 }
@@ -121,7 +122,7 @@ fn make_local_place<'tcx>(
 
 pub(crate) fn type_sign(ty: Ty<'_>) -> bool {
     match ty.kind() {
-        ty::Bool => false,
+        ty::Bool | ty::Ref(..) | ty::Ptr(..) => false,
         ty::Int(..) => true,
         _ => todo!(),
     }
@@ -171,6 +172,7 @@ pub fn codegen_binop<'tcx>(
     match lhs.layout().ty.kind() {
         ty::Bool => num::codegen_bool_binop(fx, bin_op, lhs, rhs),
         ty::Int(_) => num::codegen_int_binop(fx, bin_op, lhs, rhs),
+        ty::Ptr(..) => num::codegen_ptr_binop(fx, bin_op, lhs, rhs),
         _ => unreachable!("{:?}({:?}, {:?})", bin_op, lhs.layout().ty, rhs.layout().ty),
     }
 }
@@ -261,7 +263,7 @@ fn codegen_stmt<'tcx>(
                     let val = codegen_operand(fx, operand);
                     lvalue.write_cvalue(fx, val);
                 }
-                Rvalue::Ref(_, place) => {
+                Rvalue::Ref(_, place) | Rvalue::AddrOf(_, place) => {
                     let place = codegen_place(fx, place);
                     let ref_ = place.place_ref(fx, lvalue.layout());
                     lvalue.write_cvalue(fx, ref_);

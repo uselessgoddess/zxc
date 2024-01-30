@@ -270,7 +270,7 @@ impl<'mir, 'tcx> InterpCx<'mir, 'tcx> {
             }
         }
 
-        todo!()
+        Err(InterpError::ConstNonsense)
     }
 
     #[inline]
@@ -378,7 +378,9 @@ impl<'mir, 'tcx> InterpCx<'mir, 'tcx> {
         place: mir::Place<'tcx>,
         layout: Option<TyAbi<'tcx>>,
     ) -> InterpResult<Value<'tcx>> {
-        assert!(place.projection.is_empty());
+        if !place.projection.is_empty() {
+            return Err(InterpError::ConstNonsense);
+        }
 
         self.eval_local(place.local, layout)
     }
@@ -391,7 +393,9 @@ impl<'mir, 'tcx> InterpCx<'mir, 'tcx> {
     }
 
     pub fn eval_place(&self, place: mir::Place<'tcx>) -> InterpResult<Place<'tcx>> {
-        assert!(place.projection.is_empty());
+        if !place.projection.is_empty() {
+            return Err(InterpError::ConstNonsense);
+        }
 
         let local = place.local;
         Ok(Place { local, layout: self.layout_of_local(local, None) })
@@ -460,7 +464,7 @@ mod util {
     #[inline]
     pub fn binop_left_homogeneous(op: BinOp) -> bool {
         match op {
-            Add | AddUnchecked | Sub | SubUnchecked | Mul | MulUnchecked | Div => true,
+            Add | AddUnchecked | Sub | SubUnchecked | Mul | MulUnchecked | Div | Offset => true,
             Eq | Ne | Lt | Le | Gt | Ge => false,
         }
     }
@@ -470,6 +474,7 @@ mod util {
         match op {
             Add | AddUnchecked | Sub | SubUnchecked | Mul | MulUnchecked | Div | Eq | Ne | Lt
             | Le | Gt | Ge => true,
+            Offset => false,
         }
     }
 }
