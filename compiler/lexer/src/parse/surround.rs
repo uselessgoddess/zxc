@@ -1,7 +1,7 @@
 use crate::{
     attr,
     parse::{self, expr, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
-    token, Assign, Break, ForeignItem, ForeignMod, If, ItemFn, Loop, Span,
+    token, Assign, Break, ForeignItem, ForeignMod, If, ItemFn, Loop, Span, UnOp,
 };
 
 pub trait Spanned {
@@ -63,11 +63,19 @@ impl Spanned for expr::Block<'_> {
     }
 }
 
+impl Spanned for UnOp {
+    fn span(&self) -> Span {
+        match self {
+            UnOp::Deref(x) => x.span,
+            UnOp::Not(x) => x.span,
+            UnOp::Neg(x) => x.span,
+        }
+    }
+}
+
 impl Spanned for expr::Unary<'_> {
     fn span(&self) -> Span {
-        // FIXME: add implementation for `UnOp`
-        //  lookahead_span(self.op.span(), self.expr.span())
-        self.expr.span()
+        lookahead_span(self.op.span(), self.expr.span())
     }
 }
 

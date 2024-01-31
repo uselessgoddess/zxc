@@ -143,6 +143,14 @@ impl<'tcx> Value<'tcx> {
             Immediate::Uninit => panic!("Got uninit where a scalar was expected"),
         }
     }
+
+    #[inline]
+    pub fn try_to_scalar(self) -> Option<Scalar> {
+        match self.imm {
+            Immediate::Scalar(val) => Some(val),
+            Immediate::Uninit => None,
+        }
+    }
 }
 
 pub struct Place<'tcx> {

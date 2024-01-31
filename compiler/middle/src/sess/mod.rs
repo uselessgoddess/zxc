@@ -235,11 +235,16 @@ pub struct Session {
 
     pub io: CompilerIO,
     handler: Handler,
+    source_map: Arc<SourceMap>,
 }
 
 impl Session {
     pub fn diagnostic(&self) -> &Handler {
         &self.handler
+    }
+
+    pub fn source_map(&self) -> &SourceMap {
+        &self.source_map
     }
 
     pub fn abort_if_errors(&self) {
@@ -370,6 +375,13 @@ pub struct CompilerIO {
 pub fn build_session(opts: Options, io: CompilerIO, sm: Arc<SourceMap>) -> Session {
     let host = Target::expect_builtin(&host_triple()).unwrap();
 
-    let emitter = Box::new(EmitterWriter::stderr(Some(sm)));
-    Session { target: host.clone(), host, opts, io, handler: Handler::with_emitter(emitter) }
+    let emitter = Box::new(EmitterWriter::stderr(Some(sm.clone())));
+    Session {
+        target: host.clone(),
+        host,
+        opts,
+        io,
+        source_map: sm,
+        handler: Handler::with_emitter(emitter),
+    }
 }

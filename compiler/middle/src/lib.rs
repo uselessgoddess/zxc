@@ -130,7 +130,7 @@ macro_rules! diagnostic {
                 diag.primary(
                     $crate::prepare_level!($plevel),
                     self.$pspan,
-                    Some(format!($fmt_p $(, self.$arg_p )*))
+                    format!($fmt_p $(, self.$arg_p )*)
                 );
             )*
             $(

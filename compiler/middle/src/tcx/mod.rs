@@ -211,7 +211,10 @@ impl<'tcx> TyCtx<'tcx> {
     }
 
     pub fn lint_level_at(&self, lint: LintId) -> (Level, LevelSource) {
-        self.levels.get(&lint).copied().unwrap_or_else(|| todo!())
+        self.levels
+            .get(&lint)
+            .copied()
+            .unwrap_or_else(|| panic!("unregister lint `{}`", lint.lint.name))
     }
 
     pub fn emit_spanned_lint(

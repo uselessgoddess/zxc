@@ -661,6 +661,7 @@ fn analyze_expr<'hir>(
     acx: &mut AnalyzeCx<'_, 'hir>,
     expr: &Expr<'hir>,
 ) -> Result<(Ty<'hir>, Operand<'hir>)> {
+    let whole = expr.span;
     let (ty, rvalue) = match expr.kind {
         expr::Lit(Lit::Str(_)) | expr::Lit(Lit::Float(_)) => todo!(),
         expr::Lit(Lit::Int(LitInt { lit, span })) => {
@@ -730,7 +731,7 @@ fn analyze_expr<'hir>(
                         },
                         operand,
                     ),
-                    expr.span,
+                    whole,
                 )
             }
         },
@@ -781,8 +782,9 @@ fn analyze_expr<'hir>(
             let (ty, operand) = analyze_expr(acx, expr)?;
             if let TyKind::Infer(infer) = ty.kind() {
                 match infer {
-                    Infer::Int(_) if cast.is_integer() => {
+                    Infer::Int(var) if cast.is_integer() && acx.vars[var].is_none() => {
                         // stop type inference
+                        acx.vars[var] = Some(cast.kind);
                         return Ok(acx.push_temp_rvalue(cast, Rvalue::Use(operand), ty.span));
                     }
                     _ => {
@@ -1211,7 +1213,6 @@ impl<'tcx> MutVisitor<'tcx> for InferOverwrite<'_, 'tcx> {
         if let ConstValue::Scalar(repr) = const_
             && !ty.needs_infer()
         {
-            println!("fix literal size: {repr:?} {ty:?}");
             repr.size = NonZeroU8::new(self.tcx().layout_of(*ty).size.bytes() as u8)
                 .expect("integral type sizes in bytes should be non zero and less than 255");
         }

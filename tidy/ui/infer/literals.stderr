@@ -1,0 +1,21 @@
+error: literal out of range for `i32`
+   ╭─[literals.src:2:13]
+   │
+ 2 │     let _ = 1234567890987654321;
+───╯
+   = note: the literal `1234567890987654321i32` does not fit `i32` whose range is `-2147483648..=2147483647`
+   = note: `#[deny(overflowing_literals)]` on by default
+error: literal out of range for `i8`
+   ╭─[literals.src:3:13]
+   │
+ 3 │     let _ = 128 as i8;
+───╯
+   = note: the literal `128i8` does not fit `i8` whose range is `-128..=127`
+   = note: `#[deny(overflowing_literals)]` on by default
+error: literal out of range for `i8`
+   ╭─[literals.src:5:13]
+   │
+ 5 │     let _ = -129 as i8;
+───╯
+   = note: the literal `-129i8` does not fit `i8` whose range is `-128..=127`
+   = note: `#[deny(overflowing_literals)]` on by default

@@ -9,6 +9,10 @@ pub mod traversal;
 pub mod ty;
 pub mod visit;
 
+pub mod lint {
+    pub mod errors;
+}
+
 use {
     crate::{
         hir::{self, attr},

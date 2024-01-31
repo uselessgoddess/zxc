@@ -6,15 +6,6 @@ use crate::{
 
 use {Integer::*, Primitive::*};
 
-pub fn ptr_sized(dl: &TargetDataLayout) -> Integer {
-    match dl.pointer_size.bits() {
-        16 => I16,
-        32 => I32,
-        64 => I64,
-        bits => panic!("ptr_sized: unknown pointer bit size {bits}"),
-    }
-}
-
 impl<'tcx> TyCtx<'tcx> {
     pub fn data_layout(&self) -> &TargetDataLayout {
         &self.sess.target.data_layout
@@ -53,7 +44,7 @@ impl<'tcx> TyCtx<'tcx> {
                     IntTy::I16 => scalar(Int(I16, true)),
                     IntTy::I32 => scalar(Int(I32, true)),
                     IntTy::I64 => scalar(Int(I64, true)),
-                    IntTy::Isize => scalar(Int(ptr_sized(dl), true)),
+                    IntTy::Isize => scalar(Int(dl.ptr_sized_integer(), true)),
                 },
                 ty::Tuple(list) => {
                     if list.is_empty() {

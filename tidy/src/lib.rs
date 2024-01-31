@@ -28,6 +28,7 @@ fn ui() {
         t.pass("ui/infer/int.src");
 
         t.compile_fail("ui/infer/int_err.src");
+        t.compile_fail("ui/infer/literals.src");
     }
 
     {

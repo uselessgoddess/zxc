@@ -186,6 +186,11 @@ impl Size {
     }
 
     #[inline]
+    pub fn signed_int_min(&self) -> i128 {
+        self.sign_extend(1_u128 << (self.bits() - 1)) as i128
+    }
+
+    #[inline]
     pub fn signed_int_max(&self) -> i128 {
         i128::MAX >> (128 - self.bits())
     }
@@ -210,6 +215,8 @@ impl Mul<u64> for Size {
     }
 }
 
+use Integer::*;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum Integer {
     I8,
@@ -221,7 +228,6 @@ pub enum Integer {
 impl Integer {
     #[inline]
     pub fn size(self) -> Size {
-        use Integer::*;
         match self {
             I8 => Size::from_bytes(1),
             I16 => Size::from_bytes(2),
@@ -231,8 +237,6 @@ impl Integer {
     }
 
     pub fn align(self, dl: &TargetDataLayout) -> AbiPrefAlign {
-        use Integer::*;
-
         match self {
             I8 => dl.i8_align,
             I16 => dl.i16_align,
@@ -242,8 +246,6 @@ impl Integer {
     }
 
     pub fn approximate_align(data: &TargetDataLayout, wanted: Align) -> Integer {
-        use Integer::*;
-
         for candidate in [I64, I32, I16] {
             if wanted >= candidate.align(data).abi && wanted.bytes() >= candidate.size().bytes() {
                 return candidate;
@@ -478,6 +480,18 @@ pub struct TargetDataLayout {
     pub aggregate_align: AbiPrefAlign,
     pub vector_align: Vec<(Size, AbiPrefAlign)>,
     pub instruction_address_space: AddressSpace,
+}
+
+impl TargetDataLayout {
+    #[inline]
+    pub fn ptr_sized_integer(&self) -> Integer {
+        match self.pointer_size.bits() {
+            16 => I16,
+            32 => I32,
+            64 => I64,
+            bits => panic!("ptr_sized: unknown pointer bit size {bits}"),
+        }
+    }
 }
 
 impl Default for TargetDataLayout {

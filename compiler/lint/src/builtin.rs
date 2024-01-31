@@ -6,8 +6,15 @@ declare_lint! {
     "arithmetic operation overflows"
 }
 
+declare_lint! {
+    pub overflowing_literals,
+    Deny,
+    "literal out of range for its type"
+}
+
 declare_lints_pass! {
     HardwiredLints => [
         arithmetic_overflow,
+        overflowing_literals,
     ]
 }

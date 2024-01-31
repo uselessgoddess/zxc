@@ -96,7 +96,7 @@ pub struct Diagnostic {
     pub span: Option<Span>,
     pub message: (DiagnosticMessage, Style),
     pub labels: Vec<(DiagnosticMessage, Span)>,
-    pub primary: Vec<(Option<DiagnosticMessage>, Level, Span)>,
+    pub primary: Vec<(Option<DiagnosticMessage>, Option<Level>, Span)>,
     pub children: Vec<SubDiagnostic>,
 }
 
@@ -125,11 +125,16 @@ impl Diagnostic {
 
     pub fn primary(
         &mut self,
-        level: Level,
+        level: impl Into<Option<Level>>,
         span: Span,
-        msg: Option<impl Into<DiagnosticMessage>>,
+        msg: impl Into<DiagnosticMessage>,
     ) -> &mut Self {
-        self.primary.push((msg.map(Into::into), level, span));
+        self.primary.push((Some(msg.into()), level.into(), span));
+        self
+    }
+
+    pub fn primary_span(&mut self, level: impl Into<Option<Level>>, span: Span) -> &mut Self {
+        self.primary.push((None, level.into(), span));
         self
     }
 
@@ -549,6 +554,19 @@ pub struct SourceMap {
 }
 
 impl SourceMap {
+    fn span_to_source<F, T>(&self, span: Span, extract_source: F) -> Option<T>
+    where
+        F: Fn(&str, usize, usize) -> Option<T>,
+    {
+        // FIXME: source map has exactly one file now
+        let src = &self.sources.read()[0].src;
+        extract_source(src, span.start, span.end)
+    }
+
+    pub fn span_to_snippet(&self, sp: Span) -> Option<String> {
+        self.span_to_source(sp, |src, start, end| src.get(start..end).map(ToString::to_string))
+    }
+
     pub fn span_to_filename(&self) -> String {
         self.sources.read()[0].name.file_name().unwrap().to_string_lossy().to_string()
     }
@@ -570,7 +588,7 @@ impl EmitterWriter {
         level: Level,
         (message, style): &(DiagnosticMessage, Style),
         labels: &[(DiagnosticMessage, Span)],
-        primary: &[(Option<DiagnosticMessage>, Level, Span)],
+        primary: &[(Option<DiagnosticMessage>, Option<Level>, Span)],
         children: &[SubDiagnostic],
         is_primary: bool,
     ) -> fmt::Result {
@@ -613,7 +631,8 @@ impl EmitterWriter {
                     .with_message(message.fg(color)),
             );
         }
-        for (message, level, span) in primary {
+        for (message, local, span) in primary {
+            let level = local.unwrap_or(level);
             let color = level.as_color();
             report.add_label({
                 let mut label = Label::new((&src_id, span.into_range()))
