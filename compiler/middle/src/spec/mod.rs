@@ -263,7 +263,7 @@ impl Default for TargetOptions {
             endian: Endian::Little,
             os: "none".into(),
             env: "".into(),
-            vendor: "".into(),
+            vendor: "unknown".into(),
             linker: None,
             linker_flavor: LinkerFlavor::Gnu(Cc::Yes, Lld::No),
             cpu: "generic".into(),

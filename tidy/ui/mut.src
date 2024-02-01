@@ -9,6 +9,6 @@ fn foo(mut x: i32) -> i32 {
 }
 
 #[start]
-fn main(argc: isize, _: *const *const i8) -> isize {
+fn main(argc: isize, _: *const *const u8) -> isize {
     foo(argc as i32) as isize
 }

@@ -721,6 +721,13 @@ fn analyze_expr<'hir>(
             }
             mir => {
                 let (ty, operand) = analyze_expr(acx, expr)?;
+                if !ty.is_integer() {
+                    return Err(acx.err.emit(errors::CannotUnaryOp {
+                        op: mir,
+                        ty: acx.hix.ty_fmt(*ty),
+                        span: whole,
+                    }));
+                }
                 acx.push_temp_rvalue(
                     ty,
                     Rvalue::UnaryOp(
@@ -1167,8 +1174,35 @@ pub fn analyze_fn_definition<'hir>(
     }
 
     InferOverwrite { tcx, vars: acx.vars, err: acx.err }.visit_body(acx.body);
+    PostTypeck { tcx, hix, mir: acx.body, err: acx.err }.visit_body(acx.body);
 
     Ok(body)
+}
+
+struct PostTypeck<'acx, 'tcx> {
+    tcx: Tx<'tcx>,
+    hix: &'acx HirCtx<'tcx>,
+    mir: &'acx mir::Body<'tcx>,
+    err: &'acx mut error::TyErrCtx,
+}
+
+impl<'tcx> Visitor<'tcx> for PostTypeck<'_, 'tcx> {
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        match rvalue {
+            Rvalue::UnaryOp(mir::UnOp::Neg, expr) => {
+                let ty = expr.ty(&self.mir.local_decls, self.tcx);
+                if let TyKind::Uint(_) = ty.kind() {
+                    let ty = self.hix.ty_fmt(ty);
+                    let span = self.mir.source_info(location).span;
+                    let mut diag =
+                        self.err.struct_diag(errors::CannotUnaryOp { op: UnOp::Neg, ty, span });
+                    diag.note("unsigned values cannot be negated");
+                    diag.emit();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 struct InferOverwrite<'err, 'tcx> {

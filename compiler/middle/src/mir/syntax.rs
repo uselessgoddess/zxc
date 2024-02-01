@@ -1,6 +1,7 @@
 use {
     crate::{
         abi::Size,
+        hir,
         idx::{self, IndexVec},
         mir::{ty::List, Location, Ty, RETURN_PLACE},
         Tx,
@@ -359,6 +360,7 @@ impl ScalarRepr {
         Size::from_bytes(self.size.get() as u64)
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn to_bits(self, target_size: Size) -> Result<u128, Size> {
         assert_ne!(target_size.bytes(), 0, "you should never look at the bits of a ZST");
         if target_size.bytes() == u64::from(self.size.get()) {
@@ -377,6 +379,7 @@ impl ScalarRepr {
     }
 
     #[inline(always)]
+    #[cfg_attr(debug_assertions, track_caller)]
     fn check_data(self) {
         // Using a block `{self.data}` here to force a copy instead of using `self.data`
         // directly, because `debug_assert_eq` takes references to its arguments and formatting
@@ -538,6 +541,15 @@ impl BinOp {
 pub enum UnOp {
     Not,
     Neg,
+}
+
+impl UnOp {
+    pub fn to_hir_lossy(&self) -> hir::UnOp {
+        match self {
+            UnOp::Not => hir::UnOp::Not,
+            UnOp::Neg => hir::UnOp::Neg,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

@@ -93,6 +93,7 @@ pub enum Infer {
 pub enum TyKind<'cx> {
     Bool,
     Int(IntTy),
+    Uint(UintTy),
     Tuple(&'cx List<Ty<'cx>>),
     Ref(Mutability, Ty<'cx>),
     Ptr(Mutability, Ty<'cx>),
@@ -128,6 +129,11 @@ impl<'cx> Ty<'cx> {
                 "i32" => tcx.types.i32,
                 "i64" => tcx.types.i64,
                 "isize" => tcx.types.isize,
+                "u8" => tcx.types.u8,
+                "u16" => tcx.types.u16,
+                "u32" => tcx.types.u32,
+                "u64" => tcx.types.u64,
+                "usize" => tcx.types.usize,
                 _ => todo!(),
             },
             Type::Reference(ty::Reference { mutability, ty, .. }) => tcx.intern_ty(Ref(
@@ -181,12 +187,12 @@ impl<'cx> Ty<'cx> {
 
     #[inline]
     pub fn is_primitive(&self) -> bool {
-        matches!(self.kind(), Bool | Int(_))
+        matches!(self.kind(), Bool | Int(_) | Uint(_))
     }
 
     #[inline]
     pub fn is_integer(&self) -> bool {
-        matches!(self.kind(), Int(_) | Infer(Infer::Int(_)))
+        matches!(self.kind(), Int(_) | Uint(_) | Infer(Infer::Int(_)))
     }
 
     #[inline]
@@ -240,7 +246,7 @@ impl<'tcx> TypeWalker<'tcx> {
 
     fn push_impl(stack: &mut SmallVec<Ty<'tcx>, 8>, parent: Ty<'tcx>) {
         match parent.kind() {
-            Bool | Int(_) | FnDef(_) | Infer(_) | Never => {}
+            Bool | Int(_) | Uint(_) | FnDef(_) | Infer(_) | Never => {}
             Ref(_, ty) | Ptr(_, ty) => stack.push(ty),
             Tuple(_) => todo!(),
         }
@@ -265,13 +271,8 @@ impl fmt::Debug for Ty<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.kind() {
             Bool => f.write_str("bool"),
-            Int(int) => match int {
-                IntTy::I8 => f.write_str("i8"),
-                IntTy::I16 => f.write_str("i16"),
-                IntTy::I32 => f.write_str("i32"),
-                IntTy::I64 => f.write_str("i64"),
-                IntTy::Isize => f.write_str("isize"),
-            },
+            Int(int) => f.write_str(int.name_str()),
+            Uint(int) => f.write_str(int.name_str()),
             Tuple(list) => {
                 if list.is_empty() {
                     f.write_str("@unit")

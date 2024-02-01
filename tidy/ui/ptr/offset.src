@@ -1,6 +1,6 @@
 // TODO: add intrinsics assert
 #[start]
-fn main(_: isize, _: *const *const i8) -> isize {
+fn main(_: isize, _: *const *const u8) -> isize {
     let x = &(12 as i32) as *const i32;
     (x.offset(1) == (x as isize + 8) as *const i32) as isize
 }

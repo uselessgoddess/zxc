@@ -2,7 +2,7 @@ use crate::mir::{ty, CastKind, Mutability, Ty};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IntTy {
-    U(ty::UintTy),
+    U,
     I,
     Bool,
 }
@@ -30,6 +30,7 @@ impl CastKind {
         match t.kind() {
             ty::Bool => Some(CastTy::Int(IntTy::Bool)),
             ty::Int(_) => Some(CastTy::Int(IntTy::I)),
+            ty::Uint(_) => Some(CastTy::Int(IntTy::U)),
             ty::Ptr(mutbl, ty) => Some(CastTy::Ptr(mutbl, ty)),
             _ => None,
         }

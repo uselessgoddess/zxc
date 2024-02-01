@@ -1,4 +1,4 @@
 #[start]
-fn main(argc: isize, _: *const *const i8) -> isize {
+fn main(argc: isize, _: *const *const u8) -> isize {
     (!0 != -1) as isize
 }

@@ -2,6 +2,7 @@ use {
     crate::{
         diagnostic,
         errors::Level::*,
+        hir,
         sess::{DiagnosticBuilder, Emission, Handler, IntoDiagnostic},
         symbol::{Ident, Symbol},
     },
@@ -242,6 +243,13 @@ diagnostic! {
     }
 }
 
-fn none() -> Option<String> {
-    None
+diagnostic! {
+    ["cannot apply unary operator `{}` to type {}", op, ty]
+    [code: E0013]
+    [primary(Note, span): "cannot apply unary operator `{}`", op]
+    pub struct CannotUnaryOp {
+        pub op: hir::UnOp,
+        pub ty: DiagnosticMessage,
+        pub span: Span,
+    }
 }

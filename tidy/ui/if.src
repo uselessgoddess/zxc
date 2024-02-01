@@ -1,5 +1,5 @@
 #[start]
-fn main(_: isize, _: *const *const i8) -> isize {
+fn main(_: isize, _: *const *const u8) -> isize {
 
     let _ = if true { 1 } else { 2 };
 

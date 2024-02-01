@@ -1,21 +1,18 @@
 use {
     crate::{
         mir::{
-            interpret::{self, InterpCx, InterpResult, Scalar, Value},
-            lint::errors::OverflowingLiterals,
+            interpret::{self, InterpCx, InterpResult, Value},
             pass::{errors::AssertLint, MirLint},
-            ty,
             visit::Visitor,
             AssertKind, BasicBlock, BinOp, Body, ConstValue, Local, Location, Operand, Place,
-            Rvalue, ScalarRepr, SourceInfo, Statement, StatementKind, Terminator, TerminatorKind,
-            Ty, UnOp, START_BLOCK,
+            Rvalue, SourceInfo, Statement, StatementKind, Terminator, TerminatorKind, Ty,
+            START_BLOCK,
         },
         BitSet, Tx,
     },
     abi::Integer,
-    lexer::Span,
-    lint::builtin,
     std::fmt::Debug,
+    Integer::*,
 };
 
 pub struct ConstPropLint;
@@ -82,46 +79,6 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
 
     fn report_assert(&self, source_info: &SourceInfo, lint: AssertLint<impl Debug>) {
         self.tcx.emit_spanned_lint(source_info.span, lint.lint(), lint);
-    }
-
-    fn check_overflowing_literals(
-        &mut self,
-        negated: bool,
-        ty: Ty<'tcx>,
-        repr: ScalarRepr,
-        location: Location,
-    ) {
-        fn from_int(tcx: Tx<'_>, ty: ty::IntTy) -> Integer {
-            use Integer::*;
-
-            match ty {
-                ty::IntTy::I8 => I8,
-                ty::IntTy::I16 => I16,
-                ty::IntTy::I32 => I32,
-                ty::IntTy::I64 => I64,
-                ty::IntTy::Isize => tcx.data_layout().ptr_sized_integer(),
-            }
-        }
-
-        let (min, max, ty) = match ty.kind() {
-            ty::Int(ty) => {
-                let size = from_int(self.tcx, ty).size();
-                (size.signed_int_min(), size.signed_int_max() as u128, ty.name_str())
-            }
-            _ => return,
-        };
-
-        let span = self.mir.source_info(location).span;
-        let lit =
-            self.tcx.sess.source_map().span_to_snippet(span).expect("must get snip from literal");
-
-        if (negated && repr.data > max + 1) || (!negated && repr.data > max) {
-            self.tcx.emit_spanned_lint(
-                span,
-                builtin::overflowing_literals,
-                OverflowingLiterals { ty, span, lit, min, max },
-            );
-        }
     }
 
     fn check_binary_op(
@@ -193,18 +150,6 @@ impl<'tcx> Visitor<'tcx> for ConstPropagator<'_, 'tcx> {
         self.super_assign(place, rvalue, location);
 
         self.check_rvalue(rvalue, location);
-    }
-
-    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
-        match rvalue {
-            Rvalue::Use(Operand::Const(ConstValue::Scalar(repr), ty)) => {
-                self.check_overflowing_literals(false, *ty, *repr, location)
-            }
-            Rvalue::UnaryOp(UnOp::Neg, Operand::Const(ConstValue::Scalar(repr), ty)) => {
-                self.check_overflowing_literals(true, *ty, *repr, location)
-            }
-            _ => {}
-        }
     }
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {

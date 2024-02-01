@@ -12,7 +12,7 @@ fn memset(ptr: *mut i8, len: isize, val: i8) {
 }
 
 #[start]
-fn main(_: isize, _: *const *const i8) -> isize {
+fn main(_: isize, _: *const *const u8) -> isize {
     let mut filled = 9223372036854775807 as i64; // 0b11...111;
 
     // llvm can match it at const-eval

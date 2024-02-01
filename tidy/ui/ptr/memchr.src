@@ -18,6 +18,6 @@ extern "C" {
 }
 
 #[start]
-fn main(_: isize, argv: *const *const i8) -> isize {
+fn main(_: isize, argv: *const *const u8) -> isize {
     memchr(*argv.offset(1), 65)
 }

@@ -4,7 +4,7 @@ use crate::{
     tcx::TyCtx,
 };
 
-use {Integer::*, Primitive::*};
+use {crate::mir::UintTy, Integer::*, Primitive::*};
 
 impl<'tcx> TyCtx<'tcx> {
     pub fn data_layout(&self) -> &TargetDataLayout {
@@ -46,6 +46,13 @@ impl<'tcx> TyCtx<'tcx> {
                     IntTy::I64 => scalar(Int(I64, true)),
                     IntTy::Isize => scalar(Int(dl.ptr_sized_integer(), true)),
                 },
+                ty::Uint(int) => match int {
+                    UintTy::U8 => scalar(Int(I8, false)),
+                    UintTy::U16 => scalar(Int(I16, false)),
+                    UintTy::U32 => scalar(Int(I32, false)),
+                    UintTy::U64 => scalar(Int(I64, false)),
+                    UintTy::Usize => scalar(Int(dl.ptr_sized_integer(), false)),
+                },
                 ty::Tuple(list) => {
                     if list.is_empty() {
                         zst_layout
@@ -76,9 +83,11 @@ impl<'tcx> TyCtx<'tcx> {
         let probe_abi = |_tcx, ty| ArgAbi {
             ty: self.layout_of(ty),
             mode: match ty.kind() {
-                TyKind::Bool | TyKind::Int(_) | TyKind::Ref(..) | TyKind::Ptr(..) => {
-                    PassMode::Direct
-                }
+                TyKind::Bool
+                | TyKind::Int(_)
+                | TyKind::Uint(_)
+                | TyKind::Ref(..)
+                | TyKind::Ptr(..) => PassMode::Direct,
                 TyKind::FnDef(_) | TyKind::Never => PassMode::Ignore,
                 TyKind::Tuple(types) => {
                     if types.is_empty() {

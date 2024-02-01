@@ -19,7 +19,7 @@ use crate::{
     mir::{
         self,
         ty::{self, List},
-        IntTy, Mutability, PlaceElem, Ty, TyKind,
+        IntTy, Mutability, PlaceElem, Ty, TyKind, UintTy,
     },
     par::{ShardedHashMap, WorkerLocal},
     sess::{output, ModuleType, OutputFilenames},
@@ -40,6 +40,11 @@ pub struct CommonTypes<'tcx> {
     pub i32: Ty<'tcx>,
     pub i64: Ty<'tcx>,
     pub isize: Ty<'tcx>,
+    pub u8: Ty<'tcx>,
+    pub u16: Ty<'tcx>,
+    pub u32: Ty<'tcx>,
+    pub u64: Ty<'tcx>,
+    pub usize: Ty<'tcx>,
 }
 
 impl<'tcx> CommonTypes<'tcx> {
@@ -58,6 +63,11 @@ impl<'tcx> CommonTypes<'tcx> {
             i32: mk(Int(IntTy::I32)),
             i64: mk(Int(IntTy::I64)),
             isize: mk(Int(IntTy::Isize)),
+            u8: mk(Uint(UintTy::U8)),
+            u16: mk(Uint(UintTy::U16)),
+            u32: mk(Uint(UintTy::U32)),
+            u64: mk(Uint(UintTy::U64)),
+            usize: mk(Uint(UintTy::Usize)),
         }
     }
 }
@@ -79,7 +89,7 @@ impl<'tcx> CommonSigs<'tcx> {
         };
         use Mutability::Not as Const;
         let argv = intern
-            .intern_ty(arena, ty::Ptr(Const, intern.intern_ty(arena, ty::Ptr(Const, types.i8))));
+            .intern_ty(arena, ty::Ptr(Const, intern.intern_ty(arena, ty::Ptr(Const, types.u8))));
         let inputs_and_output = intern.intern_type_list(arena, &[types.isize, argv, types.isize]);
         Self { main, start: mir::FnSig { inputs_and_output, abi: ty::Abi::Zxc } }
     }

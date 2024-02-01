@@ -234,9 +234,7 @@ impl<'mir, 'tcx> InterpCx<'mir, 'tcx> {
         }
 
         let size = left.size;
-        let signed = true;
-
-        if signed {
+        if left.layout.abi.is_signed() {
             let op: Option<fn(&i128, &i128) -> bool> = match bin_op {
                 Lt => Some(i128::lt),
                 Le => Some(i128::le),

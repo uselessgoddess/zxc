@@ -4,6 +4,7 @@ mod copy_prop;
 mod dump;
 mod errors;
 mod multiple_return;
+mod normalize;
 mod peep_simplify;
 mod simplify;
 mod simplify_branches;
@@ -83,6 +84,7 @@ impl<'tcx> HirCtx<'tcx> {
             return body;
         }
 
+        run_lowering_passes(self.tcx, &mut body);
         run_optimization_passes(self.tcx, &mut body);
 
         body
@@ -108,6 +110,19 @@ where
     }
 }
 
+fn run_lowering_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
+    run_required_passes(
+        tcx,
+        body,
+        &[
+            &Lint(const_prop_lint::ConstPropLint),
+            &Lint(normalize::NormalizeLiteralsLint),
+            &normalize::NormalizeLiterals,
+            // todo...
+        ],
+    )
+}
+
 fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
     fn o1<T>(x: T) -> WithMinOptLevel<T> {
         WithMinOptLevel(1, x)
@@ -117,8 +132,6 @@ fn run_optimization_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
         tcx,
         body,
         &[
-            &Lint(const_prop_lint::ConstPropLint),
-            //
             &o1(simplify::SimplifyCfg::EarlyOpt),
             &multiple_return::MultipleReturnTerminators,
             &peep_simplify::PeepSimplify,
@@ -151,6 +164,13 @@ fn run_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>, passes: &[&dyn MirPass
             continue;
         }
 
+        pass.run_pass(tcx, body);
+        body.pass_count += 1;
+    }
+}
+
+fn run_required_passes<'tcx>(tcx: Tx<'tcx>, body: &mut Body<'tcx>, passes: &[&dyn MirPass<'tcx>]) {
+    for pass in passes {
         pass.run_pass(tcx, body);
         body.pass_count += 1;
     }

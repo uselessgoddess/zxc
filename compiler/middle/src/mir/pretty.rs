@@ -79,7 +79,7 @@ pub trait Printer<'tcx>: fmt::Write + Sized {
         match ty.kind() {
             ty::Bool if int == mir::ScalarRepr::FALSE => p!("false"),
             ty::Bool if int == mir::ScalarRepr::TRUE => p!("true"),
-            ty::Int(_) => {
+            ty::Int(_) | ty::Uint(_) => {
                 let int = ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized());
                 p!(write("{:#?}", int))
             }
@@ -214,6 +214,7 @@ impl<'tcx> Printer<'tcx> for FmtPrinter<'_, 'tcx> {
         match ty.kind() {
             TyKind::Bool => p!("bool"),
             ty::Int(int) => p!(write("{}", int.name_str())),
+            ty::Uint(int) => p!(write("{}", int.name_str())),
             ty::Tuple(list) => {
                 if list.is_empty() {
                     p!("@unit")
