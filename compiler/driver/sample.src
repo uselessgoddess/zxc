@@ -1,8 +1,4 @@
-fn main() {
-    let x = 2147483646;
-    let y = 1 + 1;
-    let x = x + y;
-    let x = 1000 * 1000 * 1000 * 1000 * 1000;
-    let x = 2147483647 + 1 + 1 + 1 + 1;
-    let y = x + 10;
+#[start]
+fn main(argc: isize, _: *const *const i8) -> isize {
+    argc * 2
 }

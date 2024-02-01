@@ -394,4 +394,5 @@ supported_targets! {
     ("x86_64-pc-windows-gnu", x86_64_pc_windows_gnu),
     ("x86_64-pc-windows-msvc", x86_64_pc_windows_msvc),
     ("x86_64-unknown-linux-gnu", x86_64_unknown_linux_gnu),
+    ("aarch64-unknown-linux-gnu", aarch64_unknown_linux_gnu),
 }
