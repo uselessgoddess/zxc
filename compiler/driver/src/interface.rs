@@ -1,6 +1,6 @@
 use {
     middle::{
-        errors::SourceMap,
+        errors::{EarlyErrorHandler, SourceMap},
         par,
         rayon::ThreadPoolBuilder,
         sess::{self, CompilerIO, Options},
@@ -44,12 +44,17 @@ pub fn run_thread_pool_with_globals<F: FnOnce() -> R + Send, R: Send>(threads: u
         .unwrap()
 }
 
-pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Send) -> R {
+pub fn run_compiler<R: Send>(
+    early: &EarlyErrorHandler,
+    config: Config,
+    f: impl FnOnce(&Compiler) -> R + Send,
+) -> R {
     let temps_dir = config.opts.Z.temps_dir.as_deref().map(PathBuf::from);
 
     run_thread_pool_with_globals(config.opts.Z.threads, || {
         f(&Compiler {
             sess: Arc::new(sess::build_session(
+                early,
                 config.opts,
                 CompilerIO {
                     input: config.input,

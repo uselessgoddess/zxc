@@ -26,13 +26,13 @@ pub struct Args {
     #[arg(short)]
     pub output: Option<PathBuf>,
 
-    #[arg(long = "out-dir")]
+    #[arg(long = "out-dir", value_name = "OUTPUT")]
     pub output_dir: Option<PathBuf>,
 
     #[arg(long = "color", value_name = "WHEN")]
     pub color: Option<Color>,
 
-    /// Target triple for which the code is compiled
+    /// target triple for which the code is compiled
     #[arg(long = "target")]
     pub target: Option<String>,
 

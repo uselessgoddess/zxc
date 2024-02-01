@@ -85,12 +85,24 @@ pub fn linker_and_flavor(sess: &Session) -> (PathBuf, LinkerFlavor) {
         }
     }
 
-    if let Some(ret) = infer_from(
+    if let Some(ret @ (_, flavor)) = infer_from(
         sess,
         sess.target.linker.as_deref().map(PathBuf::from),
         Some(sess.target.linker_flavor),
     ) {
-        return ret;
+        let (lld, gnu) = (flavor.lld_flavor(), flavor.is_gnu());
+        // TODO: possible to be split into `Cli` and `Flavor` parts
+        //  to allow early error returning when parsing `-C` options
+        let flavor = sess.opts.C.linker_flavor.as_ref().map(|s| {
+            LinkerFlavor::infer_from_str(s, lld, gnu).unwrap_or_else(|| {
+                // TODO: use diagnostic builder instead of manually `\n`
+                sess.fatal(format!(
+                    "incorrect value `{s}` for `linker-flavor`,\n expected {}",
+                    LinkerFlavor::one_of()
+                ))
+            })
+        });
+        return infer_from(sess, sess.opts.C.linker.clone(), flavor).unwrap_or(ret);
     }
 
     panic!("Not enough information provided to determine how to invoke the linker");

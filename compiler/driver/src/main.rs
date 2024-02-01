@@ -306,7 +306,7 @@ fn main() {
     }
     println!("{config:#?}");
 
-    interface::run_compiler(config, |compiler| {
+    interface::run_compiler(&early, config, |compiler| {
         if let Err(err) = driver(&early, compiler, source_map) {
             if let Error::Error(err) = err {
                 early.early_error(err.to_string())

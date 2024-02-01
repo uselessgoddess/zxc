@@ -186,8 +186,8 @@ options! {
 options! {
     CodegenOptions, C_OPTIONS, copts,
 
-    linker: Option<PathBuf> = (None, parse_opt_pathbuf,
-        "system linker to link outputs with"),
+    linker: Option<PathBuf> = (None, parse_opt_pathbuf, "system linker to link outputs with"),
+    linker_flavor: Option<String> = (None, parse_opt_string, "linker flavor"),
     opt_level: OptLevel = (OptLevel::No, parse_opt_level,
         "optimization level (0-3, s, or z; default: 0)"),
     mir_opt_level: Option<usize> = (None, parse_opt_number,
@@ -372,16 +372,17 @@ pub struct CompilerIO {
     pub temps_dir: Option<PathBuf>,
 }
 
-pub fn build_session(opts: Options, io: CompilerIO, sm: Arc<SourceMap>) -> Session {
+pub fn build_session(
+    early: &EarlyErrorHandler,
+    opts: Options,
+    io: CompilerIO,
+    sm: Arc<SourceMap>,
+) -> Session {
     let host = Target::expect_builtin(&host_triple()).unwrap();
+    let target = Target::expect_builtin(&opts.triple).unwrap_or_else(|| {
+        early.early_error(format!("failed to to learn about target `{}`", opts.triple))
+    });
 
     let emitter = Box::new(EmitterWriter::stderr(Some(sm.clone())));
-    Session {
-        target: host.clone(),
-        host,
-        opts,
-        io,
-        source_map: sm,
-        handler: Handler::with_emitter(emitter),
-    }
+    Session { target, host, opts, io, source_map: sm, handler: Handler::with_emitter(emitter) }
 }

@@ -28,6 +28,43 @@ pub enum LinkerFlavor {
     Msvc(Lld),
 }
 
+macro_rules! linker_flavor_infer {
+    (($lld:ident, $gnu:ident) { $($string:literal => $flavor:expr)* }) => (
+        impl LinkerFlavor {
+            pub const fn one_of() -> &'static str {
+                concat!("one of: ", $("`", $string, "` ",)*)
+            }
+
+            pub fn infer_from_str(s: &str, $lld: LldFlavor, $gnu: bool) -> Option<Self> {
+                Some(match s {
+                    $($string => $flavor,)*
+                    _ => return None,
+                })
+            }
+        }
+    )
+}
+
+linker_flavor_infer! { (lld, gnu) {
+    "gnu" => LinkerFlavor::Gnu(Cc::No, Lld::No)
+    "gnu-lld" => LinkerFlavor::Gnu(Cc::No, Lld::Yes)
+    "gnu-cc" =>  LinkerFlavor::Gnu(Cc::Yes, Lld::No)
+    "gnu-lld-cc" => LinkerFlavor::Gnu(Cc::Yes, Lld::Yes)
+    "msvc" => LinkerFlavor::Msvc(Lld::No)
+    "msvc-lld" => LinkerFlavor::Msvc(Lld::Yes)
+
+    "gcc" => match lld {
+        LldFlavor::Ld if gnu => LinkerFlavor::Gnu(Cc::No, Lld::No),
+        _ => unreachable!(),
+    }
+    "ld" => match lld {
+        LldFlavor::Ld if gnu => LinkerFlavor::Gnu(Cc::No, Lld::No),
+        _ => unreachable!(),
+    }
+    "ld.lld" => LinkerFlavor::Gnu(Cc::No, Lld::Yes)
+    "lld-link" => LinkerFlavor::Msvc(Lld::Yes)
+}}
+
 impl LinkerFlavor {
     pub fn lld_flavor(self) -> LldFlavor {
         match self {
@@ -39,6 +76,40 @@ impl LinkerFlavor {
     pub fn is_gnu(&self) -> bool {
         matches!(self, LinkerFlavor::Gnu(..))
     }
+
+    //fn infer_cli_hints(cli: LinkerFlavorCli) -> (Option<Cc>, Option<Lld>) {
+    //    match cli {
+    //        LinkerFlavorCli::Gnu(cc, lld) | LinkerFlavorCli::Darwin(cc, lld) => {
+    //            (Some(cc), Some(lld))
+    //        }
+    //        LinkerFlavorCli::WasmLld(cc) => (Some(cc), Some(Lld::Yes)),
+    //        LinkerFlavorCli::Unix(cc) => (Some(cc), None),
+    //        LinkerFlavorCli::Msvc(lld) => (Some(Cc::No), Some(lld)),
+    //        LinkerFlavorCli::EmCc => (Some(Cc::Yes), Some(Lld::Yes)),
+    //        LinkerFlavorCli::Bpf | LinkerFlavorCli::Ptx => (None, None),
+    //
+    //        // Below: legacy stable values
+    //        LinkerFlavorCli::Gcc => (Some(Cc::Yes), None),
+    //        LinkerFlavorCli::Ld => (Some(Cc::No), Some(Lld::No)),
+    //        LinkerFlavorCli::Lld(_) => (Some(Cc::No), Some(Lld::Yes)),
+    //        LinkerFlavorCli::Em => (Some(Cc::Yes), Some(Lld::Yes)),
+    //    }
+    //}
+    //
+    //fn with_hints(self, (cc_hint, lld_hint): (Option<Cc>, Option<Lld>)) -> LinkerFlavor {
+    //    match self {
+    //        LinkerFlavor::Gnu(cc, lld) => {
+    //            LinkerFlavor::Gnu(cc_hint.unwrap_or(cc), lld_hint.unwrap_or(lld))
+    //        }
+    //        LinkerFlavor::Darwin(cc, lld) => {
+    //            LinkerFlavor::Darwin(cc_hint.unwrap_or(cc), lld_hint.unwrap_or(lld))
+    //        }
+    //        LinkerFlavor::WasmLld(cc) => LinkerFlavor::WasmLld(cc_hint.unwrap_or(cc)),
+    //        LinkerFlavor::Unix(cc) => LinkerFlavor::Unix(cc_hint.unwrap_or(cc)),
+    //        LinkerFlavor::Msvc(lld) => LinkerFlavor::Msvc(lld_hint.unwrap_or(lld)),
+    //        LinkerFlavor::EmCc | LinkerFlavor::Bpf | LinkerFlavor::Ptx => self,
+    //    }
+    //}
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -322,4 +393,5 @@ macro_rules! supported_targets {
 supported_targets! {
     ("x86_64-pc-windows-gnu", x86_64_pc_windows_gnu),
     ("x86_64-pc-windows-msvc", x86_64_pc_windows_msvc),
+    ("x86_64-unknown-linux-gnu", x86_64_unknown_linux_gnu),
 }
