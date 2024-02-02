@@ -9,7 +9,7 @@ use {
         abi::{PassMode, TyAbi},
         mir::{
             self, cast::CastTy, ty, BasicBlockData, CastKind, Instance, InstanceDef, Operand,
-            PlaceElem, Rvalue, Statement, StatementKind, TerminatorKind, Ty, UnOp,
+            PlaceElem, PlaceRef, Rvalue, Statement, StatementKind, TerminatorKind, Ty, UnOp,
         },
         BitSet,
     },
@@ -17,12 +17,12 @@ use {
 };
 
 impl<'a, 'll, 'tcx> FunctionCx<'a, 'll, 'tcx> {
-    fn probe_direct_consume(&mut self, place: mir::Place<'tcx>) -> Option<LValue<'ll, 'tcx>> {
+    fn probe_direct_consume(&mut self, place: PlaceRef<'tcx>) -> Option<LValue<'ll, 'tcx>> {
         match self.locals[place.local] {
             LLocal::Value(val) => {
                 // Moves out of scalar and scalar pair fields are trivial.
                 for _ in place.projection {
-                    panic!();
+                    return None;
                 }
 
                 Some(val)
@@ -34,7 +34,7 @@ impl<'a, 'll, 'tcx> FunctionCx<'a, 'll, 'tcx> {
         }
     }
 
-    pub fn codegen_consume(&mut self, place: mir::Place<'tcx>) -> LValue<'ll, 'tcx> {
+    pub fn codegen_consume(&mut self, place: PlaceRef<'tcx>) -> LValue<'ll, 'tcx> {
         let tcx = self.cx.tcx;
 
         let ty = place.ty(tcx, &self.mir.local_decls);
@@ -79,19 +79,27 @@ impl<'ll, 'tcx> LLocal<'ll, 'tcx> {
 
 fn codegen_place<'ll, 'tcx>(
     fx: &mut FunctionCx<'_, 'll, 'tcx>,
-    place: mir::Place<'tcx>,
+    place: PlaceRef<'tcx>,
 ) -> LPlace<'ll, 'tcx> {
+    let mut consumed = 0;
     let mut lplace = match fx.local_place(place.local) {
         LLocal::Place(place) => place,
         LLocal::Value(_) => {
-            panic!("using operand local {place:?} as place")
+            if place.is_indirect_first() {
+                consumed = 1;
+                let base =
+                    fx.codegen_consume(PlaceRef { projection: &place.projection[..0], ..place });
+                base.deref(fx)
+            } else {
+                panic!("using operand local {place:?} as place")
+            }
         }
         LLocal::Pending => {
             panic!("using still-pending operand local {place:?} as place")
         }
     };
 
-    for elem in place.projection {
+    for elem in &place.projection[consumed..] {
         match elem {
             PlaceElem::Deref => {
                 lplace = lplace.load_lvalue(fx).deref(fx);
@@ -108,12 +116,12 @@ fn codegen_operand<'ll, 'tcx>(
     operand: Operand<'tcx>,
 ) -> LValue<'ll, 'tcx> {
     match operand {
-        Operand::Copy(place) => fx.codegen_consume(place),
+        Operand::Copy(place) => fx.codegen_consume(place.as_ref()),
         Operand::Const(const_, ty) => LValue::from_const(fx, const_, ty),
     }
 }
 
-fn is_produce_operand<'tcx>(fx: &FunctionCx<'_, '_, 'tcx>, rvalue: Rvalue<'tcx>) -> bool {
+fn is_rvalue_produce_operand<'tcx>(fx: &FunctionCx<'_, '_, 'tcx>, rvalue: Rvalue<'tcx>) -> bool {
     true
 }
 
@@ -122,7 +130,7 @@ fn codegen_rvalue<'ll, 'tcx>(
     place: LPlace<'ll, 'tcx>,
     rvalue: Rvalue<'tcx>,
 ) {
-    assert!(is_produce_operand(fx, rvalue));
+    assert!(is_rvalue_produce_operand(fx, rvalue));
 
     let temp = codegen_rvalue_operand(fx, rvalue);
     place.store_lvalue(fx, temp);
@@ -138,7 +146,7 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
         Rvalue::Use(operand) => codegen_operand(fx, operand),
         Rvalue::UseDeref(_) => todo!(),
         Rvalue::Ref(mutbl, place) => {
-            let place = codegen_place(fx, place);
+            let place = codegen_place(fx, place.as_ref());
             let ty = place.layout.ty;
             LValue {
                 repr: LValueRepr::ByVal(place.llval),
@@ -146,7 +154,7 @@ fn codegen_rvalue_operand<'ll, 'tcx>(
             }
         }
         Rvalue::AddrOf(mutbl, place) => {
-            let place = codegen_place(fx, place);
+            let place = codegen_place(fx, place.as_ref());
             let ty = place.layout.ty;
             LValue {
                 repr: LValueRepr::ByVal(place.llval),
@@ -229,7 +237,7 @@ fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, stmt: &Statement<'tcx>)
                     }
                 }
             } else {
-                let place = codegen_place(fx, dest);
+                let place = codegen_place(fx, dest.as_ref());
                 codegen_rvalue(fx, place, rvalue);
             }
         }
@@ -249,7 +257,7 @@ fn codegen_return_terminator(fx: &mut FunctionCx<'_, '_, '_>) {
             fx.bcx.ret_void();
             return;
         }
-        PassMode::Direct => fx.codegen_consume(mir::Place::return_place()).load_scalar(),
+        PassMode::Direct => fx.codegen_consume(mir::Place::return_place().as_ref()).load_scalar(),
     };
     fx.bcx.ret(llval);
 }

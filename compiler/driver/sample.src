@@ -1,6 +1,8 @@
 #[start]
 fn main(argc: isize, ptr: *const *const u8) -> isize {
-    let a = -123 as i8;
-    let b = 133 as u8;
-    a as isize + b as isize
+    if argc == 0 {
+        ptr as isize
+    } else {
+        *ptr as isize
+    }
 }

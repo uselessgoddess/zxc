@@ -16,7 +16,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyConstCondition {
     }
 
     fn run_pass(&self, _: Tx<'tcx>, body: &mut Body<'tcx>) {
-        for block in &mut body.basic_blocks {
+        for block in body.basic_blocks.as_mut() {
             let terminator = block.terminator_mut();
 
             terminator.kind = match terminator.kind {

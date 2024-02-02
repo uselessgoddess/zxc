@@ -16,7 +16,7 @@ impl<'tcx> MirPass<'tcx> for PeepSimplify {
     fn run_pass(&self, tcx: Tx<'tcx>, body: &mut Body<'tcx>) {
         let ctx = SimplifyContext { tcx, local_decls: &body.local_decls };
 
-        for block in &mut body.basic_blocks {
+        for block in body.basic_blocks.as_mut() {
             for statement in block.statements.iter_mut() {
                 if let StatementKind::Assign(_, rvalue) = &mut statement.kind {
                     ctx.simplify_bool_cmp(rvalue);

@@ -20,7 +20,7 @@ impl<'tcx> MirPass<'tcx> for ConstGoto {
         let should_simplify = !finder.optimizations.is_empty();
 
         for opt in finder.optimizations {
-            let block = &mut body.basic_blocks[opt.bb_with_goto];
+            let block = &mut body.basic_blocks.as_mut()[opt.bb_with_goto];
             block.statements.extend(opt.stmts_move_up);
             block.terminator_mut().kind =
                 TerminatorKind::Goto { target: opt.target_to_use_in_goto };

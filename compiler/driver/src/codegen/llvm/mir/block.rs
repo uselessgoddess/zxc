@@ -62,7 +62,7 @@ fn codegen_ret_dest<'ll, 'tcx>(
             LLocal::Place(dest) => dest,
         }
     } else {
-        super::codegen_place(fx, dest)
+        super::codegen_place(fx, dest.as_ref())
     };
 
     RetDest::Store(dest)

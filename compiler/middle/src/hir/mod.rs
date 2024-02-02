@@ -397,14 +397,14 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
         // note that the index of the next block is returned here.
         // Since this is usually what is interesting when we are guaranteed
         // to end a block with a terminator
-        self.body.basic_blocks.push(block) + 1
+        self.body.basic_blocks.as_mut().push(block) + 1
     }
 
     pub fn end_of_block_dummy(&mut self) -> mir::BasicBlock {
         self.block.terminator = None;
 
         let block = mem::take(&mut self.block);
-        self.body.basic_blocks.push(block)
+        self.body.basic_blocks.as_mut().push(block)
     }
 
     pub fn current_block(&self) -> mir::BasicBlock {
@@ -609,7 +609,7 @@ fn analyze_branch_expr<'hir>(
         acx.end_of_block(else_ty.span, TerminatorKind::Goto { target: next_block });
 
         let source_info = SourceInfo { span: then_ty.span };
-        acx.body.basic_blocks[then_block].terminator =
+        acx.body.basic_blocks.as_mut()[then_block].terminator =
             Some(Terminator { source_info, kind: TerminatorKind::Goto { target: next_block } });
 
         // Safety: we do not create zst constants if the expression type is reduced to `never'
@@ -625,7 +625,7 @@ fn analyze_branch_expr<'hir>(
         ret_ty.span = merge_span(else_ty.span, then_ty.span);
 
         let source_info = SourceInfo { span: cond.span };
-        acx.body.basic_blocks[cond_block].terminator = Some(Terminator {
+        acx.body.basic_blocks.as_mut()[cond_block].terminator = Some(Terminator {
             source_info,
             kind: TerminatorKind::SwitchInt {
                 discr,
@@ -983,7 +983,7 @@ fn analyze_expr<'hir>(
                             }
 
                             let source_info = SourceInfo { span: break_ty.span };
-                            acx.body.basic_blocks[bb].statements.push(Statement {
+                            acx.body.basic_blocks.as_mut()[bb].statements.push(Statement {
                                 source_info,
                                 kind: StatementKind::Assign(break_place, Rvalue::Use(operand)),
                             });
@@ -994,7 +994,7 @@ fn analyze_expr<'hir>(
                         if let Some(infer) = infer {
                             acx.body.local_decls[break_place.local].ty = infer.kind;
                         }
-                        acx.body.basic_blocks[bb].terminator = Some(Terminator {
+                        acx.body.basic_blocks.as_mut()[bb].terminator = Some(Terminator {
                             source_info: SourceInfo { span: Span::splat(0) }, // TODO: provide span
                             kind: TerminatorKind::Goto { target: exit },
                         })

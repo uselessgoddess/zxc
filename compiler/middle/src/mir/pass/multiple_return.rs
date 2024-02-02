@@ -23,7 +23,7 @@ impl<'tcx> MirPass<'tcx> for MultipleReturnTerminators {
             }
         }
 
-        for bb in bbs {
+        for bb in bbs.as_mut() {
             if let TerminatorKind::Goto { target } = bb.terminator().kind {
                 if bbs_simple_returns.contains(target) {
                     bb.terminator_mut().kind = TerminatorKind::Return;

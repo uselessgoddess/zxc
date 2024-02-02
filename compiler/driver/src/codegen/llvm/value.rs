@@ -114,7 +114,7 @@ pub struct LPlace<'ll, 'tcx> {
     pub align: Align,
 }
 
-fn is_llvm_immediate(layout: abi::Layout<'_>) -> bool {
+pub fn is_llvm_immediate(layout: abi::Layout<'_>) -> bool {
     match layout.abi {
         Abi::Scalar(_) => true,
         Abi::Uninhabited | Abi::Aggregate => false,

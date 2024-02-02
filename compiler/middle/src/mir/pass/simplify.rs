@@ -102,7 +102,7 @@ pub fn remove_dead_blocks(body: &mut Body<'_>) {
     let mut replacements: Vec<_> = (0..num_blocks).map(BasicBlock::new).collect();
     let mut orig_index = 0;
     let mut used_index = 0;
-    basic_blocks.raw.retain(|_| {
+    basic_blocks.as_mut().raw.retain(|_| {
         let keep = reachable.contains(BasicBlock::new(orig_index));
         if keep {
             replacements[orig_index] = BasicBlock::new(used_index);
@@ -112,7 +112,7 @@ pub fn remove_dead_blocks(body: &mut Body<'_>) {
         keep
     });
 
-    for block in basic_blocks {
+    for block in basic_blocks.as_mut() {
         for target in block.terminator_mut().successors_mut() {
             *target = replacements[target.index()];
         }
@@ -141,7 +141,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
         }
 
         let basic_blocks = &mut body.basic_blocks;
-        CfgSimplifier { basic_blocks, pred_count }
+        CfgSimplifier { basic_blocks: basic_blocks.as_mut(), pred_count }
     }
 
     fn strip_nops(&mut self) {
@@ -401,7 +401,7 @@ fn remove_unused_definitions_helper(used_locals: &mut UsedLocals, body: &mut Bod
     while modified {
         modified = false;
 
-        for data in &mut body.basic_blocks {
+        for data in body.basic_blocks.as_mut() {
             data.statements.retain(|statement| {
                 let keep = match statement.kind {
                     StatementKind::Assign(place, _) => used_locals.is_used(place.local),

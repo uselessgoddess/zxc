@@ -15,6 +15,7 @@ pub mod lint {
 
 use {
     crate::{
+        graph::Dominators,
         hir::{self, attr},
         idx, Symbol, Tx,
     },
@@ -26,9 +27,10 @@ pub use {
     pass::MirPass,
     pretty::{write_mir_body_pretty, write_mir_pretty},
     syntax::{
-        AssertKind, BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, Local,
-        LocalDecl, LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue, ScalarRepr,
-        SourceInfo, Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp,
+        AssertKind, BasicBlock, BasicBlockData, BinOp, Body, CastKind, ConstValue, DefLocation,
+        Local, LocalDecl, LocalDecls, Mutability, Operand, Place, PlaceElem, PlaceRef, Rvalue,
+        ScalarRepr, SourceInfo, Statement, StatementKind, SwitchTargets, Terminator,
+        TerminatorKind, UnOp,
     },
     ty::{cast, FnSig, Infer, InferId, IntTy, Ty, TyKind, UintTy},
 };
@@ -79,6 +81,18 @@ pub struct Location {
 
 impl Location {
     pub const START: Location = Location { block: START_BLOCK, statement_index: 0 };
+
+    pub fn successor_within_block(&self) -> Location {
+        Location { block: self.block, statement_index: self.statement_index + 1 }
+    }
+
+    pub fn dominates(&self, other: Location, dominators: &Dominators<BasicBlock>) -> bool {
+        if self.block == other.block {
+            self.statement_index <= other.statement_index
+        } else {
+            dominators.dominates(self.block, other.block)
+        }
+    }
 }
 
 impl fmt::Debug for Location {

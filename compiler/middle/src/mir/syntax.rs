@@ -1,10 +1,11 @@
 use {
     crate::{
         abi::Size,
+        graph::{self, dominators, Dominators},
         hir,
         idx::{self, IndexVec},
-        mir::{ty::List, Location, Ty, RETURN_PLACE},
-        Tx,
+        mir::{traversal::Postorder, ty::List, Location, Ty, RETURN_PLACE, START_BLOCK},
+        IndexSlice, Tx,
     },
     lexer::Span,
     smallvec::{smallvec, SmallVec},
@@ -13,6 +14,7 @@ use {
         fmt::{self, Formatter},
         iter,
         num::NonZeroU8,
+        ops::Deref,
         slice,
     },
 };
@@ -220,7 +222,11 @@ impl<'tcx> Place<'tcx> {
     }
 
     pub fn is_indirect(&self) -> bool {
-        self.projection.iter().any(|elem| elem.is_indirect())
+        self.as_ref().is_indirect()
+    }
+
+    pub fn is_indirect_first(&self) -> bool {
+        self.as_ref().is_indirect_first()
     }
 
     pub fn as_deref(&self) -> Option<Local> {
@@ -238,9 +244,13 @@ impl<'tcx> Place<'tcx> {
     pub fn ty(&self, tcx: Tx<'tcx>, local_decls: &LocalDecls<'tcx>) -> Ty<'tcx> {
         self.as_ref().ty(tcx, local_decls)
     }
+
+    pub fn last_projection(&self) -> Option<(PlaceRef<'tcx>, PlaceElem<'tcx>)> {
+        self.as_ref().last_projection()
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlaceRef<'tcx> {
     pub local: Local,
     pub projection: &'tcx [PlaceElem<'tcx>],
@@ -300,7 +310,7 @@ impl<'tcx> PlaceRef<'tcx> {
             .fold(local_decls[self.local].ty, |ty, &elem| Self::projection_ty(tcx, ty, elem))
     }
 
-    fn projection_ty(_tcx: Tx<'tcx>, ty: Ty<'tcx>, elem: PlaceElem<'tcx>) -> Ty<'tcx> {
+    pub fn projection_ty(_tcx: Tx<'tcx>, ty: Ty<'tcx>, elem: PlaceElem<'tcx>) -> Ty<'tcx> {
         match elem {
             PlaceElem::Deref => {
                 ty.builtin_deref(true)
@@ -311,6 +321,25 @@ impl<'tcx> PlaceRef<'tcx> {
             }
             PlaceElem::Subtype(ty) => ty,
         }
+    }
+
+    #[inline]
+    pub fn last_projection(&self) -> Option<(PlaceRef<'tcx>, PlaceElem<'tcx>)> {
+        if let &[ref proj_base @ .., elem] = self.projection {
+            Some((PlaceRef { local: self.local, projection: proj_base }, elem))
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn is_indirect(&self) -> bool {
+        self.projection.iter().any(|elem| elem.is_indirect())
+    }
+
+    #[inline]
+    pub fn is_indirect_first(&self) -> bool {
+        self.projection.first() == Some(&PlaceElem::Deref)
     }
 }
 
@@ -657,8 +686,117 @@ pub struct LocalDecl<'tcx> {
 pub type LocalDecls<'tcx> = IndexVec<Local, LocalDecl<'tcx>>;
 
 #[derive(Debug, Clone, Default)]
+pub struct BasicBlocks<'tcx> {
+    basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
+}
+
+pub type Predecessors = IndexVec<BasicBlock, SmallVec<BasicBlock, 4>>;
+
+impl<'tcx> BasicBlocks<'tcx> {
+    #[inline]
+    pub fn new(basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>) -> Self {
+        BasicBlocks { basic_blocks }
+    }
+
+    #[inline]
+    pub fn predecessors(&self) -> Predecessors {
+        let mut preds = IndexVec::from_elem(SmallVec::new(), &self.basic_blocks);
+        for (bb, data) in self.basic_blocks.iter_enumerated() {
+            if let Some(term) = &data.terminator {
+                for succ in term.successors() {
+                    preds[succ].push(bb);
+                }
+            }
+        }
+        preds
+    }
+
+    pub fn dominators(&self) -> Dominators<BasicBlock> {
+        dominators(self)
+    }
+
+    #[inline]
+    pub fn reverse_postorder(&self) -> Vec<BasicBlock> {
+        let mut rpo: Vec<_> = Postorder::new(&self.basic_blocks, START_BLOCK).collect();
+        rpo.reverse();
+        rpo
+    }
+
+    #[inline]
+    pub fn as_mut(&mut self) -> &mut IndexVec<BasicBlock, BasicBlockData<'tcx>> {
+        &mut self.basic_blocks
+    }
+}
+
+impl<'tcx> Deref for BasicBlocks<'tcx> {
+    type Target = IndexSlice<BasicBlock, BasicBlockData<'tcx>>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.basic_blocks
+    }
+}
+
+impl<'tcx> graph::DirectedGraph for BasicBlocks<'tcx> {
+    type Node = BasicBlock;
+}
+
+impl<'tcx> graph::WithNumNodes for BasicBlocks<'tcx> {
+    #[inline]
+    fn num_nodes(&self) -> usize {
+        self.basic_blocks.len()
+    }
+}
+
+impl<'tcx> graph::WithStartNode for BasicBlocks<'tcx> {
+    #[inline]
+    fn start_node(&self) -> Self::Node {
+        START_BLOCK
+    }
+}
+
+impl<'tcx> graph::WithSuccessors for BasicBlocks<'tcx> {
+    #[inline]
+    fn successors(&self, node: Self::Node) -> <Self as graph::GraphSuccessors<'_>>::Iter {
+        self.basic_blocks[node].terminator().successors()
+    }
+}
+
+impl<'a, 'b> graph::GraphSuccessors<'b> for BasicBlocks<'a> {
+    type Item = BasicBlock;
+    type Iter = Successors<'b>;
+}
+
+impl<'tcx, 'graph> graph::GraphPredecessors<'graph> for BasicBlocks<'tcx> {
+    type Item = BasicBlock;
+    type Iter = smallvec::IntoIter<BasicBlock, 4>;
+}
+
+impl<'tcx> graph::WithPredecessors for BasicBlocks<'tcx> {
+    #[inline]
+    fn predecessors(&self, node: Self::Node) -> <Self as graph::GraphPredecessors<'_>>::Iter {
+        self.predecessors()[node].clone().into_iter()
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DefLocation {
+    Argument,
+    Body(Location),
+}
+
+impl DefLocation {
+    pub fn dominates(self, location: Location, dominators: &Dominators<BasicBlock>) -> bool {
+        match self {
+            DefLocation::Argument => true,
+            DefLocation::Body(def) => def.successor_within_block().dominates(location, dominators),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct Body<'tcx> {
-    pub basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
+    pub basic_blocks: BasicBlocks<'tcx>,
     pub local_decls: LocalDecls<'tcx>,
     pub argc: usize,
     pub pass_count: usize,

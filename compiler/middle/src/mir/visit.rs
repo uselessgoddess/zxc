@@ -365,11 +365,11 @@ macro_rules! make_mir_visitor {
 
 macro_rules! basic_blocks {
     ($body:ident, mut, true) => {
-        (&mut $body.basic_blocks)
+        ($body.basic_blocks.as_mut())
     };
     ($body:ident, mut, false) => {
         // TODO: .as_mut_preserves_cfg()
-        (&mut $body.basic_blocks)
+        ($body.basic_blocks.as_mut())
     };
     ($body:ident,) => {
         $body.basic_blocks

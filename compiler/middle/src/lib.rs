@@ -15,7 +15,9 @@
     const_option,
     box_patterns,
     never_type,
-    negative_impls
+    negative_impls,
+    array_windows,
+    step_trait
 )]
 #![feature(assert_matches)]
 #![allow(clippy::unit_arg, clippy::missing_safety_doc, clippy::should_implement_trait)]
@@ -32,6 +34,7 @@ mod fx;
 #[allow(clippy::all, dead_code)]
 mod idx; // inspired from rustc_index
 
+pub mod graph;
 pub(crate) mod index;
 pub mod lints;
 mod man;

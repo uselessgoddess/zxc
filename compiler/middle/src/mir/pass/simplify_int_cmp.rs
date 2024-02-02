@@ -17,7 +17,7 @@ impl<'tcx> MirPass<'tcx> for SimplifyIntegralCond {
         let opts = OptimizationFinder { body }.find_optimizations();
 
         for OptInfo { op, cond, bb, branch: (scalar, ty), switch_on, mut targets } in opts {
-            let bb = &mut body.basic_blocks[bb];
+            let bb = &mut body.basic_blocks.as_mut()[bb];
             let new_branch = { scalar.assert_bits(tcx.layout_of(ty).layout.size) };
 
             let first_is_zero = targets.values[0] == 0;
