@@ -8,6 +8,18 @@ pub fn compute_symbol_name(hix: Hx<'_>, def: DefId) -> String {
         return name;
     }
 
+    let mut mods = Vec::new();
+
+    let mut root = Some(hix.instances[def].parent);
+    while let Some(mod_id) = root
+        && let name = hix.mods[mod_id].name.as_str()
+    {
+        mods.push(name);
+        root = hix.mods[mod_id].parent;
+    }
+
+    let mods =
+        mods.into_iter().rev().fold(String::new(), |buf, seg| buf + &format!("{}{seg}", seg.len()));
     // very simple mangling
-    format!("_Z{name}")
+    format!("_Z{mods}{name}")
 }

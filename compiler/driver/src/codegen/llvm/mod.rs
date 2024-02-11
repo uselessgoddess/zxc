@@ -99,12 +99,11 @@ pub struct OngoingCodegen {
 }
 
 fn driver<'tcx>(hix: Hx<'tcx>, cgus: Vec<CodegenUnit<'tcx>>) -> OngoingCodegen {
-    let cgu = cgus.into_iter().next().unwrap();
-
     let target_cpu = hix.tcx.sess.target.cpu.to_string();
-    let module = base::compile_codegen_unit(hix, cgu);
-
-    OngoingCodegen { modules: vec![module], info: ModuleInfo::new(hix.tcx, target_cpu) }
+    OngoingCodegen {
+        modules: cgus.into_iter().map(|cgu| compile_codegen_unit(hix, cgu)).collect(),
+        info: ModuleInfo::new(hix.tcx, target_cpu),
+    }
 }
 
 pub fn copy_to_stdout(from: &Path) -> io::Result<()> {

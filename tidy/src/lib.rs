@@ -34,4 +34,9 @@ fn ui() {
     {
         t.compile_fail("ui/lints/arithmetic_overflow.src");
     }
+
+    {
+        t.pass("ui/mods/mod.src");
+        t.compile_fail("ui/mods/pub.src");
+    }
 }

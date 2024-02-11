@@ -3,8 +3,29 @@ use crate::{
     lexer::{Ident, LitStr},
     parenthesized,
     parse::{self, Block, Parse, ParseBuffer, Punctuated, Type},
-    token, Attribute, Token,
+    token, Attribute, Span, Token,
 };
+
+#[derive(Debug, Clone)]
+pub enum Visibility {
+    Public(Token![pub]),
+    Inherit,
+}
+
+impl Visibility {
+    pub(crate) fn opt_span(&self) -> Option<Span> {
+        match self {
+            Visibility::Public(token) => Some(token.span),
+            Visibility::Inherit => None,
+        }
+    }
+}
+
+impl<'lex> Parse<'lex> for Visibility {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        Ok(if input.peek(Token![pub]) { Self::Public(input.parse()?) } else { Self::Inherit })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Abi<'lex> {
@@ -88,6 +109,7 @@ impl<'lex> Parse<'lex> for Signature<'lex> {
 #[derive(Debug)]
 pub struct ItemFn<'lex> {
     pub attrs: Vec<Attribute<'lex>>,
+    pub vis: Visibility,
     pub sig: Signature<'lex>,
     pub block: Block<'lex>,
 }
@@ -96,6 +118,7 @@ impl<'lex> Parse<'lex> for ItemFn<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
         Ok(Self {
             attrs: input.do_in(Attribute::parse)?,
+            vis: input.parse()?,
             sig: input.parse()?,
             block: input.parse()?,
         })
@@ -104,13 +127,14 @@ impl<'lex> Parse<'lex> for ItemFn<'lex> {
 
 #[derive(Debug, Clone)]
 pub struct ForeignItem<'lex> {
+    pub vis: Visibility,
     pub sig: Signature<'lex>,
     pub semi: Token![;],
 }
 
 impl<'lex> Parse<'lex> for ForeignItem<'lex> {
     fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
-        Ok(Self { sig: input.parse()?, semi: input.parse()? })
+        Ok(Self { vis: input.parse()?, sig: input.parse()?, semi: input.parse()? })
     }
 }
 
@@ -141,8 +165,10 @@ impl<'lex> Parse<'lex> for ForeignMod<'lex> {
 }
 
 ast_enum_of_structs! {
+    #[derive(Debug)]
     pub enum Item<'lex> {
         Fn(ItemFn<'lex>),
+        Mod(Mod<'lex>),
         Foreign(ForeignMod<'lex>),
     }
 }
@@ -154,6 +180,7 @@ impl<'lex> Parse<'lex> for Item<'lex> {
         match &mut item {
             Item::Fn(item) => item.attrs = attrs,
             Item::Foreign(item) => item.attrs = attrs,
+            Item::Mod(_) => {}
         }
         Ok(item)
     }
@@ -164,13 +191,57 @@ fn peek_signature(input: &ParseBuffer<'_>) -> bool {
 }
 
 fn rest_items<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Item<'lex>> {
+    let vis = input.parse().unwrap_or(Visibility::Inherit);
+
     let peek_sig = peek_signature(input);
     let mut lookahead = input.lookahead();
 
     if lookahead.peek(Token![fn]) || peek_sig {
-        input.parse().map(Item::Fn)
+        Ok(Item::Fn(ItemFn { attrs: vec![], vis, sig: input.parse()?, block: input.parse()? }))
+    } else if lookahead.peek(Token![mod]) {
+        parse_rest_mod(input, vis).map(Item::Mod)
     } else if lookahead.peek(Token![extern]) {
         input.parse().map(Item::Foreign)
+    } else {
+        Err(lookahead.error())
+    }
+}
+
+#[derive(Debug)]
+pub struct Mod<'lex> {
+    pub vis: Visibility,
+    pub mod_token: Token![mod],
+    pub ident: Ident<'lex>,
+    pub content: Option<(token::Brace, Vec<Item<'lex>>)>,
+    pub semi: Option<Token![;]>,
+}
+
+impl<'lex> Parse<'lex> for Mod<'lex> {
+    fn parse(input: &mut ParseBuffer<'lex>) -> parse::Result<Self> {
+        let vis = input.parse()?;
+        parse_rest_mod(input, vis)
+    }
+}
+
+fn parse_rest_mod<'lex>(
+    input: &mut ParseBuffer<'lex>,
+    vis: Visibility,
+) -> parse::Result<Mod<'lex>> {
+    let mod_token = input.parse()?;
+    let ident = input.parse()?;
+
+    let mut lookahead = input.lookahead();
+    if lookahead.peek(Token![;]) {
+        Ok(Mod { vis, mod_token, ident, content: None, semi: Some(input.parse()?) })
+    } else if lookahead.peek(token::Brace) {
+        let mut content;
+        let brace = braced!(content in input);
+
+        let mut items = Vec::new();
+        while !content.is_empty() {
+            items.push(content.parse()?);
+        }
+        Ok(Mod { vis, mod_token, ident, content: Some((brace, items)), semi: None })
     } else {
         Err(lookahead.error())
     }
@@ -211,4 +282,15 @@ fn foreign_mod() {
 
     assert!(foreign.attrs.len() == 2);
     assert!(foreign.items.len() == 2);
+}
+
+#[test]
+fn mod_mod() {
+    use crate::util::lex_it;
+
+    let m: Mod = lex_it!(r#"mod foo { fn foo() {} }"#).parse().unwrap();
+    assert!(m.semi.is_none());
+
+    let m: Mod = lex_it!(r#"mod foo;"#).parse().unwrap();
+    assert!(m.content.is_none());
 }

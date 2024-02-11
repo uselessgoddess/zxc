@@ -4,7 +4,7 @@ use crate::{
     parenthesized,
     parse::{self, Parse, ParseBuffer, Punctuated},
     token::{self},
-    Error, Token, Type,
+    Error, Path, Token, Type,
 };
 
 #[derive(PartialOrd, PartialEq)]
@@ -120,9 +120,9 @@ ast_enum_of_structs! {
     #[derive(Debug, Clone)]
     pub enum Expr<'a> {
         Lit(Lit<'a>),
+        Path(Path<'a>),
         Block(Block<'a>),
         Paren(Paren<'a>),
-        Ident(Ident<'a>),
         Unary(Unary<'a>),
         Binary(Binary<'a>),
         Return(Return<'a>),
@@ -188,7 +188,7 @@ pub struct Call<'a> {
 pub struct TailCall<'a> {
     pub receiver: Box<Expr<'a>>,
     pub dot: Token![.],
-    pub func: Ident<'a>,
+    pub func: Path<'a>,
     pub args: Option<(token::Paren, Punctuated<Expr<'a>, Token![,]>)>,
 }
 
@@ -473,7 +473,7 @@ fn trailer_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>
 
 fn atom_expr<'lex>(input: &mut ParseBuffer<'lex>) -> parse::Result<Expr<'lex>> {
     if input.peek(Ident) {
-        input.parse().map(Expr::Ident)
+        input.parse().map(Expr::Path)
     } else if input.peek(Lit) {
         input.parse().map(Expr::Lit)
     } else if input.peek(token::Paren) {

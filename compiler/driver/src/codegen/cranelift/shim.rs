@@ -68,7 +68,11 @@ pub fn create_entry_wrapper(hix: Hx, m: &mut dyn Module, main_def: mir::DefId, i
     }
 }
 
-pub fn maybe_create_entry_wrapper(hix: Hx, module: &mut dyn Module) {
+// TODO: move into generic codegen
+pub fn maybe_create_entry_wrapper(hix: Hx, cgu: &mir::CodegenUnit, module: &mut dyn Module) {
+    if !cgu.primary {
+        return;
+    }
     let Some((main_def, entry)) = hix.entry_fn() else { return };
 
     create_entry_wrapper(hix, module, main_def, entry == hir::EntryFnType::Main)

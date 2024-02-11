@@ -1,8 +1,7 @@
 #[macro_export]
 macro_rules! delimited {
     ($content:ident($lt:ty, $rt:ty) in $input:expr) => {{
-        let (parens, buf) =
-            $crate::parse::ParseBuffer::parse_delimited::<$lt, $rt>($input).unwrap();
+        let (parens, buf) = $crate::parse::ParseBuffer::parse_delimited::<$lt, $rt>($input)?;
         $content = buf;
         parens
     }};
@@ -268,16 +267,18 @@ fn fork() {
     let mut input = lex_it!("(123.321)");
 
     let do_parse = if input.peek(token::Paren) {
-        input.fork(|fork, mut advance| {
-            let mut content;
-            parenthesized!(content in fork);
-            if content.parse::<Lit>().is_ok() && content.is_empty() {
-                advance.to(fork);
-                true
-            } else {
-                false
-            }
-        })
+        input
+            .fork(|fork, mut advance| {
+                let mut content;
+                parenthesized!(content in fork);
+                Ok::<_, crate::Error>(if content.parse::<Lit>().is_ok() && content.is_empty() {
+                    advance.to(fork);
+                    true
+                } else {
+                    false
+                })
+            })
+            .unwrap()
     } else {
         false
     };

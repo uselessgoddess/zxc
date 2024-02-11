@@ -2,6 +2,7 @@ pub mod attr;
 pub(crate) mod delim;
 pub mod expr;
 pub mod item;
+pub mod path;
 mod punct;
 mod surround;
 pub mod ty;
@@ -9,7 +10,10 @@ pub mod ty;
 pub use {
     attr::{Attribute, Meta},
     expr::{Assign, BinOp, Block, Break, Cast, Expr, If, Local, Loop, Stmt, UnOp},
-    item::{Abi, FnArg, ForeignItem, ForeignMod, Item, ItemFn, ReturnType, Signature},
+    item::{
+        Abi, FnArg, ForeignItem, ForeignMod, Item, ItemFn, Mod, ReturnType, Signature, Visibility,
+    },
+    path::Path,
     punct::Punctuated,
     ty::Type,
 };

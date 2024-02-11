@@ -15,12 +15,12 @@ impl<'tcx> MonoItem<'tcx> {
     }
 }
 
+#[derive(Debug)]
 pub struct CodegenUnit<'tcx> {
     pub name: Symbol,
+    pub primary: bool,
     pub items: FxHashMap<MonoItem<'tcx>, MonoItemData>,
 }
-
-impl<'tcx> CodegenUnit<'tcx> {}
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Linkage {

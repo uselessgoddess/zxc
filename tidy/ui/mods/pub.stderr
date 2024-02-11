@@ -1,0 +1,12 @@
+error[E0014]: function `bar` is private
+   ╭─[pub.src:2:5]
+   │
+ 2 │     fn bar() {}
+   │     ~~~~~~~╮  
+   │            ╰── the function `bar` is defined here
+   │ 
+ 6 │    foo::bar();
+   │         ^^╮  
+   │           ╰── private function
+───╯
+error: aborting due to previous error

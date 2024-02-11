@@ -76,12 +76,11 @@ impl From<ErrorGuaranteed> for Error {
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn parse_items<'lex>(
-    tcx: Tx<'lex>,
     input: &mut ParseBuffer<'lex>,
-) -> Result<Vec<hir::Item<'lex>>, lexer::Error> {
+) -> Result<Vec<lexer::Item<'lex>>, lexer::Error> {
     let mut items = Vec::new();
     while !input.is_empty() {
-        items.push(hir::Item::analyze(tcx, input.parse()?));
+        items.push(input.parse()?);
     }
     Ok(items)
 }
@@ -94,7 +93,7 @@ fn driver_impl<'tcx>(
 ) -> Result<(), Error> {
     let mut input = ParseBuffer::new(lexer::lexer().parse(src).unwrap());
 
-    let mut items = parse_items(tcx, &mut input).map_err(|err| {
+    let items = parse_items(&mut input).map_err(|err| {
         Report::build(ReportKind::Error, name, 5)
             .with_message(err.to_string())
             .with_label(Label::new((name, err.span.into_range())).with_color(Color::Red))
@@ -104,27 +103,30 @@ fn driver_impl<'tcx>(
         Error::Guaranteed
     })?;
 
-    let _: Result<_> = try {
-        hir::analyze_module(hix, &mut items)?;
-        hir::check::post_typeck(hix);
-    };
+    let _ = hir::prepare_module(hix, items);
     tcx.sess.abort_if_errors();
     hix.err.abort_if_errors();
 
-    let mut cgu = hix.as_codegen_unit();
+    // panic!("{:#?}", hix.instances);
 
-    let mir = cgu
-        .items
-        .par_iter()
-        .map(|(def, _)| {
-            let InstanceDef::Item(def) = def.def;
-            (def, hix.optimized_mir(def))
-        })
-        .collect::<Vec<_>>();
-    // apply optimizations manually because `items` is not in deterministic order
-    for (def, body) in mir {
-        hix.defs[def] = body;
+    let mut cgus = hix.as_primary_cgu();
+    for cgu in &mut cgus {
+        let mir = cgu
+            .items
+            .par_iter()
+            .map(|(def, _)| {
+                let InstanceDef::Item(def) = def.def;
+                (def, hix.optimized_mir(def))
+            })
+            .collect::<Vec<_>>();
+        // apply optimizations manually because `items` is not in deterministic order
+        for (def, body) in mir {
+            hix.defs[def] = body;
+        }
     }
+    println!("{:#?}", hix.module);
+    println!("{:#?}", cgus);
+
     tcx.sess.compile_status().inspect_err(|_| tcx.sess.abort_if_errors())?;
 
     if tcx.sess.opts.output_types.contains_key(&OutputType::Mir) {
@@ -155,7 +157,7 @@ fn driver_impl<'tcx>(
 
         codegen.init(tcx.sess);
 
-        let ongoing = codegen.codegen_module(hix, vec![cgu]);
+        let ongoing = codegen.codegen_module(hix, cgus);
         let results = codegen.join_codegen(tcx.sess, ongoing, tcx.output_filenames());
 
         if tcx.sess.needs_link() {

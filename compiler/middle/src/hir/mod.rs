@@ -2,6 +2,7 @@ pub mod attr;
 pub mod check;
 mod error;
 pub mod errors;
+mod resolve;
 mod scope;
 mod syntax;
 mod ty;
@@ -13,7 +14,7 @@ use {
         index_vec, man,
         mir::{
             self,
-            mono::{Linkage, Visibility},
+            mono::{self, Linkage},
             ty::Abi,
             visit::{MutVisitor, TyContext, Visitor},
             CastKind, CodegenUnit, ConstValue, Infer, InstanceData, InstanceDef, Local, LocalDecl,
@@ -29,27 +30,54 @@ use {
     },
     ::errors::{
         ariadne::{Color, Fmt},
-        color, DiagnosticMessage, Handler, Level,
+        color, DiagnosticMessage, Handler,
     },
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned},
+    lint::DecorateLint,
     smallvec::SmallVec,
     std::{collections::hash_map::Entry, fmt, iter, marker::PhantomData, mem, num::NonZeroU8},
 };
-pub use {scope::Scope, syntax::UnOp, ty::Ty};
+pub use {
+    resolve::{ModId, ModuleData},
+    scope::Scope,
+    syntax::UnOp,
+    ty::Ty,
+};
+
+#[derive(Debug, Copy, Clone)]
+pub enum Vis {
+    Public,
+    Inherit,
+}
+
+impl Vis {
+    pub fn is_public(&self) -> bool {
+        matches!(self, Vis::Public)
+    }
+
+    pub fn from_parse(vis: lexer::Visibility) -> Self {
+        match vis {
+            lexer::Visibility::Public(_) => Self::Public,
+            lexer::Visibility::Inherit => Self::Inherit,
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct ForeignItem<'hir> {
+    pub vis: Vis,
     pub sig: FnSig<'hir>,
     pub span: Span,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 pub enum ItemKind<'hir> {
-    Fn(FnSig<'hir>, &'hir [Stmt<'hir>]),
+    Fn(Vis, FnSig<'hir>, &'hir [Stmt<'hir>]),
     Foreign { abi: Abi, items: &'hir [ForeignItem<'hir>] },
+    Mod(Vis, Symbol, Vec<Item<'hir>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Item<'hir> {
     pub attrs: &'hir [MetaItem],
     pub kind: ItemKind<'hir>,
@@ -63,45 +91,103 @@ fn intern_meta<'tcx>(tcx: Tx<'tcx>, attrs: Vec<lexer::Attribute>) -> &'tcx [Meta
 }
 
 impl<'hir> Item<'hir> {
-    pub fn analyze(tcx: Tx<'hir>, item: lexer::Item<'hir>) -> Self {
-        use lexer::{ForeignMod, ItemFn};
+    pub fn analyze(hix: &HirCtx<'hir>, item: lexer::Item<'hir>) -> Result<Self> {
+        use lexer::{ForeignMod, ItemFn, Mod};
 
-        let meta;
+        let mut meta: &[MetaItem] = &[];
+        let tcx = hix.tcx;
         let span = item.span();
-        let kind =
-            match item {
-                lexer::Item::Fn(ItemFn { sig, block, attrs }) => {
-                    meta = intern_meta(tcx, attrs);
-                    let sig = FnSig::analyze(tcx, &sig);
-                    let stmts = tcx
-                        .arena
-                        .stmt
-                        .alloc_from_iter(block.stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt)));
-                    item::Fn(sig, stmts)
+        let kind = match item {
+            lexer::Item::Fn(ItemFn { vis, sig, block, attrs }) => {
+                meta = intern_meta(tcx, attrs);
+                let sig = FnSig::analyze(tcx, &sig);
+                let stmts = tcx
+                    .arena
+                    .stmt
+                    .alloc_from_iter(block.stmts.iter().map(|stmt| Stmt::analyze(tcx, stmt)));
+                item::Fn(Vis::from_parse(vis), sig, stmts)
+            }
+            lexer::Item::Foreign(ForeignMod { attrs, abi: _abi, items, .. }) => {
+                meta = intern_meta(tcx, attrs);
+                item::Foreign {
+                    abi: Abi::C,
+                    items: tcx.arena.ffi.alloc_from_iter(items.into_iter().map(|f| ForeignItem {
+                        span: f.span(),
+                        vis: Vis::from_parse(f.vis),
+                        sig: FnSig::analyze(tcx, &f.sig),
+                    })),
                 }
-                lexer::Item::Foreign(ForeignMod { attrs, abi: _abi, items, .. }) => {
-                    meta = intern_meta(tcx, attrs);
-                    item::Foreign {
-                        abi: Abi::C,
-                        items: tcx.arena.ffi.alloc_from_iter(items.into_iter().map(|f| {
-                            ForeignItem { sig: FnSig::analyze(tcx, &f.sig), span: f.span() }
-                        })),
-                    }
-                }
-            };
+            }
+            lexer::Item::Mod(Mod { vis, ident, content, semi, .. }) => {
+                let Some((_, items)) = content else { todo!() };
+                item::Mod(
+                    Vis::from_parse(vis),
+                    Symbol::intern(ident.ident()),
+                    prepare_items(hix, items)?,
+                )
+            }
+        };
 
-        Self { attrs: meta, kind, span }
+        Ok(Self { attrs: meta, kind, span })
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct Path<'hir> {
+    pub segments: &'hir [Ident],
+    pub span: Span,
+}
+
+impl<'tcx> Path<'tcx> {
+    pub fn ident(&self) -> Option<Ident> {
+        if let [ident] = self.segments { Some(*ident) } else { None }
+    }
+
+    pub fn tail_ident(&self) -> Ident {
+        self.segments.last().copied().unwrap()
+    }
+
+    pub fn split_tail(self) -> (Option<Self>, Ident) {
+        let (&last, segments) = self.segments.split_last().unwrap();
+        let path = if !segments.is_empty() {
+            Some(Self { segments, span: Span::new(self.span.start, last.span.start) })
+        } else {
+            None
+        };
+        (path, last)
+    }
+
+    pub fn analyze(tcx: Tx<'tcx>, path: &lexer::Path<'tcx>) -> Self {
+        Self {
+            segments: tcx
+                .arena
+                .ident
+                .alloc_from_iter(path.segments.iter().map(|&ident| Ident::from_parse(ident))),
+            span: path.span(),
+        }
+    }
+}
+
+impl fmt::Display for Path<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut iter = self.segments.iter();
+        write!(f, "{}", iter.next().unwrap())?;
+
+        for seg in iter {
+            write!(f, "::{}", seg)?;
+        }
+        Ok(())
     }
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum ExprKind<'hir> {
     Lit(Lit<'hir>),
-    Local(Ident),
+    Path(Path<'hir>),
     Unary(UnOp, &'hir Expr<'hir>),
     Binary(BinOp, &'hir Expr<'hir>, &'hir Expr<'hir>),
     Cast(&'hir Expr<'hir>, Ty<'hir>),
-    Call(Ident, &'hir [Expr<'hir>]),
+    Call(Path<'hir>, &'hir [Expr<'hir>]),
     Block(&'hir [Stmt<'hir>], Span),
     If(&'hir Expr<'hir>, &'hir Expr<'hir>, Option<&'hir Expr<'hir>>),
     Return(Option<&'hir Expr<'hir>>),
@@ -146,17 +232,15 @@ impl<'tcx> Expr<'tcx> {
                 tcx.arena.expr.alloc(Self::analyze(tcx, left)),
                 tcx.arena.expr.alloc(Self::analyze(tcx, right)),
             ),
-            lexer::Expr::Ident(str) => {
-                expr::Local(Ident::new(Symbol::intern(str.ident()), str.span))
-            }
+            lexer::Expr::Path(path) => expr::Path(Path::analyze(tcx, path)),
             lexer::Expr::Cast(Cast { expr, ty, .. }) => expr::Cast(
                 tcx.arena.expr.alloc(Self::analyze(tcx, expr)),
                 Ty::new(ty.span(), mir::Ty::analyze(tcx, ty)),
             ),
             lexer::Expr::Call(Call { func, args, .. }) => {
-                let box lexer::Expr::Ident(func) = func else { todo!() };
+                let box lexer::Expr::Path(func) = func else { todo!() };
                 expr::Call(
-                    Ident::from_parse(*func),
+                    Path::analyze(tcx, func),
                     tcx.arena
                         .expr
                         .alloc_from_iter(args.iter().map(|expr| Self::analyze(tcx, expr))),
@@ -165,7 +249,7 @@ impl<'tcx> Expr<'tcx> {
             lexer::Expr::TailCall(TailCall { receiver, func, args, .. }) => {
                 let recv = Self::analyze(tcx, receiver);
                 expr::Call(
-                    Ident::from_parse(*func),
+                    Path::analyze(tcx, func),
                     if let Some((_, args)) = args {
                         tcx.arena.expr.alloc_from_iter(
                             iter::once(recv)
@@ -554,8 +638,8 @@ impl<'mir, 'hir> AnalyzeCx<'mir, 'hir> {
     }
 }
 
-fn quoted(f: impl fmt::Display, color: Color) -> String {
-    format!("`{f}`").fg(color).to_string()
+fn quoted(f: impl fmt::Display, color: Color) -> DiagnosticMessage {
+    format!("`{f}`").fg(color).to_string().into()
 }
 
 fn goto_next(acx: &mut AnalyzeCx<'_, '_>) -> TerminatorKind<'static> {
@@ -678,7 +762,8 @@ fn analyze_expr<'hir>(
                 ),
             )
         }
-        expr::Local(ident) => {
+        expr::Path(path) => {
+            let Some(ident) = path.ident() else { todo!() };
             let (ty, place) = acx.scope().get_var(ident.name).ok_or_else(|| {
                 acx.err.emit(errors::NotFoundLocal { local: ident.name, span: ident.span })
             })?;
@@ -835,9 +920,8 @@ fn analyze_expr<'hir>(
             // TODO: avoid this allocation
             let types_mir: Vec<_> = types.iter().map(|&ty| ty.kind).collect();
 
-            if let Some(&def) = acx.hix.decls.get(&call.name) {
+            if let Some(def) = acx.hix.find_depth_at_root(call)? {
                 let InstanceData { sig, span, symbol, hsig, .. } = acx.hix.instances[def];
-                assert_eq!(symbol, call.name); // todo: impossible?
 
                 for (i, ((&ty, &pass), (_, _, decl))) in
                     types.iter().zip(sig.inputs()).zip(hsig.decl.inputs).enumerate()
@@ -872,7 +956,9 @@ fn analyze_expr<'hir>(
                     },
                 );
                 (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
-            } else if call.name == sym::offset {
+            } else if let Some(ident) = call.ident()
+                && ident.name == sym::offset
+            {
                 use errors::{ExpectType, MismatchFnSig};
 
                 if let [(ptr_ty, ptr), (delta_ty, delta)] = operands[..] {
@@ -898,7 +984,10 @@ fn analyze_expr<'hir>(
                     }));
                 }
             } else {
-                return Err(acx.err.emit(errors::NotFoundLocal::ident(call)));
+                let (at, ident) = call.split_tail();
+                return Err(acx
+                    .err
+                    .emit(errors::NotFoundName { ident, at: at.map(|at| at.to_string().into()) }));
             }
         }
         expr::If(cond, then, else_) => analyze_branch_expr(
@@ -1259,11 +1348,40 @@ struct ItemData<'hir> {
     span: Span,
 }
 
+impl ModuleData {
+    pub fn as_cgu<'tcx>(&self, hix: &HirCtx<'tcx>, primary: bool) -> CodegenUnit<'tcx> {
+        let items = self
+            .defs
+            .values()
+            .copied()
+            .filter(|&def| hix.defs.get(def).is_some()) // has body
+            .map(|def| {
+                (
+                    MonoItem { def: InstanceDef::Item(def), _marker: PhantomData },
+                    MonoItemData {
+                        inlined: false,
+                        linkage: if hix.instances[def].sig.abi == Abi::Zxc
+                            || hix.instances[def].vis.is_public()
+                        {
+                            Linkage::External
+                        } else {
+                            Linkage::Internal
+                        },
+                        visibility: mono::Visibility::Default,
+                    },
+                )
+            })
+            .collect();
+        CodegenUnit { name: self.name, primary, items }
+    }
+}
+
 #[derive(Debug)]
 pub struct HirCtx<'hir> {
     pub tcx: Tx<'hir>,
     name: Symbol,
-    pub decls: FxHashMap<Symbol, mir::DefId>, // later use modules
+    pub module: ModId,
+    pub mods: IndexVec<ModId, ModuleData>,
 
     pub defs: IndexVec<mir::DefId, mir::Body<'hir>>,
     pub instances: IndexVec<mir::DefId, InstanceData<'hir>>,
@@ -1273,30 +1391,50 @@ pub struct HirCtx<'hir> {
 pub type Hx<'hir> = &'hir HirCtx<'hir>;
 
 impl<'hir> HirCtx<'hir> {
+    pub(crate) fn diagnostic(&self) -> &Handler {
+        &self.err.handler
+    }
+
+    pub fn root(&self) -> &ModuleData {
+        &self.mods[self.module]
+    }
+
+    pub fn find_depth_at_root(&self, path: Path<'hir>) -> Result<Option<mir::DefId>> {
+        let mut root = self.module;
+        let (path, func) = path.split_tail();
+        if let Some(path) = path {
+            for &seg in path.segments {
+                if let Some(&mod_id) = self.mods[root].mods.get(&seg.name) {
+                    if root != self.module && !self.mods[mod_id].vis.is_public() {
+                        return Err(self
+                            .diagnostic()
+                            .emit_err(errors::ModPrivate { module: seg, target: None }));
+                    }
+                    root = mod_id;
+                } else {
+                    return Err(todo!());
+                }
+            }
+        }
+        let def = self.mods[root].defs.get(&func.name).copied();
+        if let Some(def) = def
+            && !self.instances[def].vis.is_public()
+            && root != self.module
+        {
+            Err(self
+                .diagnostic()
+                .emit_err(errors::FnPrivate { func, target: Some(self.instances[def].span) }))
+        } else {
+            Ok(def)
+        }
+    }
+
     pub fn symbol_name(&'hir self, def: mir::DefId) -> mir::SymbolName<'hir> {
         mir::SymbolName::new(self.tcx, &man::compute_symbol_name(self, def))
     }
 
-    pub fn as_codegen_unit(&self) -> CodegenUnit<'hir> {
-        let items = self
-            .defs
-            .iter_enumerated()
-            .map(|(def, _body)| {
-                (
-                    MonoItem { def: InstanceDef::Item(def), _marker: PhantomData },
-                    MonoItemData {
-                        inlined: false,
-                        linkage: if self.instances[def].sig.abi == Abi::Zxc {
-                            Linkage::Internal
-                        } else {
-                            Linkage::External
-                        },
-                        visibility: Visibility::Default,
-                    },
-                )
-            })
-            .collect();
-        CodegenUnit { name: self.name, items }
+    pub fn as_primary_cgu(&self) -> Vec<CodegenUnit<'hir>> {
+        self.mods.iter().map(|module| module.as_cgu(self, module.parent.is_none())).collect()
     }
 
     pub fn attrs(&self, def: mir::DefId) -> &[MetaItem] {
@@ -1313,7 +1451,7 @@ impl<'hir> HirCtx<'hir> {
         }
 
         let mut start_fn = None;
-        for &def in self.decls.values() {
+        for &def in self.root().defs.values() {
             if attr::contains_name(self.attrs(def), sym::start) {
                 if let Some(start) = start_fn {
                     // self.tcx.sess.emit_err(Error::DefinedMultiple {
@@ -1333,10 +1471,10 @@ impl<'hir> HirCtx<'hir> {
 
         if let Some(start) = start_fn {
             Some((start, EntryFnType::Start))
-        } else if let Some(&main) = self.decls.get(&sym::main) {
+        } else if let Some(&main) = self.root().defs.get(&sym::main) {
             Some((main, EntryFnType::Main))
         } else {
-            self.tcx.sess.emit_err(errors::NoMainErr);
+            self.tcx.sess.emit_err(errors::NoMainErr { file: "<unknown>".into() });
             None
         }
     }
@@ -1375,7 +1513,8 @@ impl<'hir> HirCtx<'hir> {
         Self {
             tcx,
             name,
-            decls: Default::default(),
+            module: resolve::ROOT_MODULE,
+            mods: Default::default(),
             defs: Default::default(),
             instances: Default::default(),
             err: error::TyErrCtx { handler },
@@ -1396,80 +1535,219 @@ fn intern_decl<'tcx>(tcx: Tx<'tcx>, decl: FnDecl<'tcx>, abi: Abi) -> mir::FnSig<
     mir::FnSig { inputs_and_output: tcx.mk_type_list(&io), abi }
 }
 
-pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: &mut [Item<'hir>]) -> Result<()> {
-    let mut defs = Vec::with_capacity(32);
+#[derive(Debug, Clone)]
+pub struct ModuleRepr {
+    defs: FxHashMap<Symbol, mir::DefId>,
+    mods: FxHashMap<Symbol, Self>,
+}
 
-    let mut define =
-        |hsig @ FnSig { decl, abi, span }, body: Option<_>, attrs| match hix.decls.entry(decl.name)
-        {
-            Entry::Occupied(prev) => {
-                hix.err.emit(errors::DefinedMultiple {
-                    name: quoted(decl.name, color::Magenta).into(),
-                    def: hix.instances[*prev.get()].span,
-                    redef: span,
-                });
-            }
-            Entry::Vacant(entry) => {
-                let def = entry.insert(hix.instances.push(InstanceData {
-                    symbol: decl.name,
-                    sig: intern_decl(hix.tcx, decl, abi),
-                    span,
-                    hsig,
-                    attrs,
-                }));
-                defs.push((*def, body));
-            }
+type Stack = SmallVec<mir::DefId, 16>;
+
+pub struct DeepDefsIter<'a> {
+    worklist: SmallVec<(&'a Symbol, &'a ModuleRepr), 4>,
+}
+
+// impl Iterator for DeepDefsIter<'_> {
+//     type Item = mir::DefId;
+//
+//     fn next(&mut self) -> Option<Self::Item> {
+//         let Some((repr, stack)) = self.worklist.last_mut() else { return None };
+//
+//         if let Some(def) = stack.pop() {
+//             if stack.is_empty() {
+//                 for (_, m) in &repr.mods {
+//                     self.worklist.push((m, m.defs.values().copied().collect()));
+//                 }
+//             }
+//             Some(def)
+//         } else {
+//             None
+//         }
+//     }
+// }
+
+impl Iterator for DeepDefsIter<'_> {
+    type Item = (Symbol, SmallVec<mir::DefId, 16>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some((name, repr)) = self.worklist.pop() else { return None };
+        self.worklist.extend(repr.mods.iter());
+        Some((*name, repr.defs.values().copied().collect()))
+    }
+}
+
+impl ModuleRepr {
+    pub fn new() -> Self {
+        Self { defs: Default::default(), mods: Default::default() }
+    }
+
+    pub fn get(&self, s: Symbol) -> Option<mir::DefId> {
+        self.defs.get(&s).copied()
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = mir::DefId> + '_ {
+        self.defs.values().copied()
+    }
+
+    pub fn entry(&mut self, key: Symbol) -> Entry<'_, Symbol, mir::DefId> {
+        self.defs.entry(key)
+    }
+
+    pub fn deep_defs(&self) -> DeepDefsIter<'_> {
+        DeepDefsIter { worklist: self.mods.iter().collect() }
+    }
+}
+
+type BodyDef<'hir> = (FnSig<'hir>, &'hir [Stmt<'hir>]);
+
+#[derive(Default, Debug)]
+struct ModuleRawRepr<'hir> {
+    decls: FxHashMap<Symbol, mir::DefId>,
+    defs: Vec<(mir::DefId, BodyDef<'hir>)>,
+    mods: FxHashMap<Symbol, (ModId, Self)>,
+}
+
+fn define_at<'hir>(
+    hix: &mut HirCtx<'hir>,
+    vis: Vis,
+    at: &mut ModuleRawRepr<'hir>,
+    parent: ModId,
+    hsig @ FnSig { decl, abi, span }: FnSig<'hir>,
+    attrs: &'hir [MetaItem],
+) -> Result<mir::DefId> {
+    match at.decls.entry(decl.name) {
+        Entry::Occupied(prev) => Err(hix.err.emit(errors::DefinedMultiple {
+            name: quoted(decl.name, color::Magenta),
+            def: hix.instances[*prev.get()].span,
+            redef: span,
+        })),
+        Entry::Vacant(entry) => {
+            let def = *entry.insert(hix.instances.push(InstanceData {
+                symbol: decl.name,
+                sig: intern_decl(hix.tcx, decl, abi),
+                vis,
+                span,
+                hsig,
+                attrs,
+                parent,
+            }));
+            Ok(def)
+        }
+    }
+}
+
+fn define_mod<'hir>(
+    hix: &mut HirCtx<'hir>,
+    vis: Vis,
+    parent: &mut ModuleRawRepr<'hir>,
+    parent_id: Option<ModId>,
+    name: Symbol,
+    items: Vec<Item<'hir>>,
+) -> Result<()> {
+    let (mod_id, this) = if let Some(parent_id) = parent_id {
+        let Entry::Vacant(entry) = parent.mods.entry(name) else {
+            return Err(hix.err.emit(errors::DefinedMultipleModule {
+                name: name.as_str().into(),
+                at: "<unknown>".into(),
+            }));
         };
+        let mod_id =
+            hix.mods.push(ModuleData { vis, parent: Some(parent_id), name, ..Default::default() });
+        let (_, this) = entry.insert((mod_id, ModuleRawRepr::default()));
+        (mod_id, this)
+    } else {
+        let mod_id = hix.mods.push(ModuleData {
+            vis,
+            parent: None,
+            name: hix.tcx.root_name(),
+            ..Default::default()
+        });
+        assert_eq!(mod_id, resolve::ROOT_MODULE);
+        (mod_id, parent)
+    };
 
+    for item in sort_items(items) {
+        match item.kind {
+            ItemKind::Fn(vis, sig, body) => {
+                let def = define_at(hix, vis, this, mod_id, sig, item.attrs)?;
+                this.defs.push((def, (sig, body)));
+            }
+            ItemKind::Foreign { abi, items } => {
+                for ffi in items {
+                    // Copy abi from foreign block to all items
+                    let _ =
+                        define_at(hix, ffi.vis, this, mod_id, FnSig { abi, ..ffi.sig }, item.attrs);
+                }
+            }
+            ItemKind::Mod(vis, module, items) => {
+                let _ = define_mod(hix, vis, this, Some(mod_id), module, items)?;
+            }
+        }
+    }
+    Ok(())
+}
+fn sort_items<'hir>(mut items: Vec<Item<'hir>>) -> Vec<Item<'hir>> {
     items.sort_unstable_by_key(|item| match item.kind {
         ItemKind::Fn(..) => 0,
         _ => 1, // each other has no body
     });
+    items
+}
 
-    for item in items {
-        match item.kind {
-            ItemKind::Fn(sig, body) => define(sig, Some((sig, body)), item.attrs),
-            ItemKind::Foreign { abi, items } => {
-                for ffi in items {
-                    // Copy abi from foreign block to all items
-                    define(FnSig { abi, ..ffi.sig }, None, item.attrs);
-                }
-            }
-        };
-    }
+pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: Vec<Item<'hir>>) -> Result<()> {
+    let mut module = ModuleRawRepr::default();
 
-    // match hix.decls.get(&sym::main) {
-    //     None => {
-    //         hix.emit.error(Error::HasNoMain(Span::splat(
-    //             0, /* add `span::whole`  to communicate with globals like symbol */
-    //         )));
-    //     }
-    //     Some(&def) => {
-    //         let InstanceData { sig, span, .. } = hix.instances[def];
-    //         if !hix.tcx.sigs.main.contains(&sig) {
-    //             hix.emit.error(Error::WrongMainSig { sig, span });
-    //         }
-    //     }
-    // }
+    define_mod(hix, Vis::Public, &mut module, None, sym::main, items)?;
 
-    let err = &mut hix.err as *mut _;
+    fn analyze<'hir>(
+        hix: &mut HirCtx<'hir>,
+        mir: &mut IndexVec<mir::DefId, Option<mir::Body<'hir>>>,
+        ModuleRawRepr { decls, defs, mods }: ModuleRawRepr<'hir>,
+        parent: ModId,
+    ) -> Result<()> {
+        hix.mods[parent].defs = decls;
 
-    let mut mir = IndexVec::<mir::DefId, _>::with_capacity(128);
-    for (def, stmts) in defs {
-        if let Some((sig, stmts)) = stmts {
-            // Safety: todo
-            let body = analyze_fn_definition(hix.tcx, hix, sig, stmts, unsafe { &mut *err })?;
-            assert_eq!(def, mir.push(body));
+        for (name, (mod_id, raw)) in mods {
+            hix.mods[parent].mods.insert(name, mod_id);
+            analyze(hix, mir, raw, mod_id)?;
         }
+
+        hix.module = parent; // TODO: parent resolving logic contains here!
+        let err = &mut hix.err as *mut _;
+        for (def, (sig, stmts)) in defs {
+            mir.insert(def, analyze_fn_definition(hix.tcx, hix, sig, stmts, unsafe { &mut *err })?);
+        }
+        Ok(())
     }
 
-    hix.defs.extend(mir);
+    let mut mir = IndexVec::with_capacity(16);
+    analyze(hix, &mut mir, module, resolve::ROOT_MODULE)?;
+    // TODO: more docs about this unwrapping
+    hix.defs = mir.into_iter().map(Option::unwrap).collect();
+
+    println!("{:#?}", hix.mods);
+
+    Ok(())
+}
+
+fn prepare_items<'tcx>(
+    hix: &HirCtx<'tcx>,
+    items: Vec<lexer::Item<'tcx>>,
+) -> Result<Vec<Item<'tcx>>> {
+    items.into_iter().map(|item| Item::analyze(hix, item)).collect()
+}
+
+pub fn prepare_module<'tcx>(hix: &mut HirCtx<'tcx>, items: Vec<lexer::Item<'tcx>>) -> Result<()> {
+    let items = prepare_items(hix, items)?;
+    analyze_module(hix, items)?;
+    check::post_typeck(hix);
     Ok(())
 }
 
 mod size_asserts {
     use {super::*, crate::assert_size};
 
-    assert_size!(Expr<'_> as 64);
-    assert_size!(ExprKind<'_> as 48);
+    // TODO: reduce to 64 and 48
+    assert_size!(Expr<'_> as 72);
+    assert_size!(ExprKind<'_> as 56);
 }

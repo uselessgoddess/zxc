@@ -1,7 +1,10 @@
 use crate::{
     attr,
-    parse::{self, expr, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
-    token, Assign, Break, ForeignItem, ForeignMod, If, ItemFn, Loop, Span, UnOp,
+    lexer::ast::{PathSep, Semi},
+    parse::{self, expr, punct::Pair, ty, Abi, DelimSpan, ReturnType, Signature, Stmt},
+    token::{self, Brace},
+    Assign, Break, ForeignItem, ForeignMod, Ident, If, Item, ItemFn, Loop, Mod, Path, Span, Token,
+    UnOp,
 };
 
 pub trait Spanned {
@@ -111,7 +114,7 @@ impl Spanned for expr::TailCall<'_> {
     fn span(&self) -> Span {
         lookahead_span(
             self.receiver.span(),
-            if let Some((paren, _)) = &self.args { paren.span.rt } else { self.func.span },
+            if let Some((paren, _)) = &self.args { paren.span.rt } else { self.func.span() },
         )
     }
 }
@@ -232,7 +235,7 @@ impl Spanned for ty::Never {
 
 impl Spanned for ItemFn<'_> {
     fn span(&self) -> Span {
-        lookahead_span(self.sig.span(), self.block.span())
+        lookahead_span(self.vis.opt_span().unwrap_or(self.sig.span()), self.block.span())
     }
 }
 
@@ -262,8 +265,35 @@ impl Spanned for ty::Reference<'_> {
     }
 }
 
+impl Spanned for Mod<'_> {
+    fn span(&self) -> Span {
+        let span = match (&self.content, self.semi) {
+            (Some((brace, _)), _) => brace.span(),
+            (_, Some(semi)) => semi.span(),
+            _ => unreachable!(),
+        };
+        lookahead_span(self.vis.opt_span().unwrap_or(self.mod_token.span), span)
+    }
+}
+
+impl Spanned for Path<'_> {
+    fn span(&self) -> Span {
+        let mut iter = self.segments.pairs();
+
+        fn pair(pair: Pair<&Ident, &Token![::]>) -> Span {
+            match pair {
+                Pair::Punctuated(ident, _) | Pair::End(ident) => ident.span,
+            }
+        }
+
+        let lo = iter.next().map(pair).unwrap();
+        let hi = iter.last().map(pair).unwrap_or(lo);
+        lookahead_span(lo, hi)
+    }
+}
+
 #[test]
-fn spanned() {
+fn spanned() -> Result<(), crate::Error> {
     use crate::{parenthesized, parse::Expr, util::lex_it};
 
     let mut input = lex_it!("(1 + 3)");
@@ -271,5 +301,6 @@ fn spanned() {
     let mut content;
     parenthesized!(content in &mut input);
 
-    println!("{}", content.parse::<Expr>().unwrap().span())
+    println!("{}", content.parse::<Expr>().unwrap().span());
+    Ok(())
 }

@@ -15,6 +15,7 @@ pub enum Code {
     E0011,
     E0012,
     E0013,
+    E0014,
 }
 
 impl fmt::Display for Code {

@@ -1,8 +1,18 @@
-#[start]
-fn main(argc: isize, ptr: *const *const u8) -> isize {
-    if argc == 0 {
-        ptr as isize
-    } else {
-        *ptr as isize
+mod std {
+    extern {
+        fn exit(x: i32) -> !;
     }
+
+    pub fn foo(x: i32) {
+        exit(x * x);
+    }
+}
+
+extern {
+    fn _Z6sample3stdfoo(x: i32);
+}
+
+fn main() {
+   std::foo(12);
+   _Z6sample3stdfoo(13);
 }

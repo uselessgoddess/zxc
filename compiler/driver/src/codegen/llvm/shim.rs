@@ -47,6 +47,9 @@ pub fn create_entry_wrapper<'tcx>(
 }
 
 pub fn maybe_create_entry_wrapper(cx: &mut CodegenCx<'_, '_>) {
+    if !cx.cgu.primary {
+        return;
+    }
     let Some((main_def, entry)) = cx.hix.entry_fn() else { return };
 
     create_entry_wrapper(cx, main_def, entry == hir::EntryFnType::Main)

@@ -23,6 +23,7 @@ use crate::{
     },
     par::{ShardedHashMap, WorkerLocal},
     sess::{output, ModuleType, OutputFilenames},
+    symbol::{Ident, Symbol},
     FxHashMap, Session,
 };
 
@@ -107,6 +108,7 @@ pub struct Arena<'tcx> {
     pub layout: TypedArena<abi::LayoutKind>,
     pub attrs: TypedArena<attr::MetaItem>,
     pub body: TypedArena<mir::Body<'tcx>>,
+    pub ident: TypedArena<Ident>,
 }
 
 type InternSet<'tcx, T> = ShardedHashMap<Interned<'tcx, T>, ()>;
@@ -248,6 +250,11 @@ impl<'tcx> TyCtx<'tcx> {
         decorate.decorate_lint(&mut diag);
         explain_source(lint, level, src, &mut *diag);
         diag.emit();
+    }
+
+    pub fn root_name(&self) -> Symbol {
+        // TODO: intern once time
+        Symbol::intern(&self.output_filenames().file_stem)
     }
 }
 

@@ -98,6 +98,8 @@ pub mod ast {
             "const" => Const
             "mut" => Mut
             "as" => As
+            "mod" => Mod
+            "pub" => Pub
         }
 
         Punct(&str) {
@@ -123,11 +125,12 @@ pub mod ast {
             "&&" => AndAnd
 
             "->" => RArrow
+            "::" => PathSep
+            ":" => Colon
         }
 
         Delim(char) {
             '.' => Dot
-            ':' => Colon
             ';' => Semi
             ',' => Comma
             '{' => Brace1

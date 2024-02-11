@@ -1,0 +1,7 @@
+mod foo {
+    fn bar() {}
+}
+
+fn main() {
+   foo::bar();
+}

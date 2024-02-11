@@ -1,0 +1,13 @@
+mod foo {
+    extern {
+        pub fn exit(x: i32) -> !;
+    }
+
+    pub fn bar(x: i32, y: i32) -> i32 {
+        x + y
+    }
+}
+
+fn main() {
+   foo::exit(foo::bar(1, -1));
+}

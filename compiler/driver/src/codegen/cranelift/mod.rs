@@ -423,10 +423,21 @@ fn sig_from_abi<'tcx>(tcx: Tx<'tcx>, default: isa::CallConv, abi: &FnAbi<'tcx>) 
     }
 }
 
+use mono::Linkage as MLinkage;
+
+pub fn linkage_to_clif(linkage: MLinkage) -> Linkage {
+    match linkage {
+        MLinkage::External => Linkage::Export,
+        MLinkage::Internal => Linkage::Local,
+        MLinkage::WeakAny => Linkage::Preemptible,
+        _ => todo!(),
+    }
+}
+
 pub(crate) fn codegen_fn(
     hix: Hx,
     def: DefId,
-    _mono_item: &MonoItemData,
+    mono_item: &MonoItemData,
     module: &mut dyn Module,
 ) -> (Symbol, FuncId, Function) {
     let tcx = hix.tcx;
@@ -435,15 +446,7 @@ pub(crate) fn codegen_fn(
 
     let sig = sig_from_abi(tcx, module.target_config().default_call_conv, &fn_abi);
     let id = module
-        .declare_function(
-            hix.symbol_name(def).name,
-            if hix.instances[def].sig.abi == ty::Abi::Zxc {
-                Linkage::Local
-            } else {
-                Linkage::Export
-            },
-            &sig,
-        )
+        .declare_function(hix.symbol_name(def).name, linkage_to_clif(mono_item.linkage), &sig)
         .expect("lmao bro, fake mir generation");
     let mut fn_ = Function::with_name_signature(UserFuncName::user(0, id.as_u32()), sig);
 
@@ -641,7 +644,7 @@ use {
     middle::{
         abi::Primitive,
         hir::Hx,
-        mir::{InstanceDef, MonoItem, MonoItemData, PlaceElem, Statement},
+        mir::{mono, InstanceDef, MonoItem, MonoItemData, PlaceElem, Statement},
         sess::OutputType,
         symbol::Symbol,
     },
@@ -691,7 +694,7 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
         cg_functions.push(codegen_fn(hix, def, mono_item, &mut module));
     }
 
-    shim::maybe_create_entry_wrapper(hix, &mut module);
+    shim::maybe_create_entry_wrapper(hix, cgu, &mut module);
 
     let mut ctx = Context::new();
     for (symbol, id, func) in cg_functions {
@@ -734,12 +737,11 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
 }
 
 fn driver<'tcx>(hix: Hx<'tcx>, cgus: &[CodegenUnit<'tcx>]) -> CodegenData {
-    let [unit] = cgus else { todo!() };
-
     let target_cpu = hix.tcx.sess.target.cpu.to_string();
-    let module = module_codegen(hix, unit);
-
-    CodegenData { modules: vec![module], info: ModuleInfo::new(hix.tcx, target_cpu) }
+    CodegenData {
+        modules: cgus.into_iter().map(|cgu| module_codegen(hix, cgu)).collect(),
+        info: ModuleInfo::new(hix.tcx, target_cpu),
+    }
 }
 
 pub struct CraneliftBackend;

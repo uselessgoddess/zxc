@@ -1,6 +1,7 @@
 use {
     crate::{
         abi::LayoutKind,
+        hir,
         mir::{ty::List, TyKind},
     },
     std::{

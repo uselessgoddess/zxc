@@ -31,8 +31,10 @@ diagnostic! {
 }
 
 diagnostic! {
-    [" `main` function not found in file"]
-    pub struct NoMainErr;
+    ["`main` function not found in file: `{}`", file]
+    pub struct NoMainErr {
+        pub file: String,
+    }
 }
 
 pub struct TypeMismatch {
@@ -85,6 +87,23 @@ diagnostic! {
 impl NotFoundLocal {
     pub fn ident(ident: Ident) -> Self {
         Self { local: ident.name, span: ident.span }
+    }
+}
+
+pub struct NotFoundName {
+    pub ident: Ident,
+    pub at: Option<DiagnosticMessage>,
+}
+
+impl<'a> IntoDiagnostic<'a> for NotFoundName {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
+        let NotFoundName { ident, at } = self;
+        let mut db = handler.struct_err("can't find in the module");
+
+        db.code(Code::E0003);
+        db.span_label(ident.span, format!("not found in `{}`", at.unwrap_or("the root".into())));
+
+        db
     }
 }
 
@@ -211,6 +230,16 @@ impl<'a> IntoDiagnostic<'a> for DefinedMultiple {
     }
 }
 
+// TODO: add spans
+diagnostic! {
+    ["the name: {} is defined multiple times at `{}`", name, at]
+    [code: E0008]
+    pub struct DefinedMultipleModule {
+        pub name: DiagnosticMessage,
+        pub at: String,
+    }
+}
+
 diagnostic! {
     ["cannot borrow `{}` as mutable, as it is not declared as mutable", local]
     [code: E0009]
@@ -251,5 +280,43 @@ diagnostic! {
         pub op: hir::UnOp,
         pub ty: DiagnosticMessage,
         pub span: Span,
+    }
+}
+
+pub struct FnPrivate {
+    pub func: Ident,
+    pub target: Option<Span>,
+}
+
+impl<'a> IntoDiagnostic<'a> for FnPrivate {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
+        let FnPrivate { func, target } = self;
+        let mut db = handler.struct_err(format!("function `{}` is private", func.name));
+
+        db.code(Code::E0014).span_label(func.span, "private function");
+        if let Some(target) = target {
+            db.primary(Note, target, format!("the function `{func}` is defined here"));
+        }
+
+        db
+    }
+}
+
+pub struct ModPrivate {
+    pub module: Ident,
+    pub target: Option<Span>,
+}
+
+impl<'a> IntoDiagnostic<'a> for ModPrivate {
+    fn into_diagnostic(self, handler: &'a Handler) -> DiagnosticBuilder<'a, ErrorGuaranteed> {
+        let ModPrivate { module, target } = self;
+        let mut db = handler.struct_err(format!("module `{module}` is private"));
+
+        db.code(Code::E0014).span_label(module.span, "private module");
+        if let Some(target) = target {
+            db.primary(Note, target, format!("the module `{module}` is defined here"));
+        }
+
+        db
     }
 }

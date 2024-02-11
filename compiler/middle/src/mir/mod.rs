@@ -39,8 +39,13 @@ pub const START_BLOCK: BasicBlock = BasicBlock::START_BLOCK;
 pub const RETURN_PLACE: Local = Local::RETURN_PLACE;
 
 idx::define_index! {
-    #[derive(Debug)]
     pub struct DefId = u32;
+}
+
+impl fmt::Debug for DefId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "def::{}", self.raw())
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -67,8 +72,11 @@ pub struct InstanceData<'tcx> {
 
     // hir data
     pub span: Span,
+    pub vis: hir::Vis,
     pub hsig: hir::FnSig<'tcx>,
     pub attrs: &'tcx [attr::MetaItem],
+
+    pub parent: hir::ModId,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Hash)]
