@@ -3,6 +3,7 @@ use {
     middle::{
         hir::Hx,
         mir::CodegenUnit,
+        rayon::prelude::*,
         sess::{OutFileName, OutputFilenames},
         Session,
     },
@@ -100,9 +101,10 @@ pub struct OngoingCodegen {
 
 fn driver<'tcx>(hix: Hx<'tcx>, cgus: Vec<CodegenUnit<'tcx>>) -> OngoingCodegen {
     let target_cpu = hix.tcx.sess.target.cpu.to_string();
+    let native_libs = cgus.iter().flat_map(|cgu| &cgu.native_libs).copied().collect();
     OngoingCodegen {
-        modules: cgus.into_iter().map(|cgu| compile_codegen_unit(hix, cgu)).collect(),
-        info: ModuleInfo::new(hix.tcx, target_cpu),
+        modules: cgus.into_par_iter().map(|cgu| compile_codegen_unit(hix, cgu)).collect(),
+        info: ModuleInfo::new(hix.tcx, target_cpu, native_libs),
     }
 }
 

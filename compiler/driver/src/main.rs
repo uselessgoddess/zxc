@@ -124,8 +124,6 @@ fn driver_impl<'tcx>(
             hix.defs[def] = body;
         }
     }
-    println!("{:#?}", hix.module);
-    println!("{:#?}", cgus);
 
     tcx.sess.compile_status().inspect_err(|_| tcx.sess.abort_if_errors())?;
 

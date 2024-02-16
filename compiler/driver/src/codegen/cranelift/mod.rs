@@ -645,6 +645,7 @@ use {
         abi::Primitive,
         hir::Hx,
         mir::{mono, InstanceDef, MonoItem, MonoItemData, PlaceElem, Statement},
+        rayon::prelude::*,
         sess::OutputType,
         symbol::Symbol,
     },
@@ -738,9 +739,10 @@ fn module_codegen<'tcx>(hix: Hx<'tcx>, cgu: &CodegenUnit<'tcx>) -> Result<Codege
 
 fn driver<'tcx>(hix: Hx<'tcx>, cgus: &[CodegenUnit<'tcx>]) -> CodegenData {
     let target_cpu = hix.tcx.sess.target.cpu.to_string();
+    let native_libs = cgus.iter().flat_map(|cgu| &cgu.native_libs).copied().collect();
     CodegenData {
-        modules: cgus.into_iter().map(|cgu| module_codegen(hix, cgu)).collect(),
-        info: ModuleInfo::new(hix.tcx, target_cpu),
+        info: ModuleInfo::new(hix.tcx, target_cpu, native_libs),
+        modules: cgus.into_par_iter().map(|cgu| module_codegen(hix, cgu)).collect(),
     }
 }
 

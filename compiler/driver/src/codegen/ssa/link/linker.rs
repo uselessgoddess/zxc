@@ -9,6 +9,7 @@ use {
 pub trait Linker {
     fn cmd(&mut self) -> &mut Command;
     fn add_object(&mut self, path: &Path);
+    fn link_dylib(&mut self, lib: &str);
     fn output_filename(&mut self, path: &Path);
     fn set_output_kind(&mut self, kind: LinkOutputKind, out: &Path);
     fn gc_sections(&mut self, keep_metadata: bool);
@@ -198,6 +199,10 @@ impl<'a> Linker for GccLinker<'a> {
         self.cmd.arg("-o").arg(path);
     }
 
+    fn link_dylib(&mut self, lib: &str) {
+        self.cmd.arg(format!("-l{lib}"));
+    }
+
     fn set_output_kind(&mut self, kind: LinkOutputKind, _out: &Path) {
         match kind {
             LinkOutputKind::DynamicNoPicExe => {
@@ -273,6 +278,10 @@ impl<'a> Linker for MsvcLinker<'a> {
         let mut arg = OsString::from("/OUT:");
         arg.push(path);
         self.cmd.arg(&arg);
+    }
+
+    fn link_dylib(&mut self, lib: &str) {
+        self.cmd.arg(format!("{lib}.lib"));
     }
 
     fn set_output_kind(&mut self, output_kind: LinkOutputKind, out_filename: &Path) {

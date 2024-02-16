@@ -1,18 +1,8 @@
-mod std {
-    extern {
-        fn exit(x: i32) -> !;
-    }
-
-    pub fn foo(x: i32) {
-        exit(x * x);
-    }
-}
-
+#[link(name = "kernel32")]
 extern {
-    fn _Z6sample3stdfoo(x: i32);
+    fn putchar(x: i32) -> i32;
 }
 
 fn main() {
-   std::foo(12);
-   _Z6sample3stdfoo(13);
+    putchar(65);
 }

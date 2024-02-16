@@ -9,7 +9,11 @@ mod ty;
 
 use {
     crate::{
-        hir::{attr::MetaItem, errors::TypeMismatch, scope::LoopData},
+        hir::{
+            attr::{meta, MetaItem, NestedMeta},
+            errors::TypeMismatch,
+            scope::LoopData,
+        },
         idx::IndexVec,
         index_vec, man,
         mir::{
@@ -1372,7 +1376,7 @@ impl ModuleData {
                 )
             })
             .collect();
-        CodegenUnit { name: self.name, primary, items }
+        CodegenUnit { name: self.name, primary, items, native_libs: self.native_libs.clone() }
     }
 }
 
@@ -1673,6 +1677,17 @@ fn define_mod<'hir>(
                 this.defs.push((def, (sig, body)));
             }
             ItemKind::Foreign { abi, items } => {
+                for attr in item.attrs {
+                    if attr.path.name == sym::link
+                        && let meta::List(nested) = &attr.kind
+                        && let Some(link) = nested.iter().find_map(|meta| match meta {
+                            NestedMeta::NameValue(val, lit) if val.name == sym::name => Some(lit),
+                            _ => None,
+                        })
+                    {
+                        hix.mods[mod_id].native_libs.push(link.repr);
+                    }
+                }
                 for ffi in items {
                     // Copy abi from foreign block to all items
                     let _ =
@@ -1686,6 +1701,7 @@ fn define_mod<'hir>(
     }
     Ok(())
 }
+
 fn sort_items<'hir>(mut items: Vec<Item<'hir>>) -> Vec<Item<'hir>> {
     items.sort_unstable_by_key(|item| match item.kind {
         ItemKind::Fn(..) => 0,
@@ -1724,9 +1740,6 @@ pub fn analyze_module<'hir>(hix: &mut HirCtx<'hir>, items: Vec<Item<'hir>>) -> R
     analyze(hix, &mut mir, module, resolve::ROOT_MODULE)?;
     // TODO: more docs about this unwrapping
     hix.defs = mir.into_iter().map(Option::unwrap).collect();
-
-    println!("{:#?}", hix.mods);
-
     Ok(())
 }
 

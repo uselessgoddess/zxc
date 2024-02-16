@@ -30,14 +30,16 @@ fn collect_module_types(sess: &Session) -> Vec<ModuleType> {
 #[derive(Debug)]
 pub struct ModuleInfo {
     pub target_cpu: String,
+    pub native_libs: Vec<Symbol>,
     pub module_types: Vec<ModuleType>,
     pub local_module_name: Symbol,
 }
 
 impl ModuleInfo {
-    pub fn new(tcx: Tx, target_cpu: String) -> Self {
+    pub fn new(tcx: Tx, target_cpu: String, native_libs: Vec<Symbol>) -> Self {
         ModuleInfo {
             target_cpu,
+            native_libs,
             module_types: collect_module_types(tcx.sess),
             local_module_name: Symbol::intern(&tcx.sess.local_module_name()),
         }
@@ -193,6 +195,10 @@ fn linker_with_args(
 
     for obj in codegen_results.modules.iter().filter_map(|m| m.object.as_ref()) {
         cmd.add_object(obj);
+    }
+
+    for lib in &codegen_results.info.native_libs {
+        cmd.link_dylib(lib.as_str());
     }
 
     add_late_link_args(cmd, sess, flavor, module_type, codegen_results);

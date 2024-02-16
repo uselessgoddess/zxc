@@ -27,6 +27,7 @@ pub struct ModuleData {
     pub parent: Option<ModId>,
     pub defs: FxHashMap<Symbol, mir::DefId>,
     pub mods: FxHashMap<Symbol, ModId>,
+    pub native_libs: Vec<Symbol>,
 }
 
 impl Default for ModuleData {
@@ -37,6 +38,7 @@ impl Default for ModuleData {
             name: kw::Empty,
             defs: Default::default(),
             mods: Default::default(),
+            native_libs: Default::default(),
         }
     }
 }

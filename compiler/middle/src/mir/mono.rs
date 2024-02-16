@@ -20,6 +20,7 @@ pub struct CodegenUnit<'tcx> {
     pub name: Symbol,
     pub primary: bool,
     pub items: FxHashMap<MonoItem<'tcx>, MonoItemData>,
+    pub native_libs: Vec<Symbol>,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]

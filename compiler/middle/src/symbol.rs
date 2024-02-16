@@ -118,7 +118,9 @@ macros::symbols! {
         i64,
         i8,
         isize,
+        link,
         main,
+        name,
         offset,
         start,
     }

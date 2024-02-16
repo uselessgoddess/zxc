@@ -19,6 +19,9 @@ pub struct ModuleLlvm {
     pub machine: ManuallyDrop<OwnedTargetMachine>,
 }
 
+unsafe impl Send for ModuleLlvm {}
+unsafe impl Sync for ModuleLlvm {}
+
 impl fmt::Debug for ModuleLlvm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ModuleLlvm {{ .. }}")

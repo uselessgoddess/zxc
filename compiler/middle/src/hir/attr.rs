@@ -3,6 +3,10 @@ use {
     lexer::{Expr, Lit, Meta, Parse, Punctuated, Span, Spanned, Token},
 };
 
+pub mod meta {
+    pub use super::MetaItemKind::{List, NameValue, Word};
+}
+
 #[derive(Debug, Clone)]
 pub struct MetaItem {
     pub path: Ident,
@@ -50,7 +54,11 @@ fn meta_lit(value: Expr<'_>) -> Option<MetaLit> {
     if let Expr::Lit(lit) = value
         && let Lit::Str(str) = lit
     {
-        Some(MetaLit { repr: Symbol::intern(str.lit), span: str.span })
+        Some(MetaLit {
+            // TODO: simple trimming quotes to allow prove concept of extern blocks linking naming
+            repr: Symbol::intern(str.lit.trim_matches('"').trim_end_matches('"')),
+            span: str.span,
+        })
     } else {
         None
     }
