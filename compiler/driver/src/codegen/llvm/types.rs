@@ -80,7 +80,7 @@ impl<'ll, 'tcx> CodegenCx<'ll, 'tcx> {
     }
 
     pub fn type_array(&self, ty: &'ll Type, len: u64) -> &'ll Type {
-        unsafe { llvm::LLVMRustArrayType(ty, len) }
+        unsafe { llvm::LLVMArrayType2(ty, len) }
     }
 
     pub fn type_struct(&self, els: &[&'ll Type], packed: bool) -> &'ll Type {

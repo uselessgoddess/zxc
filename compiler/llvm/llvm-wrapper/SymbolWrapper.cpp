@@ -11,6 +11,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Object/ObjectFile.h"
+#include <llvm/Support/raw_ostream.h>
 
 using namespace llvm;
 using namespace llvm::sys;
@@ -33,16 +34,17 @@ static bool isArchiveSymbol(const object::BasicSymbolRef &S) {
 typedef void *(*LLVMRustGetSymbolsCallback)(void *, const char *);
 typedef void *(*LLVMRustGetSymbolsErrorCallback)(const char *);
 
-// Note: This is implemented in C++ instead of using the C api from Rust as IRObjectFile doesn't
-// implement getSymbolName, only printSymbolName, which is inaccessible from the C api.
-extern "C" void *LLVMRustGetSymbols(
-  char *BufPtr, size_t BufLen, void *State, LLVMRustGetSymbolsCallback Callback,
-  LLVMRustGetSymbolsErrorCallback ErrorCallback) {
-  std::unique_ptr<MemoryBuffer> Buf =
-    MemoryBuffer::getMemBuffer(StringRef(BufPtr, BufLen), StringRef("LLVMRustGetSymbolsObject"),
-                               false);
+// Note: This is implemented in C++ instead of using the C api from Rust as
+// IRObjectFile doesn't implement getSymbolName, only printSymbolName, which is
+// inaccessible from the C api.
+extern "C" void *
+LLVMRustGetSymbols(char *BufPtr, size_t BufLen, void *State,
+                   LLVMRustGetSymbolsCallback Callback,
+                   LLVMRustGetSymbolsErrorCallback ErrorCallback) {
+  std::unique_ptr<MemoryBuffer> Buf = MemoryBuffer::getMemBuffer(
+      StringRef(BufPtr, BufLen), StringRef("LLVMRustGetSymbolsObject"), false);
   SmallString<0> SymNameBuf;
-  raw_svector_ostream SymName(SymNameBuf);
+  auto SymName = raw_svector_ostream(SymNameBuf);
 
   // In the scenario when LLVMContext is populated SymbolicFile will contain a
   // reference to it, thus SymbolicFile should be destroyed first.
@@ -56,34 +58,34 @@ extern "C" void *LLVMRustGetSymbols(
 
   if (Type == file_magic::bitcode) {
     auto ObjOrErr = object::SymbolicFile::createSymbolicFile(
-      Buf->getMemBufferRef(), file_magic::bitcode, &Context);
+        Buf->getMemBufferRef(), file_magic::bitcode, &Context);
     if (!ObjOrErr) {
       Error E = ObjOrErr.takeError();
       SmallString<0> ErrorBuf;
-      raw_svector_ostream Error(ErrorBuf);
+      auto Error = raw_svector_ostream(ErrorBuf);
       Error << E << '\0';
       return ErrorCallback(Error.str().data());
     }
     Obj = std::move(*ObjOrErr);
   } else {
-    auto ObjOrErr = object::SymbolicFile::createSymbolicFile(Buf->getMemBufferRef());
+    auto ObjOrErr =
+        object::SymbolicFile::createSymbolicFile(Buf->getMemBufferRef());
     if (!ObjOrErr) {
       Error E = ObjOrErr.takeError();
       SmallString<0> ErrorBuf;
-      raw_svector_ostream Error(ErrorBuf);
+      auto Error = raw_svector_ostream(ErrorBuf);
       Error << E << '\0';
       return ErrorCallback(Error.str().data());
     }
     Obj = std::move(*ObjOrErr);
   }
 
-
   for (const object::BasicSymbolRef &S : Obj->symbols()) {
     if (!isArchiveSymbol(S))
       continue;
     if (Error E = S.printName(SymName)) {
       SmallString<0> ErrorBuf;
-      raw_svector_ostream Error(ErrorBuf);
+      auto Error = raw_svector_ostream(ErrorBuf);
       Error << E << '\0';
       return ErrorCallback(Error.str().data());
     }

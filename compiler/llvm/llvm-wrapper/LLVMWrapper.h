@@ -76,7 +76,6 @@ enum LLVMRustAttribute {
   SanitizeMemory = 22,
   NonLazyBind = 23,
   OptimizeNone = 24,
-  ReturnsTwice = 25,
   ReadNone = 26,
   SanitizeHWAddress = 28,
   WillReturn = 29,
@@ -92,6 +91,8 @@ enum LLVMRustAttribute {
   AllocAlign = 39,
   SanitizeSafeStack = 40,
   FnRetThunkExtern = 41,
+  Writable = 42,
+  DeadOnUnwind = 43,
 };
 
 typedef struct OpaqueRustString *RustStringRef;

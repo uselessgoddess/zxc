@@ -119,37 +119,49 @@ pub enum TerminatorKind<'tcx> {
     },
 }
 
-pub type Successors<'a> = impl DoubleEndedIterator<Item = BasicBlock> + 'a;
-pub type SuccessorsMut<'a> =
-    iter::Chain<std::option::IntoIter<&'a mut BasicBlock>, slice::IterMut<'a, BasicBlock>>;
+pub use infer::*;
 
-impl<'tcx> TerminatorKind<'tcx> {
-    pub fn successors(&self) -> Successors<'_> {
-        use TerminatorKind::*;
+mod infer {
+    use super::*;
 
-        let tail_slice = [].iter().copied();
-        match *self {
-            Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
-            Goto { target: t } => Some(t).into_iter().chain(tail_slice),
-            Return | Unreachable | Call { target: None, .. } => None.into_iter().chain(tail_slice),
-            SwitchInt { ref targets, .. } => {
-                None.into_iter().chain(targets.targets.iter().copied())
+    pub type Successors<'a> = impl DoubleEndedIterator<Item = BasicBlock> + 'a;
+    pub type SuccessorsMut<'a> =
+        iter::Chain<std::option::IntoIter<&'a mut BasicBlock>, slice::IterMut<'a, BasicBlock>>;
+
+    impl<'tcx> TerminatorKind<'tcx> {
+        pub fn successors(&self) -> Successors<'_> {
+            use TerminatorKind::*;
+
+            let tail_slice = [].iter().copied();
+            match *self {
+                Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
+                Goto { target: t } => Some(t).into_iter().chain(tail_slice),
+                Return | Unreachable | Call { target: None, .. } => {
+                    None.into_iter().chain(tail_slice)
+                }
+                SwitchInt { ref targets, .. } => {
+                    None.into_iter().chain(targets.targets.iter().copied())
+                }
+            }
+        }
+
+        pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
+            use TerminatorKind::*;
+
+            let tail_slice = [].iter_mut();
+            match self {
+                Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
+                Goto { target: t } => Some(t).into_iter().chain(tail_slice),
+                Return | Unreachable | Call { target: None, .. } => {
+                    None.into_iter().chain(tail_slice)
+                }
+                SwitchInt { targets, .. } => None.into_iter().chain(targets.targets.iter_mut()),
             }
         }
     }
+}
 
-    pub fn successors_mut(&mut self) -> SuccessorsMut<'_> {
-        use TerminatorKind::*;
-
-        let tail_slice = [].iter_mut();
-        match self {
-            Call { target: Some(t), .. } => Some(t).into_iter().chain(tail_slice),
-            Goto { target: t } => Some(t).into_iter().chain(tail_slice),
-            Return | Unreachable | Call { target: None, .. } => None.into_iter().chain(tail_slice),
-            SwitchInt { targets, .. } => None.into_iter().chain(targets.targets.iter_mut()),
-        }
-    }
-
+impl<'tcx> TerminatorKind<'tcx> {
     pub fn as_goto(&self) -> Option<BasicBlock> {
         match self {
             TerminatorKind::Goto { target } => Some(*target),
