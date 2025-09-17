@@ -9,32 +9,32 @@ mod ty;
 
 use {
     crate::{
+        FxHashMap, Result, Span, Tx,
         hir::{
-            attr::{meta, MetaItem, NestedMeta},
+            attr::{MetaItem, NestedMeta, meta},
             errors::TypeMismatch,
             scope::LoopData,
         },
         idx::IndexVec,
         index_vec, man,
         mir::{
-            self,
+            self, CastKind, CodegenUnit, ConstValue, Infer, InstanceData, InstanceDef, Local,
+            LocalDecl, Location, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem,
+            Rvalue, ScalarRepr, SourceInfo, Statement, StatementKind, SwitchTargets, Terminator,
+            TerminatorKind, TyKind,
             mono::{self, Linkage},
             ty::Abi,
             visit::{MutVisitor, TyContext, Visitor},
-            CastKind, CodegenUnit, ConstValue, Infer, InstanceData, InstanceDef, Local, LocalDecl,
-            Location, MonoItem, MonoItemData, Mutability, Operand, Place, PlaceElem, Rvalue,
-            ScalarRepr, SourceInfo, Statement, StatementKind, SwitchTargets, Terminator,
-            TerminatorKind, TyKind,
         },
         pretty::{FmtPrinter, Print, Printer},
         sess::ModuleType,
         sym,
         symbol::{Ident, Symbol},
-        FxHashMap, Result, Span, Tx,
     },
     ::errors::{
+        DiagnosticMessage, Handler,
         ariadne::{Color, Fmt},
-        color, DiagnosticMessage, Handler,
+        color,
     },
     lexer::{BinOp, Lit, LitBool, LitInt, ReturnType, Spanned},
     lint::DecorateLint,
@@ -946,19 +946,16 @@ fn analyze_expr<'hir>(
                 }
 
                 let dest = acx.typed_place(sig.output());
-                acx.end_of_block(
-                    expr.span,
-                    TerminatorKind::Call {
-                        func: Operand::Const(
-                            ConstValue::Zst,
-                            acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
-                        ), // now functions are ZSTs
-                        args,
-                        dest,
-                        target: Some(acx.next_block()),
-                        fn_span: span,
-                    },
-                );
+                acx.end_of_block(expr.span, TerminatorKind::Call {
+                    func: Operand::Const(
+                        ConstValue::Zst,
+                        acx.tcx.intern_ty(mir::TyKind::FnDef(def)),
+                    ), // now functions are ZSTs
+                    args,
+                    dest,
+                    target: Some(acx.next_block()),
+                    fn_span: span,
+                });
                 (Ty::new(hsig.ret_span(), sig.output()), Operand::Copy(dest))
             } else if let Some(ident) = call.ident()
                 && ident.name == sym::offset
@@ -1360,20 +1357,18 @@ impl ModuleData {
             .copied()
             .filter(|&def| hix.defs.get(def).is_some()) // has body
             .map(|def| {
-                (
-                    MonoItem { def: InstanceDef::Item(def), _marker: PhantomData },
-                    MonoItemData {
-                        inlined: false,
-                        linkage: if hix.instances[def].sig.abi == Abi::Zxc
-                            || hix.instances[def].vis.is_public()
-                        {
-                            Linkage::External
-                        } else {
-                            Linkage::Internal
-                        },
-                        visibility: mono::Visibility::Default,
+                (MonoItem { def: InstanceDef::Item(def), _marker: PhantomData }, MonoItemData {
+                    inlined: false,
+                    linkage: if hix.instances[def].sig.abi == Abi::Zxc
+                        || hix.instances[def].vis.is_public()
+                        || true
+                    {
+                        Linkage::External
+                    } else {
+                        Linkage::Internal
                     },
-                )
+                    visibility: mono::Visibility::Default,
+                })
             })
             .collect();
         CodegenUnit { name: self.name, primary, items, native_libs: self.native_libs.clone() }
@@ -1450,7 +1445,9 @@ impl<'hir> HirCtx<'hir> {
     }
 
     pub fn entry_fn(&self) -> Option<(mir::DefId, EntryFnType)> {
-        if !self.tcx.module_types().iter().any(|&ty| ty == ModuleType::Executable) {
+        if !self.tcx.module_types().iter().any(|&ty| ty == ModuleType::Executable)
+            || self.tcx.sess.opts.no_main
+        {
             return None;
         }
 

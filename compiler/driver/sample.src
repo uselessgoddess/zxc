@@ -1,8 +1,2 @@
-#[link(name = "kernel32")]
-extern {
-    fn putchar(x: i32) -> i32;
-}
-
-fn main() {
-    putchar(65);
-}
+#[no_mangle]
+extern "C" fn _start() {}

@@ -3,10 +3,16 @@ use {
     std::{
         env,
         ffi::{OsStr, OsString},
+        iter,
+        path::Path,
     },
 };
 
 pub trait Linker {
+    fn is_cc(&self) -> bool {
+        false
+    }
+
     fn cmd(&mut self) -> &mut Command;
     fn add_object(&mut self, path: &Path);
     fn link_dylib(&mut self, lib: &str);
@@ -17,23 +23,65 @@ pub trait Linker {
     fn optimize(&mut self);
 }
 
+macro_rules! generate {
+    ($($ty:ty)*) => { $(
+        impl $ty {
+            pub fn verbatim_args(&mut self, args: impl IntoIterator<Item: AsRef<OsStr>>) {
+                for arg in args {
+                    self.cmd().arg(arg);
+                }
+            }
+
+            pub fn link_args(
+                &mut self,
+                args: impl IntoIterator<Item: AsRef<OsStr>, IntoIter: ExactSizeIterator>,
+            ) {
+               let args = args.into_iter();
+                if !self.is_cc() {
+                    self.verbatim_args(args);
+                } else if args.len() != 0 {
+                    let mut combined_arg = OsString::from("-Wl");
+                    for arg in args {
+                        combined_arg.push(",");
+                        combined_arg.push(arg);
+                    }
+                    self.cmd().arg(combined_arg);
+                }
+            }
+
+            pub fn link_arg(&mut self, arg: impl AsRef<OsStr>) {
+                self.link_args(iter::once(arg))
+            }
+
+            pub fn link_or_cc_args(&mut self, args: impl IntoIterator<Item: AsRef<OsStr>>) {
+                self.verbatim_args(args)
+            }
+
+            pub fn link_or_cc_arg(&mut self, arg: impl AsRef<OsStr>) {
+                self.link_or_cc_args(iter::once(arg))
+            }
+        }
+    )* }
+}
+
+generate! {
+    GccLinker<'_>
+    MsvcLinker<'_>
+    dyn Linker + '_
+}
+
 impl dyn Linker + '_ {
     pub fn args(&mut self, args: impl IntoIterator<Item: AsRef<OsStr>>) {
         self.cmd().args(args);
     }
 }
 
-use {
-    middle::{spec::LinkerFlavor, Session},
-    std::path::Path,
-};
+use cc::windows_registry;
 
-use {
-    cc::windows_registry,
-    middle::{
-        sess::OptLevel,
-        spec::{Cc, LinkOutputKind, Lld},
-    },
+use middle::{
+    Session,
+    sess::OptLevel,
+    spec::{Cc, LinkOutputKind, LinkerFlavor, Lld},
 };
 
 /// Disables non-English messages from localized linkers.
@@ -162,31 +210,11 @@ pub struct GccLinker<'a> {
     is_gnu: bool,
 }
 
-impl<'a> GccLinker<'a> {
-    fn linker_args(&mut self, args: &[impl AsRef<OsStr>]) -> &mut Self {
-        if self.is_ld {
-            args.iter().for_each(|a| {
-                self.cmd.arg(a);
-            });
-        } else if !args.is_empty() {
-            let mut s = OsString::from("-Wl");
-            for a in args {
-                s.push(",");
-                s.push(a);
-            }
-            self.cmd.arg(s);
-        }
-
-        self
-    }
-
-    fn linker_arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
-        self.linker_args(&[arg]);
-        self
-    }
-}
-
 impl<'a> Linker for GccLinker<'a> {
+    fn is_cc(&self) -> bool {
+        !self.is_ld
+    }
+
     fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
     }
@@ -203,7 +231,7 @@ impl<'a> Linker for GccLinker<'a> {
         self.cmd.arg(format!("-l{lib}"));
     }
 
-    fn set_output_kind(&mut self, kind: LinkOutputKind, _out: &Path) {
+    fn set_output_kind(&mut self, kind: LinkOutputKind, out: &Path) {
         match kind {
             LinkOutputKind::DynamicNoPicExe => {
                 if !self.is_ld && self.is_gnu {
@@ -228,26 +256,26 @@ impl<'a> Linker for GccLinker<'a> {
                     self.cmd.args(&["-static", "-pie", "--no-dynamic-linker", "-z", "text"]);
                 }
             }
-            LinkOutputKind::DynamicDylib => todo!(),
+            LinkOutputKind::DynamicDylib => self.build_dylib(out),
             LinkOutputKind::StaticDylib => {
                 self.cmd.arg("-static");
-                todo!()
+                self.build_dylib(out);
             }
             LinkOutputKind::WasiReactorExe => {
-                self.linker_args(&["--entry", "_initialize"]);
+                self.link_args(&["--entry", "_initialize"]);
             }
         }
     }
 
     fn gc_sections(&mut self, keep_metadata: bool) {
         if self.is_gnu && !keep_metadata {
-            self.linker_arg("--gc-sections");
+            self.link_arg("--gc-sections");
         }
     }
 
     fn no_gc_sections(&mut self) {
         if self.is_gnu {
-            self.linker_arg("--no-gc-sections");
+            self.link_arg("--no-gc-sections");
         }
     }
 
@@ -255,7 +283,32 @@ impl<'a> Linker for GccLinker<'a> {
         if self.is_gnu
             && let OptLevel::Default | OptLevel::Aggressive = self.sess.opts.C.opt_level
         {
-            self.linker_arg("-O1");
+            self.link_arg("-O1");
+        }
+    }
+}
+
+impl<'a> GccLinker<'a> {
+    fn build_dylib(&mut self, out: &Path) {
+        if false {
+            todo!("osx")
+        } else {
+            self.link_or_cc_arg("-shared");
+            if let Some(name) = out.file_name() {
+                if self.sess.target.is_like_windows {
+                    let mut implib = OsString::from(&*self.sess.target.staticlib_prefix);
+                    implib.push(name);
+                    implib.push(&*self.sess.target.staticlib_suffix);
+
+                    let mut out_implib = OsString::from("--out-implib=");
+                    out_implib.push(out.with_file_name(implib));
+                    self.link_arg(out_implib);
+                } else {
+                    let mut soname = OsString::from("-soname=");
+                    soname.push(name);
+                    self.link_arg(soname);
+                }
+            }
         }
     }
 }

@@ -121,6 +121,7 @@ macros::symbols! {
         link,
         main,
         name,
+        no_mangle,
         offset,
         start,
     }

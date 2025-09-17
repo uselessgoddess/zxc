@@ -40,3 +40,5 @@ fn ui() {
         t.compile_fail("ui/mods/pub.src");
     }
 }
+
+fn main() {}

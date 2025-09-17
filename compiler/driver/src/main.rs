@@ -29,7 +29,7 @@ use {
     lexer::ParseBuffer,
     middle::{
         mir::interpret::InterpCx,
-        sess::{OutFileName, OutputType},
+        sess::{ModuleType, OutFileName, OutputType},
     },
     std::{
         collections::BTreeMap,
@@ -253,6 +253,8 @@ fn main() {
         c_flags,
         z_flags,
         emit,
+        module_types,
+        no_main,
         target,
         allow,
         warn,
@@ -296,6 +298,15 @@ fn main() {
             C: c_opts,
             output_types,
             lints: lint(allow, Allow).chain(lint(warn, Warn)).chain(lint(deny, Deny)).collect(),
+            module_types: module_types
+                .into_iter()
+                .map(|ty| match ty {
+                    cli::ModuleType::Bin => ModuleType::Executable,
+                    cli::ModuleType::Dylib => ModuleType::Dylib,
+                    cli::ModuleType::Staticlib => ModuleType::Staticlib,
+                })
+                .collect(),
+            no_main,
             ..Default::default()
         },
         input,

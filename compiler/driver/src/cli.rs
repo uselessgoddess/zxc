@@ -17,6 +17,13 @@ pub enum Color {
     Never,
 }
 
+#[derive(ValueEnum, Copy, Clone, Debug)]
+pub enum ModuleType {
+    Bin,
+    Dylib,
+    Staticlib,
+}
+
 #[derive(Parser, Debug)]
 #[command(about)]
 #[command(styles = super::style::CLAP)]
@@ -38,6 +45,19 @@ pub struct Args {
 
     #[arg(long = "emit", value_parser = parse_emit)]
     pub emit: Vec<(Emit, Option<String>)>,
+
+    /// Comma separated list of types of modules
+    #[arg(
+        long = "module-type",
+        value_name = "[bin|staticlib]",
+        value_delimiter = ',',
+        num_args = 1..,
+    )]
+    pub module_types: Vec<ModuleType>,
+
+    /// Way to build executable with custom entry point
+    #[arg(long = "no-main")]
+    pub no_main: bool,
 
     /// codegen flags to zxc
     #[arg(short = 'C', value_name = "FLAG", value_parser = parse_kv)]

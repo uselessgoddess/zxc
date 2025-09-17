@@ -368,7 +368,7 @@ macro_rules! supported_targets {
         pub const TARGETS: &[&str] = &[$($triple),+];
 
         fn load_builtin(target: &str) -> Option<Target> {
-            let mut t = match target {
+            let t = match target {
                 $( $triple => targets::$module::target(), )+
                 _ => return None,
             };
@@ -395,4 +395,5 @@ supported_targets! {
     ("x86_64-pc-windows-msvc", x86_64_pc_windows_msvc),
     ("x86_64-unknown-linux-gnu", x86_64_unknown_linux_gnu),
     ("aarch64-unknown-linux-gnu", aarch64_unknown_linux_gnu),
+    ("riscv32i-unknown-none-elf", riscv32i_unknown_none_elf),
 }

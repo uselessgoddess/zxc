@@ -7,13 +7,13 @@ use {
     cc::windows_registry,
     command::Command,
     middle::{
+        ErrorGuaranteed, MaybeTempDir, Session, Tx,
         sess::{
-            self, output, DiagnosticBuilder, Handler, IntoDiagnostic, ModuleType, OutputFilenames,
-            OutputType,
+            self, DiagnosticBuilder, Handler, IntoDiagnostic, ModuleType, OutputFilenames,
+            OutputType, output,
         },
         spec::{Cc, LinkOutputKind, LinkerFlavor, Lld, RelocModel},
         symbol::Symbol,
-        ErrorGuaranteed, MaybeTempDir, Session, Tx,
     },
     std::{
         fs, io, mem,
@@ -23,8 +23,8 @@ use {
     },
 };
 
-fn collect_module_types(sess: &Session) -> Vec<ModuleType> {
-    vec![output::default_output_for_target(sess)]
+fn collect_module_types(tcx: Tx) -> Vec<ModuleType> {
+    tcx.module_types().to_vec()
 }
 
 #[derive(Debug)]
@@ -40,7 +40,7 @@ impl ModuleInfo {
         ModuleInfo {
             target_cpu,
             native_libs,
-            module_types: collect_module_types(tcx.sess),
+            module_types: collect_module_types(tcx),
             local_module_name: Symbol::intern(&tcx.sess.local_module_name()),
         }
     }
@@ -179,6 +179,10 @@ fn add_late_link_args(
     }
 }
 
+fn add_user_link_args(cmd: &mut dyn Linker, sess: &Session) {
+    cmd.verbatim_args(&sess.opts.C.link_args);
+}
+
 fn linker_with_args(
     path: &Path,
     flavor: LinkerFlavor,
@@ -213,6 +217,8 @@ fn linker_with_args(
         out_filename,
         tmpdir,
     );
+
+    add_user_link_args(cmd, sess);
 
     mem::replace(cmd.cmd(), Command::new(""))
 }
