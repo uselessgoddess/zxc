@@ -1454,6 +1454,11 @@ impl<'hir> HirCtx<'hir> {
             return None;
         }
 
+        // If no_main is set, don't require an entry point
+        if self.tcx.sess.opts.Z.no_main {
+            return None;
+        }
+
         let mut start_fn = None;
         for &def in self.root().defs.values() {
             if attr::contains_name(self.attrs(def), sym::start) {

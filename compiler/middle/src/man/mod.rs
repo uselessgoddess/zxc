@@ -1,10 +1,15 @@
-use crate::{hir::Hx, mir::DefId};
+use crate::{hir::{Hx, attr}, mir::DefId, sym};
 
 pub fn compute_symbol_name(hix: Hx<'_>, def: DefId) -> String {
     let name = hix.instances[def].symbol.to_string();
 
     // possible is foreign item
     if hix.defs.get(def).is_none() {
+        return name;
+    }
+
+    // Check for no_mangle attribute
+    if attr::contains_name(hix.attrs(def), sym::no_mangle) {
         return name;
     }
 

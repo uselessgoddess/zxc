@@ -181,6 +181,7 @@ options! {
     temps_dir: Option<String> = (None, parse_opt_string,
         "the directory the intermediate files are written to"),
     codegen_backend: Option<String> = (None, parse_opt_string, "the codegen backend"),
+    no_main: bool = (false, parse_bool, "don't require a main function"),
 }
 
 options! {
